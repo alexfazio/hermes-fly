@@ -105,6 +105,5 @@ main() {
 }
 
 # Only run main if not being sourced (for testing)
-if [[ "${BASH_SOURCE[0]:-$0}" == "${0}" ]]; then
-  main "$@"
-fi
+# `return` succeeds only when sourced; fails when executed or piped.
+(return 0 2>/dev/null) || main "$@"
