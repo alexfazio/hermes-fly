@@ -212,10 +212,14 @@ deploy_collect_region() {
   )
 
   printf '\nSelect a region:\n' >&2
+  printf '  ┌────┬────────────────────────────────────┬──────┐\n' >&2
+  printf '  │ #  │ Location                           │ Code │\n' >&2
+  printf '  ├────┼────────────────────────────────────┼──────┤\n' >&2
   local i
   for i in "${!codes[@]}"; do
-    printf '  %2d) %-35s %s\n' "$((i + 1))" "${labels[$i]}" "${codes[$i]}" >&2
+    printf '  │ %2d │ %-34s │ %s  │\n' "$((i + 1))" "${labels[$i]}" "${codes[$i]}" >&2
   done
+  printf '  └────┴────────────────────────────────────┴──────┘\n' >&2
   printf 'Choice [1]: ' >&2
 
   local choice
