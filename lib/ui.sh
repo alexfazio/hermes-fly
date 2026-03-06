@@ -138,6 +138,68 @@ ui_banner() {
   printf '╚%s╝\n' "$border"
 }
 
+# --- Spinner ---
+# Animated braille spinner for non-verbose progress display.
+# Gracefully degrades to static text on non-interactive terminals.
+
+_UI_SPINNER_PID=""
+_UI_SPINNER_MSG_FILE=""
+
+ui_spinner_start() {
+  local msg="$1"
+  _UI_SPINNER_MSG_FILE="$(mktemp "${TMPDIR:-/tmp}/hermes-spin.XXXXXX")"
+  printf '%s' "$msg" >"$_UI_SPINNER_MSG_FILE"
+  _UI_SPINNER_PID=""
+
+  # Only animate on color-enabled interactive stderr
+  if ui_color_enabled && [[ -t 2 ]]; then
+    (
+      trap 'exit 0' TERM HUP
+      local _f=("⠋" "⠙" "⠹" "⠸" "⠼" "⠴" "⠦" "⠧" "⠇" "⠏")
+      local _i=0 _m
+      while true; do
+        _m="$(cat "$_UI_SPINNER_MSG_FILE" 2>/dev/null)" || break
+        printf '\r\033[K  \033[36m%s\033[0m %s' "${_f[$_i]}" "$_m" >&2
+        _i=$(((_i + 1) % 10))
+        sleep 0.08
+      done
+    ) &
+    _UI_SPINNER_PID=$!
+    disown "$_UI_SPINNER_PID" 2>/dev/null || true
+  fi
+}
+
+ui_spinner_update() {
+  if [[ -n "${_UI_SPINNER_MSG_FILE:-}" ]]; then
+    printf '%s' "$1" >"$_UI_SPINNER_MSG_FILE" 2>/dev/null || true
+  fi
+}
+
+ui_spinner_stop() {
+  local rc="$1" msg="$2"
+  if [[ -n "${_UI_SPINNER_PID:-}" ]]; then
+    kill "$_UI_SPINNER_PID" 2>/dev/null || true
+    wait "$_UI_SPINNER_PID" 2>/dev/null || true
+    _UI_SPINNER_PID=""
+  fi
+  rm -f "${_UI_SPINNER_MSG_FILE:-}" 2>/dev/null || true
+  _UI_SPINNER_MSG_FILE=""
+
+  if [[ "$rc" -eq 0 ]]; then
+    if ui_color_enabled && [[ -t 2 ]]; then
+      printf '\r\033[K  \033[32m✓\033[0m %s\n' "$msg" >&2
+    else
+      printf '✓ %s\n' "$msg"
+    fi
+  else
+    if ui_color_enabled && [[ -t 2 ]]; then
+      printf '\r\033[K  \033[31m✗\033[0m %s\n' "$msg" >&2
+    else
+      printf '✗ %s\n' "$msg"
+    fi
+  fi
+}
+
 # --- Logging ---
 
 _log_file() {

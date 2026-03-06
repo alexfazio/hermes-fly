@@ -139,10 +139,18 @@ case "${1:-}" in
     platform)
         case "${2:-}" in
             vm-sizes)
-                echo "[{\"name\":\"shared-cpu-1x\",\"cpu_cores\":1,\"memory_mb\":256,\"price_month\":1.94},{\"name\":\"shared-cpu-2x\",\"cpu_cores\":2,\"memory_mb\":512,\"price_month\":3.88},{\"name\":\"performance-1x\",\"cpu_cores\":1,\"memory_mb\":2048,\"price_month\":12.00}]"
+                if [[ "${MOCK_FLY_VM_SIZES_FAIL:-false}" == "true" ]]; then
+                    echo "Error: API unavailable" >&2
+                    exit 1
+                fi
+                echo '[{"name":"shared-cpu-1x","cpu_cores":1,"memory_mb":256,"price_month":1.94},{"name":"shared-cpu-2x","cpu_cores":2,"memory_mb":512,"price_month":3.88},{"name":"performance-1x","cpu_cores":1,"memory_mb":2048,"price_month":12.00},{"name":"dedicated-cpu-1x","cpu_cores":1,"memory_mb":2048,"price_month":23.00}]'
                 ;;
             regions)
-                echo "[{\"code\":\"ord\",\"name\":\"Chicago, Illinois (US)\"},{\"code\":\"ams\",\"name\":\"Amsterdam, Netherlands\"},{\"code\":\"nrt\",\"name\":\"Tokyo, Japan\"}]"
+                if [[ "${MOCK_FLY_REGIONS_FAIL:-false}" == "true" ]]; then
+                    echo "Error: API unavailable" >&2
+                    exit 1
+                fi
+                echo '[{"code":"iad","name":"Ashburn, Virginia (US)"},{"code":"ord","name":"Chicago, Illinois (US)"},{"code":"lax","name":"Los Angeles, California (US)"},{"code":"ams","name":"Amsterdam, Netherlands"},{"code":"fra","name":"Frankfurt, Germany"},{"code":"lhr","name":"London, United Kingdom"},{"code":"nrt","name":"Tokyo, Japan"},{"code":"sin","name":"Singapore, Singapore"},{"code":"syd","name":"Sydney, Australia"},{"code":"gru","name":"Sao Paulo, Brazil"}]'
                 ;;
         esac
         ;;

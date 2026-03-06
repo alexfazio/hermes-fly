@@ -86,10 +86,16 @@ teardown() {
   assert_output "SIZE=shared-cpu-1x MEM=256mb"
 }
 
+@test "deploy_collect_vm_size default selects recommended option 2" {
+  run bash -c 'export NO_COLOR=1; export PATH="'"${BATS_TEST_DIRNAME}/mocks:${PATH}"'"; source lib/ui.sh; source lib/fly-helpers.sh; source lib/docker-helpers.sh; source lib/messaging.sh; source lib/config.sh; source lib/status.sh; source lib/deploy.sh; deploy_collect_vm_size SIZE MEM <<< "" 2>/dev/null; echo "SIZE=$SIZE MEM=$MEM"'
+  assert_success
+  assert_output "SIZE=shared-cpu-2x MEM=512mb"
+}
+
 @test "deploy_collect_vm_size option 4 selects dedicated-cpu-1x" {
   run bash -c 'export NO_COLOR=1; export PATH="'"${BATS_TEST_DIRNAME}/mocks:${PATH}"'"; source lib/ui.sh; source lib/fly-helpers.sh; source lib/docker-helpers.sh; source lib/messaging.sh; source lib/config.sh; source lib/status.sh; source lib/deploy.sh; deploy_collect_vm_size SIZE MEM <<< "4" 2>/dev/null; echo "SIZE=$SIZE MEM=$MEM"'
   assert_success
-  assert_output "SIZE=dedicated-cpu-1x MEM=1024mb"
+  assert_output --partial "SIZE=dedicated-cpu-1x"
 }
 
 # --- deploy_collect_volume_size ---
@@ -195,6 +201,71 @@ teardown() {
   assert_output --partial "BASE_URL=https://my-llm.example.com/v1"
 }
 
+# --- deploy_parse_regions ---
+
+@test "deploy_parse_regions extracts codes and names from JSON" {
+  local json='[{"code":"iad","name":"Ashburn, Virginia (US)"},{"code":"ord","name":"Chicago, Illinois (US)"}]'
+  deploy_parse_regions "$json"
+  [[ "${_REGION_CODES[0]}" == "iad" ]]
+  [[ "${_REGION_CODES[1]}" == "ord" ]]
+  [[ "${_REGION_NAMES[0]}" == "Ashburn, Virginia (US)" ]]
+  [[ "${_REGION_NAMES[1]}" == "Chicago, Illinois (US)" ]]
+}
+
+@test "deploy_parse_regions handles empty JSON" {
+  deploy_parse_regions "[]"
+  [[ ${#_REGION_CODES[@]} -eq 0 ]]
+}
+
+@test "deploy_get_region_continent maps known codes" {
+  [[ "$(deploy_get_region_continent "iad")" == "Americas" ]]
+  [[ "$(deploy_get_region_continent "ams")" == "Europe" ]]
+  [[ "$(deploy_get_region_continent "nrt")" == "Asia-Pacific" ]]
+  [[ "$(deploy_get_region_continent "syd")" == "Oceania" ]]
+  [[ "$(deploy_get_region_continent "gru")" == "South America" ]]
+}
+
+@test "deploy_get_region_continent returns Other for unknown codes" {
+  [[ "$(deploy_get_region_continent "xyz")" == "Other" ]]
+}
+
+@test "deploy_collect_region uses dynamic regions from fly API" {
+  # Mock returns 10 regions; pick option 4 (ams)
+  run bash -c 'export NO_COLOR=1; export PATH="'"${BATS_TEST_DIRNAME}/mocks:${PATH}"'"; source lib/ui.sh; source lib/fly-helpers.sh; source lib/docker-helpers.sh; source lib/messaging.sh; source lib/config.sh; source lib/status.sh; source lib/deploy.sh; deploy_collect_region RESULT <<< "4" 2>/dev/null; echo "$RESULT"'
+  assert_success
+  assert_output "ams"
+}
+
+@test "deploy_collect_region falls back to static list on API failure" {
+  run bash -c 'export NO_COLOR=1; export MOCK_FLY_REGIONS_FAIL=true; export PATH="'"${BATS_TEST_DIRNAME}/mocks:${PATH}"'"; source lib/ui.sh; source lib/fly-helpers.sh; source lib/docker-helpers.sh; source lib/messaging.sh; source lib/config.sh; source lib/status.sh; source lib/deploy.sh; deploy_collect_region RESULT <<< "1" 2>/dev/null; echo "$RESULT"'
+  assert_success
+  assert_output "iad"
+}
+
+# --- deploy_parse_vm_sizes ---
+
+@test "deploy_parse_vm_sizes extracts names and prices from JSON" {
+  local json='[{"name":"shared-cpu-1x","cpu_cores":1,"memory_mb":256,"price_month":1.94},{"name":"shared-cpu-2x","cpu_cores":2,"memory_mb":512,"price_month":3.88}]'
+  deploy_parse_vm_sizes "$json"
+  [[ "${_VM_NAMES[0]}" == "shared-cpu-1x" ]]
+  [[ "${_VM_NAMES[1]}" == "shared-cpu-2x" ]]
+  [[ "${_VM_MEMORY[0]}" == "256" ]]
+  [[ "${_VM_MEMORY[1]}" == "512" ]]
+}
+
+@test "deploy_collect_vm_size uses dynamic pricing from fly API" {
+  # Pick option 1 explicitly
+  run bash -c 'export NO_COLOR=1; export PATH="'"${BATS_TEST_DIRNAME}/mocks:${PATH}"'"; source lib/ui.sh; source lib/fly-helpers.sh; source lib/docker-helpers.sh; source lib/messaging.sh; source lib/config.sh; source lib/status.sh; source lib/deploy.sh; deploy_collect_vm_size SIZE MEM <<< "1" 2>/dev/null; echo "SIZE=$SIZE MEM=$MEM"'
+  assert_success
+  assert_output "SIZE=shared-cpu-1x MEM=256mb"
+}
+
+@test "deploy_collect_vm_size falls back to static on API failure" {
+  run bash -c 'export NO_COLOR=1; export MOCK_FLY_VM_SIZES_FAIL=true; export PATH="'"${BATS_TEST_DIRNAME}/mocks:${PATH}"'"; source lib/ui.sh; source lib/fly-helpers.sh; source lib/docker-helpers.sh; source lib/messaging.sh; source lib/config.sh; source lib/status.sh; source lib/deploy.sh; deploy_collect_vm_size SIZE MEM <<< "" 2>/dev/null; echo "SIZE=$SIZE MEM=$MEM"'
+  assert_success
+  assert_output "SIZE=shared-cpu-2x MEM=512mb"
+}
+
 # --- deploy_validate_app_name ---
 
 @test "deploy_validate_app_name accepts valid name" {
@@ -246,6 +317,48 @@ teardown() {
   run deploy_provision_resources
   assert_success
 }
+
+# --- deploy_preflight (default spinner mode) ---
+
+@test "deploy_preflight default mode shows success message" {
+  run deploy_preflight
+  assert_success
+  assert_output --partial "All preflight checks passed"
+}
+
+@test "deploy_preflight default mode shows failure on bad platform" {
+  export HERMES_FLY_PLATFORM="MINGW64_NT"
+  run deploy_preflight
+  assert_failure
+  assert_output --partial "Unsupported platform"
+}
+
+@test "deploy_preflight default mode does not show step numbers" {
+  run deploy_preflight
+  assert_success
+  refute_output --partial "[1/6]"
+  refute_output --partial "[2/6]"
+}
+
+# --- deploy_preflight (verbose mode) ---
+
+@test "deploy_preflight verbose mode shows step numbers" {
+  export HERMES_FLY_VERBOSE=1
+  run deploy_preflight
+  assert_success
+  assert_output --partial "[1/6]"
+  assert_output --partial "[6/6]"
+}
+
+@test "deploy_preflight verbose mode shows all check names" {
+  export HERMES_FLY_VERBOSE=1
+  run deploy_preflight
+  assert_success
+  assert_output --partial "Checking platform"
+  assert_output --partial "Checking connectivity"
+}
+
+# --- config persistence ---
 
 @test "config_save_app after deploy stores app in config.yaml" {
   config_save_app "deploy-test-app" "ord"

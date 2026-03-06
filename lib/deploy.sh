@@ -95,39 +95,80 @@ deploy_check_connectivity() {
 # Stops at first failure with appropriate exit code.
 # --------------------------------------------------------------------------
 deploy_preflight() {
-  local total=6
+  # Verbose mode: show each step individually
+  if [[ "${HERMES_FLY_VERBOSE:-0}" == "1" ]]; then
+    local total=6
 
-  ui_step 1 "$total" "Checking platform"
-  if ! deploy_check_platform; then
+    ui_step 1 "$total" "Checking platform"
+    deploy_check_platform || return 1
+
+    ui_step 2 "$total" "Checking prerequisites"
+    deploy_check_prerequisites || return 1
+
+    ui_step 3 "$total" "Checking fly CLI"
+    fly_check_installed || return 1
+
+    ui_step 4 "$total" "Checking fly version"
+    fly_check_version || return 1
+
+    ui_step 5 "$total" "Checking authentication"
+    fly_check_auth_interactive || return "$EXIT_AUTH"
+
+    ui_step 6 "$total" "Checking connectivity"
+    deploy_check_connectivity || return "$EXIT_NETWORK"
+
+    ui_success "All preflight checks passed"
+    return 0
+  fi
+
+  # Default: animated spinner
+  ui_spinner_start "Checking platform..."
+
+  if ! deploy_check_platform 2>/dev/null; then
+    ui_spinner_stop 1 "Unsupported platform"
     return 1
   fi
 
-  ui_step 2 "$total" "Checking prerequisites"
-  if ! deploy_check_prerequisites; then
+  ui_spinner_update "Checking prerequisites..."
+  if ! deploy_check_prerequisites 2>/dev/null; then
+    ui_spinner_stop 1 "Missing prerequisites"
     return 1
   fi
 
-  ui_step 3 "$total" "Checking fly CLI"
-  if ! fly_check_installed; then
+  ui_spinner_update "Checking fly CLI..."
+  if ! fly_check_installed 2>/dev/null; then
+    ui_spinner_stop 1 "fly CLI not found"
     return 1
   fi
 
-  ui_step 4 "$total" "Checking fly version"
-  if ! fly_check_version; then
+  ui_spinner_update "Checking fly version..."
+  if ! fly_check_version 2>/dev/null; then
+    ui_spinner_stop 1 "fly CLI outdated (need >= 0.2.0)"
     return 1
   fi
 
-  ui_step 5 "$total" "Checking authentication"
-  if ! fly_check_auth_interactive; then
-    return "$EXIT_AUTH"
+  ui_spinner_update "Checking authentication..."
+  if ! fly_check_auth 2>/dev/null; then
+    # Auth failed — stop spinner for interactive retry
+    ui_spinner_stop 1 "Not authenticated"
+    printf 'Run "fly auth login" in another terminal.\n' >&2
+    printf 'Press Enter when ready to retry... ' >&2
+    IFS= read -r -t 60 _ || true
+
+    ui_spinner_start "Retrying authentication..."
+    if ! fly_check_auth 2>/dev/null; then
+      ui_spinner_stop 1 "Still not authenticated"
+      return "$EXIT_AUTH"
+    fi
   fi
 
-  ui_step 6 "$total" "Checking connectivity"
-  if ! deploy_check_connectivity; then
+  ui_spinner_update "Checking connectivity..."
+  if ! deploy_check_connectivity 2>/dev/null; then
+    ui_spinner_stop 1 "Cannot reach fly.io"
     return "$EXIT_NETWORK"
   fi
 
-  ui_success "All preflight checks passed"
+  ui_spinner_stop 0 "All preflight checks passed"
   return 0
 }
 
@@ -190,36 +231,114 @@ deploy_collect_app_name() {
 }
 
 # --------------------------------------------------------------------------
+# deploy_parse_regions JSON — parse fly platform regions JSON
+# Sets global arrays: _REGION_CODES, _REGION_NAMES
+# --------------------------------------------------------------------------
+deploy_parse_regions() {
+  local json="$1"
+  _REGION_CODES=()
+  _REGION_NAMES=()
+
+  [[ "$json" == "[]" || -z "$json" ]] && return 0
+
+  local codes_raw names_raw
+  codes_raw="$(printf '%s' "$json" | grep -oE '"code"\s*:\s*"[^"]*"' | sed 's/.*"\([^"]*\)"$/\1/')"
+  names_raw="$(printf '%s' "$json" | grep -oE '"name"\s*:\s*"[^"]*"' | sed 's/.*"\([^"]*\)"$/\1/')"
+
+  local line
+  while IFS= read -r line; do
+    [[ -n "$line" ]] && _REGION_CODES+=("$line")
+  done <<<"$codes_raw"
+  while IFS= read -r line; do
+    [[ -n "$line" ]] && _REGION_NAMES+=("$line")
+  done <<<"$names_raw"
+}
+
+# --------------------------------------------------------------------------
+# deploy_get_region_continent CODE — map region code to continent
+# Echoes continent name. Unknown codes return "Other".
+# --------------------------------------------------------------------------
+deploy_get_region_continent() {
+  local code="$1"
+  case "$code" in
+    iad | ord | lax | sea | sjc | yyz | mia | atl | den | ewr | bos | dfw | phx) echo "Americas" ;;
+    ams | fra | lhr | cdg | mad | waw | arn | otp) echo "Europe" ;;
+    nrt | sin | hkg | bom | bkk | del) echo "Asia-Pacific" ;;
+    syd) echo "Oceania" ;;
+    gru | bog | eze | scl | qro | gdl) echo "South America" ;;
+    jnb) echo "Africa" ;;
+    *) echo "Other" ;;
+  esac
+}
+
+# --------------------------------------------------------------------------
 # deploy_collect_region VARNAME — select a Fly.io region
-# Parses JSON from fly_get_regions, presents numbered list.
+# Fetches regions dynamically from fly API, groups by continent.
+# Falls back to static list on API failure.
 # --------------------------------------------------------------------------
 deploy_collect_region() {
   local varname="$1"
 
-  # Curated list of popular regions (covers most use cases)
-  local codes=("iad" "ord" "lax" "ams" "fra" "lhr" "nrt" "sin" "syd" "gru")
-  local labels=(
-    "Washington, D.C. (US East)"
-    "Chicago (US Central)"
-    "Los Angeles (US West)"
-    "Amsterdam (Europe)"
-    "Frankfurt (Europe)"
-    "London (Europe)"
-    "Tokyo (Asia)"
-    "Singapore (Asia)"
-    "Sydney (Oceania)"
-    "São Paulo (South America)"
+  # Fallback static list
+  local fallback_codes=("iad" "ord" "lax" "ams" "fra" "lhr" "nrt" "sin" "syd" "gru")
+  local fallback_names=(
+    "Ashburn, Virginia (US)"
+    "Chicago, Illinois (US)"
+    "Los Angeles, California (US)"
+    "Amsterdam, Netherlands"
+    "Frankfurt, Germany"
+    "London, United Kingdom"
+    "Tokyo, Japan"
+    "Singapore, Singapore"
+    "Sydney, Australia"
+    "Sao Paulo, Brazil"
   )
 
-  printf '\nSelect a region:\n' >&2
-  printf '  ┌────┬────────────────────────────────────┬──────┐\n' >&2
-  printf '  │ #  │ Location                           │ Code │\n' >&2
-  printf '  ├────┼────────────────────────────────────┼──────┤\n' >&2
-  local i
-  for i in "${!codes[@]}"; do
-    printf '  │ %2d │ %-34s │ %s  │\n' "$((i + 1))" "${labels[$i]}" "${codes[$i]}" >&2
+  # Try dynamic fetch
+  local regions_json
+  if regions_json="$(fly_get_regions 2>/dev/null)" && [[ -n "$regions_json" ]]; then
+    deploy_parse_regions "$regions_json"
+  fi
+
+  # Use fallback if parsing yielded nothing
+  if [[ ${#_REGION_CODES[@]} -eq 0 ]]; then
+    _REGION_CODES=("${fallback_codes[@]}")
+    _REGION_NAMES=("${fallback_names[@]}")
+  fi
+
+  # Sort into continent groups maintaining order within each group
+  local continent_order=("Americas" "Europe" "Asia-Pacific" "Oceania" "South America" "Africa" "Other")
+  local sorted_codes=() sorted_names=() sorted_groups=()
+  local continent code i
+
+  for continent in "${continent_order[@]}"; do
+    local found=false
+    for i in "${!_REGION_CODES[@]}"; do
+      code="${_REGION_CODES[$i]}"
+      if [[ "$(deploy_get_region_continent "$code")" == "$continent" ]]; then
+        if [[ "$found" == "false" ]]; then
+          sorted_groups+=("$continent")
+          found=true
+        else
+          sorted_groups+=("")
+        fi
+        sorted_codes+=("$code")
+        sorted_names+=("${_REGION_NAMES[$i]}")
+      fi
+    done
   done
-  printf '  └────┴────────────────────────────────────┴──────┘\n' >&2
+
+  printf '\nSelect a region:\n' >&2
+  printf '  ┌────┬──────────────────────────────────┬──────┐\n' >&2
+  printf '  │ #  │ Location                         │ Code │\n' >&2
+  for i in "${!sorted_codes[@]}"; do
+    if [[ -n "${sorted_groups[$i]}" ]]; then
+      printf '  ├────┼──────────────────────────────────┼──────┤\n' >&2
+      printf '  │    │ \033[1m%-32s\033[0m │      │\n' "${sorted_groups[$i]}" >&2
+    fi
+    printf '  │ %2d │  %-31s │ %s  │\n' "$((i + 1))" "${sorted_names[$i]}" "${sorted_codes[$i]}" >&2
+  done
+  printf '  └────┴──────────────────────────────────┴──────┘\n' >&2
   printf 'Choice [1]: ' >&2
 
   local choice
@@ -229,47 +348,164 @@ deploy_collect_region() {
     choice=1
   fi
 
-  if [[ "$choice" =~ ^[0-9]+$ ]] && ((choice >= 1 && choice <= ${#codes[@]})); then
-    eval "$varname=\"\${codes[$((choice - 1))]}\""
+  if [[ "$choice" =~ ^[0-9]+$ ]] && ((choice >= 1 && choice <= ${#sorted_codes[@]})); then
+    eval "$varname=\"\${sorted_codes[$((choice - 1))]}\""
   else
-    eval "$varname=\"\${codes[0]}\""
+    eval "$varname=\"\${sorted_codes[0]}\""
   fi
 }
 
 # --------------------------------------------------------------------------
-# deploy_collect_vm_size SIZE_VAR MEMORY_VAR — select VM size
+# deploy_parse_vm_sizes JSON — parse fly platform vm-sizes JSON
+# Sets global arrays: _VM_NAMES, _VM_MEMORY, _VM_PRICES
 # --------------------------------------------------------------------------
+deploy_parse_vm_sizes() {
+  local json="$1"
+  _VM_NAMES=()
+  _VM_MEMORY=()
+  _VM_PRICES=()
+
+  [[ "$json" == "[]" || -z "$json" ]] && return 0
+
+  local names_raw mem_raw prices_raw
+  names_raw="$(printf '%s' "$json" | grep -oE '"name"\s*:\s*"[^"]*"' | sed 's/.*"\([^"]*\)"$/\1/')"
+  mem_raw="$(printf '%s' "$json" | grep -oE '"memory_mb"\s*:\s*[0-9]+' | grep -oE '[0-9]+$')"
+  prices_raw="$(printf '%s' "$json" | grep -oE '"price_month"\s*:\s*[0-9.]+' | grep -oE '[0-9.]+$')"
+
+  local n_arr=() m_arr=() p_arr=() line
+  while IFS= read -r line; do
+    [[ -n "$line" ]] && n_arr+=("$line")
+  done <<<"$names_raw"
+  while IFS= read -r line; do
+    [[ -n "$line" ]] && m_arr+=("$line")
+  done <<<"$mem_raw"
+  while IFS= read -r line; do
+    [[ -n "$line" ]] && p_arr+=("$line")
+  done <<<"$prices_raw"
+
+  local i
+  for i in "${!n_arr[@]}"; do
+    _VM_NAMES+=("${n_arr[$i]}")
+    _VM_MEMORY+=("${m_arr[$i]:-0}")
+    _VM_PRICES+=("${p_arr[$i]:-0}")
+  done
+}
+
+# --------------------------------------------------------------------------
+# deploy_get_vm_recommendation NAME — return recommendation label
+# --------------------------------------------------------------------------
+deploy_get_vm_recommendation() {
+  case "$1" in
+    shared-cpu-1x) echo "lightweight testing" ;;
+    shared-cpu-2x) echo "recommended for most use" ;;
+    performance-1x) echo "multi-tool agents" ;;
+    dedicated-cpu-1x) echo "sustained workloads" ;;
+    *) echo "" ;;
+  esac
+}
+
+# --------------------------------------------------------------------------
+# deploy_collect_vm_size SIZE_VAR MEMORY_VAR — select VM size
+# Fetches VM sizes dynamically from fly API. Falls back to static list.
+# --------------------------------------------------------------------------
+_deploy_fallback_mem() {
+  case "$1" in
+    shared-cpu-1x) echo 256 ;;
+    shared-cpu-2x) echo 512 ;;
+    performance-1x) echo 1024 ;;
+    dedicated-cpu-1x) echo 1024 ;;
+    *) echo 0 ;;
+  esac
+}
+
+_deploy_fallback_price() {
+  case "$1" in
+    shared-cpu-1x) echo "1.94" ;;
+    shared-cpu-2x) echo "3.88" ;;
+    performance-1x) echo "12.00" ;;
+    dedicated-cpu-1x) echo "23.00" ;;
+    *) echo "0" ;;
+  esac
+}
+
+# _deploy_lookup_vm NAME FIELD — look up a VM field from parsed _VM_* arrays
+# FIELD: mem or price. Returns empty string if not found.
+_deploy_lookup_vm() {
+  local name="$1" field="$2" i
+  for i in "${!_VM_NAMES[@]}"; do
+    if [[ "${_VM_NAMES[$i]}" == "$name" ]]; then
+      case "$field" in
+        mem) echo "${_VM_MEMORY[$i]}" ;;
+        price) echo "${_VM_PRICES[$i]}" ;;
+      esac
+      return
+    fi
+  done
+}
+
 deploy_collect_vm_size() {
   local size_var="$1" memory_var="$2"
 
+  # Sizes we offer (in display order)
+  local wanted=("shared-cpu-1x" "shared-cpu-2x" "performance-1x" "dedicated-cpu-1x")
+  local default_idx=2 # 1-based: option 2 = shared-cpu-2x
+
+  # Try dynamic fetch
+  _VM_NAMES=()
+  _VM_MEMORY=()
+  _VM_PRICES=()
+  local vm_json
+  if vm_json="$(fly_get_vm_sizes 2>/dev/null)" && [[ -n "$vm_json" ]]; then
+    deploy_parse_vm_sizes "$vm_json"
+  fi
+
   printf '\nSelect VM size:\n' >&2
-  printf "  1) shared-cpu-1x / 256mb      (~\$1.94/mo)\n" >&2
-  printf "  2) shared-cpu-2x / 512mb      (~\$3.88/mo)\n" >&2
-  printf "  3) performance-1x / 1gb       (~\$12.00/mo)\n" >&2
-  printf "  4) dedicated-cpu-1x / 1gb     (~\$23.00/mo)\n" >&2
-  printf 'Choice [1]: ' >&2
+  local idx=0 name mem price rec mem_label
+  for name in "${wanted[@]}"; do
+    idx=$((idx + 1))
+    mem="$(_deploy_lookup_vm "$name" mem)"
+    price="$(_deploy_lookup_vm "$name" price)"
+    [[ -z "$mem" ]] && mem="$(_deploy_fallback_mem "$name")"
+    [[ -z "$price" ]] && price="$(_deploy_fallback_price "$name")"
+    rec="$(deploy_get_vm_recommendation "$name")"
+
+    if ((mem >= 1024)); then
+      mem_label="$((mem / 1024))gb"
+    else
+      mem_label="${mem}mb"
+    fi
+
+    if [[ -n "$rec" ]]; then
+      printf "  %d) %-19s / %-6s (~\$%s/mo) — %s\n" "$idx" "$name" "$mem_label" "$price" "$rec" >&2
+    else
+      printf "  %d) %-19s / %-6s (~\$%s/mo)\n" "$idx" "$name" "$mem_label" "$price" >&2
+    fi
+  done
+  printf 'Choice [%d]: ' "$default_idx" >&2
 
   local choice
   IFS= read -r choice
 
-  case "$choice" in
-    2)
-      eval "$size_var='shared-cpu-2x'"
-      eval "$memory_var='512mb'"
-      ;;
-    3)
-      eval "$size_var='performance-1x'"
-      eval "$memory_var='1024mb'"
-      ;;
-    4)
-      eval "$size_var='dedicated-cpu-1x'"
-      eval "$memory_var='1024mb'"
-      ;;
-    *)
-      eval "$size_var='shared-cpu-1x'"
-      eval "$memory_var='256mb'"
-      ;;
-  esac
+  if [[ -z "$choice" ]]; then
+    choice=$default_idx
+  fi
+
+  if [[ "$choice" =~ ^[0-9]+$ ]] && ((choice >= 1 && choice <= ${#wanted[@]})); then
+    local selected="${wanted[$((choice - 1))]}"
+    local sel_mem
+    sel_mem="$(_deploy_lookup_vm "$selected" mem)"
+    [[ -z "$sel_mem" ]] && sel_mem="$(_deploy_fallback_mem "$selected")"
+
+    if ((sel_mem >= 1024)); then
+      eval "$memory_var=\"$((sel_mem / 1024))gb\""
+    else
+      eval "$memory_var=\"${sel_mem}mb\""
+    fi
+    eval "$size_var=\"\$selected\""
+  else
+    eval "$size_var='shared-cpu-2x'"
+    eval "$memory_var='512mb'"
+  fi
 }
 
 # --------------------------------------------------------------------------
