@@ -49,100 +49,59 @@ teardown() {
   assert_failure
 }
 
-# --- install_binary ---
+# --- install_files ---
 
-@test "install_binary copies to destination" {
-  local src="${TEST_TEMP_DIR}/fake-binary"
-  echo '#!/bin/sh' > "$src"
-  local dest="${TEST_TEMP_DIR}/install_dest"
-  run install_binary "$src" "$dest"
+@test "install_files copies project files and creates symlink" {
+  # Create a fake project layout
+  local src="${TEST_TEMP_DIR}/src"
+  mkdir -p "$src/lib" "$src/templates"
+  echo '#!/bin/sh' > "$src/hermes-fly"
+  echo 'ui code' > "$src/lib/ui.sh"
+  echo 'template' > "$src/templates/Dockerfile.template"
+
+  local dest="${TEST_TEMP_DIR}/hermes-home"
+  local bin="${TEST_TEMP_DIR}/bin"
+  run install_files "$src" "$dest" "$bin"
   assert_success
   assert [ -f "${dest}/hermes-fly" ]
   assert [ -x "${dest}/hermes-fly" ]
+  assert [ -f "${dest}/lib/ui.sh" ]
+  assert [ -f "${dest}/templates/Dockerfile.template" ]
+  assert [ -L "${bin}/hermes-fly" ]
 }
 
-# --- main() with checksum ---
+# --- main() with git clone ---
 
-@test "install main downloads and verifies checksum" {
-  # Create a fake binary and matching .sha256 file for the mock curl to serve
-  local fake_binary_content="fake-hermes-fly-binary-content"
-  local expected_hash
-  if command -v sha256sum >/dev/null 2>&1; then
-    expected_hash="$(printf '%s' "$fake_binary_content" | sha256sum | cut -d' ' -f1)"
-  else
-    expected_hash="$(printf '%s' "$fake_binary_content" | shasum -a 256 | cut -d' ' -f1)"
-  fi
-
-  # Create a mock curl that writes the binary or checksum depending on URL
+@test "install main clones repo and installs" {
+  # Create a mock git that sets up a fake repo
   local mock_dir="${TEST_TEMP_DIR}/mock_bin"
   mkdir -p "$mock_dir"
-  cat > "$mock_dir/curl" <<MOCK
+  cat > "$mock_dir/git" <<'MOCK'
 #!/usr/bin/env bash
-output_file=""
-url=""
-for arg in "\$@"; do
-  if [[ "\${prev:-}" == "-o" ]]; then
-    output_file="\$arg"
-  fi
-  prev="\$arg"
-  if [[ "\$arg" == http* ]]; then
-    url="\$arg"
-  fi
-done
-if [[ "\$url" == *.sha256 ]]; then
-  printf '%s  hermes-fly\n' "$expected_hash" > "\$output_file"
-else
-  printf '%s' "$fake_binary_content" > "\$output_file"
+if [[ "$1" == "clone" ]]; then
+  dest="${@: -1}"
+  mkdir -p "$dest/lib" "$dest/templates"
+  echo '#!/bin/sh' > "$dest/hermes-fly"
+  echo 'ui' > "$dest/lib/ui.sh"
+  echo 'tpl' > "$dest/templates/Dockerfile.template"
+  exit 0
 fi
-exit 0
+exit 1
 MOCK
-  chmod +x "$mock_dir/curl"
+  chmod +x "$mock_dir/git"
 
-  local install_dest="${TEST_TEMP_DIR}/install_dest"
+  local install_home="${TEST_TEMP_DIR}/hermes_home"
+  local install_bin="${TEST_TEMP_DIR}/install_bin"
   run bash -c '
-    export HERMES_FLY_INSTALL_DIR="'"$install_dest"'"
+    export HERMES_FLY_HOME="'"$install_home"'"
+    export HERMES_FLY_INSTALL_DIR="'"$install_bin"'"
     export PATH="'"$mock_dir"':${PATH}"
     source "'"${PROJECT_ROOT}"'/scripts/install.sh"
     main
   '
   assert_success
   assert_output --partial "hermes-fly installed successfully"
-  assert [ -f "${install_dest}/hermes-fly" ]
-}
-
-@test "install main aborts on checksum mismatch" {
-  # Create a mock curl that serves a binary but a wrong checksum
-  local mock_dir="${TEST_TEMP_DIR}/mock_bin"
-  mkdir -p "$mock_dir"
-  cat > "$mock_dir/curl" <<'MOCK'
-#!/usr/bin/env bash
-output_file=""
-url=""
-for arg in "$@"; do
-  if [[ "${prev:-}" == "-o" ]]; then
-    output_file="$arg"
-  fi
-  prev="$arg"
-  if [[ "$arg" == http* ]]; then
-    url="$arg"
-  fi
-done
-if [[ "$url" == *.sha256 ]]; then
-  printf '0000000000000000000000000000000000000000000000000000000000000000  hermes-fly\n' > "$output_file"
-else
-  printf 'some-binary-content' > "$output_file"
-fi
-exit 0
-MOCK
-  chmod +x "$mock_dir/curl"
-
-  local install_dest="${TEST_TEMP_DIR}/install_dest"
-  run bash -c '
-    export HERMES_FLY_INSTALL_DIR="'"$install_dest"'"
-    export PATH="'"$mock_dir"':${PATH}"
-    source "'"${PROJECT_ROOT}"'/scripts/install.sh"
-    main
-  '
-  assert_failure
-  assert_output --partial "Checksum verification failed"
+  assert [ -f "${install_home}/hermes-fly" ]
+  assert [ -f "${install_home}/lib/ui.sh" ]
+  assert [ -L "${install_bin}/hermes-fly" ]
 }
