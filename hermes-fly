@@ -2,7 +2,15 @@
 set -euo pipefail
 
 HERMES_FLY_VERSION="0.1.0"
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Resolve symlinks so lib/ is found relative to the real file location
+_self="${BASH_SOURCE[0]}"
+while [[ -L "$_self" ]]; do
+  _dir="$(cd "$(dirname "$_self")" && pwd)"
+  _self="$(readlink "$_self")"
+  [[ "$_self" != /* ]] && _self="$_dir/$_self"
+done
+SCRIPT_DIR="$(cd "$(dirname "$_self")" && pwd)"
+unset _self _dir
 
 # Source all library modules
 source "${SCRIPT_DIR}/lib/ui.sh"
