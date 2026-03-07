@@ -297,6 +297,15 @@ teardown() {
   [[ ${#_ORG_SLUGS[@]} -eq 0 ]]
 }
 
+@test "deploy_parse_orgs handles JSON with spaces after colons" {
+  deploy_parse_orgs '{"personal": "Alex Fazio", "my-team": "My Team"}'
+  [[ ${#_ORG_SLUGS[@]} -eq 2 ]]
+  [[ "${_ORG_SLUGS[0]}" == "personal" ]]
+  [[ "${_ORG_NAMES[0]}" == "Alex Fazio" ]]
+  [[ "${_ORG_SLUGS[1]}" == "my-team" ]]
+  [[ "${_ORG_NAMES[1]}" == "My Team" ]]
+}
+
 # --- deploy_parse_regions ---
 
 @test "deploy_parse_regions extracts codes and names from JSON" {
@@ -474,6 +483,20 @@ teardown() {
   export DEPLOY_API_KEY="sk-test-key"
   export DEPLOY_MODEL="anthropic/claude-sonnet-4-20250514"
   export MOCK_FLY_APPS_CREATE=fail
+  run deploy_provision_resources
+  assert_failure
+  assert_output --partial "Hint"
+  assert_output --partial "already be taken"
+}
+
+@test "deploy_provision_resources shows hint when name has already been taken" {
+  export DEPLOY_APP_NAME="test-app"
+  export DEPLOY_REGION="ord"
+  export DEPLOY_VOLUME_SIZE="5"
+  export DEPLOY_API_KEY="sk-test-key"
+  export DEPLOY_MODEL="anthropic/claude-sonnet-4-20250514"
+  export MOCK_FLY_APPS_CREATE=fail
+  export MOCK_FLY_APPS_CREATE_MSG="Name has already been taken"
   run deploy_provision_resources
   assert_failure
   assert_output --partial "Hint"

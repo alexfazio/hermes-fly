@@ -247,8 +247,8 @@ deploy_parse_orgs() {
   local line slug name
   while IFS= read -r line; do
     [[ -z "$line" ]] && continue
-    slug="$(printf '%s' "$line" | sed 's/"\([^"]*\)"\s*:.*/\1/')"
-    name="$(printf '%s' "$line" | sed 's/.*:\s*"\([^"]*\)"/\1/')"
+    slug="$(printf '%s' "$line" | sed 's/"\([^"]*\)"[[:space:]]*:.*/\1/')"
+    name="$(printf '%s' "$line" | sed 's/.*:[[:space:]]*"\([^"]*\)"/\1/')"
     _ORG_SLUGS+=("$slug")
     _ORG_NAMES+=("$name")
   done <<<"$pairs_raw"
@@ -854,7 +854,7 @@ deploy_provision_resources() {
   local create_output
   if ! create_output="$(fly_retry 3 fly_create_app "$DEPLOY_APP_NAME" "${DEPLOY_ORG:-}" 2>&1)"; then
     ui_error "Failed to create app '${DEPLOY_APP_NAME}'"
-    if printf '%s' "$create_output" | grep -qi 'already exists'; then
+    if printf '%s' "$create_output" | grep -qiE 'already (exists|been taken)'; then
       printf '  Hint: app name may already be taken. Try a more unique name.\n' >&2
       printf '  Tip: use the default generated name (hermes-<user>-XXX) for uniqueness.\n' >&2
     else
