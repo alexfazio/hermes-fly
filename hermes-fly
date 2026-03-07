@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-HERMES_FLY_VERSION="0.1.8"
+HERMES_FLY_VERSION="0.1.9"
 # Resolve symlinks so lib/ is found relative to the real file location
 _self="${BASH_SOURCE[0]}"
 while [[ -L "$_self" ]]; do

@@ -718,14 +718,14 @@ deploy_collect_llm_config() {
 
       # Model selection table
       local model_ids=(
-        "anthropic/claude-sonnet-4-20250514"
-        "anthropic/claude-haiku-4-20250506"
+        "anthropic/claude-sonnet-4"
+        "anthropic/claude-haiku-4.5"
         "google/gemini-2.5-flash"
         "meta-llama/llama-4-maverick"
       )
       local model_labels=(
         "Claude Sonnet 4"
-        "Claude Haiku 4"
+        "Claude Haiku 4.5"
         "Gemini 2.5 Flash"
         "Llama 4 Maverick"
       )

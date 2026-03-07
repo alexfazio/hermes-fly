@@ -120,3 +120,38 @@ teardown() {
   run cat "${PROJECT_ROOT}/templates/entrypoint.sh"
   assert_output --partial "cp -r /opt/hermes/defaults/skills /root/.hermes/skills"
 }
+
+@test "entrypoint.sh bridges Fly secrets into .env on every boot" {
+  run cat "${PROJECT_ROOT}/templates/entrypoint.sh"
+  assert_success
+  assert_output --partial "OPENROUTER_API_KEY"
+  assert_output --partial "/root/.hermes/.env"
+}
+
+@test "entrypoint.sh bridges all messaging and LLM secrets" {
+  run cat "${PROJECT_ROOT}/templates/entrypoint.sh"
+  assert_success
+  assert_output --partial "TELEGRAM_BOT_TOKEN"
+  assert_output --partial "DISCORD_BOT_TOKEN"
+}
+
+@test "entrypoint.sh patches config.yaml model from LLM_MODEL" {
+  run cat "${PROJECT_ROOT}/templates/entrypoint.sh"
+  assert_success
+  assert_output --partial "LLM_MODEL"
+  assert_output --partial "config.yaml"
+  assert_output --partial "sed"
+}
+
+@test "entrypoint.sh clears rate limits for approved users" {
+  run cat "${PROJECT_ROOT}/templates/entrypoint.sh"
+  assert_success
+  assert_output --partial "_rate_limits.json"
+  assert_output --partial "approved.json"
+}
+
+@test "entrypoint.sh escapes pipe characters in LLM_MODEL for sed safety" {
+  run cat "${PROJECT_ROOT}/templates/entrypoint.sh"
+  assert_success
+  assert_output --partial '//|/'
+}

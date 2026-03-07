@@ -805,7 +805,19 @@ teardown() {
   # Choice 1 (OpenRouter), API key, garbage model, then valid model 2
   run bash -c 'export NO_COLOR=1; export PATH="'"${BATS_TEST_DIRNAME}/mocks:${PATH}"'"; source lib/ui.sh; source lib/fly-helpers.sh; source lib/docker-helpers.sh; source lib/messaging.sh; source lib/config.sh; source lib/status.sh; source lib/deploy.sh; deploy_collect_llm_config KEY MODEL < <(printf "1\nsk-test\ngarbage\n2\n") 2>/dev/null; echo "MODEL=$MODEL"'
   assert_success
-  assert_output "MODEL=anthropic/claude-haiku-4-20250506"
+  assert_output "MODEL=anthropic/claude-haiku-4.5"
+}
+
+@test "deploy_collect_llm_config model choice 1 yields OpenRouter Sonnet 4 ID" {
+  run bash -c 'export NO_COLOR=1; export PATH="'"${BATS_TEST_DIRNAME}/mocks:${PATH}"'"; source lib/ui.sh; source lib/fly-helpers.sh; source lib/docker-helpers.sh; source lib/messaging.sh; source lib/config.sh; source lib/status.sh; source lib/deploy.sh; deploy_collect_llm_config KEY MODEL < <(printf "1\nsk-test\n1\n") 2>/dev/null; echo "MODEL=$MODEL"'
+  assert_success
+  assert_output "MODEL=anthropic/claude-sonnet-4"
+}
+
+@test "deploy_collect_llm_config model choice 2 yields OpenRouter Haiku 4.5 ID" {
+  run bash -c 'export NO_COLOR=1; export PATH="'"${BATS_TEST_DIRNAME}/mocks:${PATH}"'"; source lib/ui.sh; source lib/fly-helpers.sh; source lib/docker-helpers.sh; source lib/messaging.sh; source lib/config.sh; source lib/status.sh; source lib/deploy.sh; deploy_collect_llm_config KEY MODEL < <(printf "1\nsk-test\n2\n") 2>/dev/null; echo "MODEL=$MODEL"'
+  assert_success
+  assert_output "MODEL=anthropic/claude-haiku-4.5"
 }
 
 @test "config_save_app after deploy stores app in config.yaml" {
