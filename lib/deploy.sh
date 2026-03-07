@@ -222,11 +222,24 @@ deploy_collect_app_name() {
       eval "$varname=\"\$suggestion\""
       return 0
     fi
-    if deploy_validate_app_name "$input" 2>/dev/null; then
+    if ! deploy_validate_app_name "$input" 2>/dev/null; then
+      printf 'Invalid app name. ' >&2
+      continue
+    fi
+    # Check availability via Fly API (fail-open on network/auth errors)
+    local create_output
+    if create_output="$(fly_create_app "$input" "${DEPLOY_ORG:-}" 2>&1)"; then
+      DEPLOY_APP_CREATED=1
       eval "$varname=\"\$input\""
       return 0
     fi
-    printf 'Invalid app name. ' >&2
+    if printf '%s' "$create_output" | grep -qiE 'already (exists|been taken)'; then
+      printf 'App name "%s" is not available. Try another name.\n' "$input" >&2
+      continue
+    fi
+    # Non-name-related error (network, auth) — accept and defer to provisioning
+    eval "$varname=\"\$input\""
+    return 0
   done
 }
 
@@ -851,16 +864,18 @@ deploy_provision_resources() {
   local total=3
 
   ui_step 1 "$total" "Creating Fly app '${DEPLOY_APP_NAME}'"
-  local create_output
-  if ! create_output="$(fly_retry 3 fly_create_app "$DEPLOY_APP_NAME" "${DEPLOY_ORG:-}" 2>&1)"; then
-    ui_error "Failed to create app '${DEPLOY_APP_NAME}'"
-    if printf '%s' "$create_output" | grep -qiE 'already (exists|been taken)'; then
-      printf '  Hint: app name may already be taken. Try a more unique name.\n' >&2
-      printf '  Tip: use the default generated name (hermes-<user>-XXX) for uniqueness.\n' >&2
-    else
-      printf '  Details: %s\n' "$(printf '%s' "$create_output" | head -1)" >&2
+  if [[ "${DEPLOY_APP_CREATED:-}" != "1" ]]; then
+    local create_output
+    if ! create_output="$(fly_retry 3 fly_create_app "$DEPLOY_APP_NAME" "${DEPLOY_ORG:-}" 2>&1)"; then
+      ui_error "Failed to create app '${DEPLOY_APP_NAME}'"
+      if printf '%s' "$create_output" | grep -qiE 'already (exists|been taken)'; then
+        printf '  Hint: app name may already be taken. Try a more unique name.\n' >&2
+        printf '  Tip: use the default generated name (hermes-<user>-XXX) for uniqueness.\n' >&2
+      else
+        printf '  Details: %s\n' "$(printf '%s' "$create_output" | head -1)" >&2
+      fi
+      return 1
     fi
-    return 1
   fi
 
   ui_step 2 "$total" "Creating volume (${DEPLOY_VOLUME_SIZE} GB)"

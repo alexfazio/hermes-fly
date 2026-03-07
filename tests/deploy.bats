@@ -78,6 +78,57 @@ teardown() {
   assert_output "my-hermes"
 }
 
+@test "deploy_collect_app_name re-prompts when app name is taken" {
+  run bash -c '
+    export NO_COLOR=1
+    export PATH="'"${BATS_TEST_DIRNAME}/mocks:${PATH}"'"
+    source lib/ui.sh; source lib/fly-helpers.sh; source lib/docker-helpers.sh
+    source lib/messaging.sh; source lib/config.sh; source lib/status.sh; source lib/deploy.sh
+    fly_create_app() {
+      if [[ "$1" == "taken-name" ]]; then
+        echo "Name has already been taken" >&2
+        return 1
+      fi
+      echo "{\"name\":\"$1\",\"status\":\"pending\"}"
+      return 0
+    }
+    deploy_collect_app_name RESULT <<< "$(printf "taken-name\ngood-name\n")" 2>/dev/null
+    echo "$RESULT"
+  '
+  assert_success
+  assert_output "good-name"
+}
+
+@test "deploy_collect_app_name sets DEPLOY_APP_CREATED on success" {
+  run bash -c '
+    export NO_COLOR=1
+    export PATH="'"${BATS_TEST_DIRNAME}/mocks:${PATH}"'"
+    source lib/ui.sh; source lib/fly-helpers.sh; source lib/docker-helpers.sh
+    source lib/messaging.sh; source lib/config.sh; source lib/status.sh; source lib/deploy.sh
+    deploy_collect_app_name RESULT <<< "my-hermes" 2>/dev/null
+    echo "RESULT=$RESULT CREATED=${DEPLOY_APP_CREATED:-0}"
+  '
+  assert_success
+  assert_output "RESULT=my-hermes CREATED=1"
+}
+
+@test "deploy_collect_app_name accepts name on non-availability error" {
+  run bash -c '
+    export NO_COLOR=1
+    export PATH="'"${BATS_TEST_DIRNAME}/mocks:${PATH}"'"
+    source lib/ui.sh; source lib/fly-helpers.sh; source lib/docker-helpers.sh
+    source lib/messaging.sh; source lib/config.sh; source lib/status.sh; source lib/deploy.sh
+    fly_create_app() {
+      echo "network timeout" >&2
+      return 1
+    }
+    deploy_collect_app_name RESULT <<< "my-hermes" 2>/dev/null
+    echo "RESULT=$RESULT CREATED=${DEPLOY_APP_CREATED:-0}"
+  '
+  assert_success
+  assert_output "RESULT=my-hermes CREATED=0"
+}
+
 # --- deploy_collect_vm_size ---
 
 @test "deploy_collect_vm_size selects first option" {
@@ -473,6 +524,19 @@ teardown() {
 }
 
 # --- config persistence ---
+
+@test "deploy_provision_resources skips app creation when DEPLOY_APP_CREATED is set" {
+  export DEPLOY_APP_NAME="test-app"
+  export DEPLOY_REGION="ord"
+  export DEPLOY_VOLUME_SIZE="5"
+  export DEPLOY_API_KEY="sk-test-key"
+  export DEPLOY_MODEL="anthropic/claude-sonnet-4-20250514"
+  export DEPLOY_APP_CREATED=1
+  export MOCK_FLY_APPS_CREATE=fail
+  run deploy_provision_resources
+  assert_success
+  refute_output --partial "Failed to create app"
+}
 
 # --- deploy_provision_resources error messages ---
 
