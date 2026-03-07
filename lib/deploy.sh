@@ -992,8 +992,18 @@ deploy_post_deploy_check() {
     local app_status
     app_status="$(echo "$status_json" | sed -n 's/.*"status"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)"
 
-    if [[ "$app_status" == "running" ]] || [[ "$app_status" == "deployed" ]]; then
+    if [[ "$app_status" == "running" ]] || [[ "$app_status" == "deployed" ]] || [[ "$app_status" == "started" ]]; then
       ui_success "App is running"
+      # Soft HTTP probe — informational only, never fails the deploy
+      local hostname
+      hostname="$(echo "$status_json" | grep -o '"hostname":"[^"]*"' | cut -d'"' -f4)"
+      if [[ -n "$hostname" ]]; then
+        if curl -fsS --max-time 5 "https://${hostname}/" &>/dev/null; then
+          ui_success "HTTP health check passed: https://${hostname}/"
+        else
+          ui_warn "HTTP health check did not respond yet (app may still be starting)"
+        fi
+      fi
       return 0
     fi
 

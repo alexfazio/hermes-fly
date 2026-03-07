@@ -15,13 +15,13 @@ teardown() {
 @test "hermes-fly --version outputs version string" {
   run "${PROJECT_ROOT}/hermes-fly" --version
   assert_success
-  assert_output --partial "hermes-fly 0.1.7"
+  assert_output --partial "hermes-fly 0.1.8"
 }
 
 @test "hermes-fly version outputs version string" {
   run "${PROJECT_ROOT}/hermes-fly" version
   assert_success
-  assert_output --partial "hermes-fly 0.1.7"
+  assert_output --partial "hermes-fly 0.1.8"
 }
 
 # --- Help ---

@@ -636,6 +636,30 @@ teardown() {
   refute_output --partial "Cleaning up"
 }
 
+@test "deploy_post_deploy_check succeeds when app status is 'started'" {
+  source "${PROJECT_ROOT}/lib/deploy.sh"
+  export DEPLOY_APP_NAME="test-app"
+  run deploy_post_deploy_check
+  assert_success
+  assert_output --partial "App is running"
+}
+
+@test "deploy_post_deploy_check shows HTTP health check message on success" {
+  source "${PROJECT_ROOT}/lib/deploy.sh"
+  export DEPLOY_APP_NAME="test-app"
+  run deploy_post_deploy_check
+  assert_success
+  assert_output --partial "health check"
+}
+
+@test "deploy_post_deploy_check succeeds even when HTTP probe fails" {
+  source "${PROJECT_ROOT}/lib/deploy.sh"
+  export DEPLOY_APP_NAME="test-app"
+  MOCK_CURL_FAIL=true run deploy_post_deploy_check
+  assert_success
+  assert_output --partial "App is running"
+}
+
 @test "deploy_provision_resources shows hint when name has already been taken" {
   export DEPLOY_APP_NAME="test-app"
   export DEPLOY_REGION="ord"

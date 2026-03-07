@@ -161,7 +161,7 @@ case "${1:-}" in
             echo "$_count" > "$_counter_file"
             _machine_state=$(echo "$MOCK_FLY_STATUS_SEQUENCE" | cut -d',' -f"$_count")
         fi
-        _app_status="running"
+        _app_status="${MOCK_FLY_APP_STATUS:-started}"
         if [[ "$_machine_state" == "stopped" ]] || [[ "$_machine_state" == "failed" ]]; then
             _app_status="stopped"
         fi
