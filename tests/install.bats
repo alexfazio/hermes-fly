@@ -81,7 +81,7 @@ teardown() {
 if [[ "$1" == "clone" ]]; then
   dest="${@: -1}"
   mkdir -p "$dest/lib" "$dest/templates"
-  printf '#!/bin/sh\necho "hermes-fly 0.1.4"\n' > "$dest/hermes-fly"
+  printf '#!/bin/sh\necho "hermes-fly 0.1.5"\n' > "$dest/hermes-fly"
   echo 'ui' > "$dest/lib/ui.sh"
   echo 'tpl' > "$dest/templates/Dockerfile.template"
   exit 0
@@ -101,7 +101,7 @@ MOCK
   '
   assert_success
   assert_output --partial "hermes-fly installed successfully"
-  assert_output --partial "hermes-fly 0.1.4"
+  assert_output --partial "hermes-fly 0.1.5"
   assert [ -f "${install_home}/hermes-fly" ]
   assert [ -f "${install_home}/lib/ui.sh" ]
   assert [ -L "${install_bin}/hermes-fly" ]

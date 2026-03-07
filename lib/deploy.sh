@@ -381,6 +381,8 @@ deploy_collect_region() {
   )
 
   # Try dynamic fetch
+  _REGION_CODES=()
+  _REGION_NAMES=()
   local regions_json
   if regions_json="$(fly_get_regions 2>/dev/null)" && [[ -n "$regions_json" ]]; then
     deploy_parse_regions "$regions_json"

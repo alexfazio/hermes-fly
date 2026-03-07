@@ -398,6 +398,11 @@ teardown() {
   assert_output "iad"
 }
 
+@test "deploy_collect_region does not crash under set -u when API fails" {
+  run bash -c 'set -u; export NO_COLOR=1; export MOCK_FLY_REGIONS_FAIL=true; export PATH="'"${BATS_TEST_DIRNAME}/mocks:${PATH}"'"; source lib/ui.sh; source lib/fly-helpers.sh; source lib/docker-helpers.sh; source lib/messaging.sh; source lib/config.sh; source lib/status.sh; source lib/deploy.sh; deploy_collect_region RESULT <<< "1" 2>/dev/null; echo "$RESULT"'
+  assert_success
+}
+
 # --- deploy_parse_vm_sizes ---
 
 @test "deploy_parse_vm_sizes extracts names and prices from JSON" {
