@@ -4,5 +4,6 @@ ARG HERMES_VERSION={{HERMES_VERSION}}
 RUN apt-get update && apt-get install -y --no-install-recommends git curl xz-utils && rm -rf /var/lib/apt/lists/*
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 RUN curl -fsSL https://raw.githubusercontent.com/NousResearch/hermes-agent/${HERMES_VERSION}/scripts/install.sh | bash -s -- --skip-setup
+ENV PATH="/root/.local/bin:${PATH}"
 WORKDIR /root/.hermes
 ENTRYPOINT ["hermes", "gateway"]

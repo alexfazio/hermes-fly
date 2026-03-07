@@ -553,6 +553,38 @@ teardown() {
   assert_output --partial "already be taken"
 }
 
+# --- deploy_run_deploy error reporting ---
+
+@test "deploy_run_deploy shows error details on failure" {
+  export DEPLOY_APP_NAME="test-app"
+  export DEPLOY_BUILD_DIR="$TEST_TEMP_DIR"
+  export MOCK_FLY_DEPLOY=fail
+  run deploy_run_deploy
+  assert_failure
+  assert_output --partial "Deployment failed"
+  assert_output --partial "deployment failed"
+}
+
+@test "deploy_run_deploy shows machine state on failure" {
+  export DEPLOY_APP_NAME="test-app"
+  export DEPLOY_BUILD_DIR="$TEST_TEMP_DIR"
+  export MOCK_FLY_DEPLOY=fail
+  export MOCK_FLY_MACHINE_STATE="stopped"
+  run deploy_run_deploy
+  assert_failure
+  assert_output --partial "stopped"
+}
+
+@test "deploy_run_deploy suggests diagnostic commands on failure" {
+  export DEPLOY_APP_NAME="test-app"
+  export DEPLOY_BUILD_DIR="$TEST_TEMP_DIR"
+  export MOCK_FLY_DEPLOY=fail
+  run deploy_run_deploy
+  assert_failure
+  assert_output --partial "hermes-fly logs"
+  assert_output --partial "hermes-fly doctor"
+}
+
 @test "deploy_provision_resources shows hint when name has already been taken" {
   export DEPLOY_APP_NAME="test-app"
   export DEPLOY_REGION="ord"

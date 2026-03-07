@@ -934,13 +934,36 @@ deploy_provision_resources() {
 deploy_run_deploy() {
   ui_info "Deploying ${DEPLOY_APP_NAME}..."
 
-  if ! fly_retry 3 fly_deploy "$DEPLOY_APP_NAME" "$DEPLOY_BUILD_DIR" "${DEPLOY_TIMEOUT:-5m0s}"; then
-    ui_error "Deployment failed"
-    return 1
+  local deploy_output
+  if deploy_output="$(fly_retry 3 fly_deploy "$DEPLOY_APP_NAME" "$DEPLOY_BUILD_DIR" "${DEPLOY_TIMEOUT:-5m0s}" 2>&1)"; then
+    ui_success "Deployment complete"
+    return 0
   fi
 
-  ui_success "Deployment complete"
-  return 0
+  ui_error "Deployment failed"
+
+  # Show error excerpt
+  if [[ -n "$deploy_output" ]]; then
+    printf '  Error output:\n' >&2
+    printf '%s\n' "$deploy_output" | tail -5 | sed 's/^/    /' >&2
+  fi
+
+  # Check machine state for additional context
+  local status_json
+  if status_json="$(fly_status "$DEPLOY_APP_NAME" 2>/dev/null)"; then
+    local machine_state
+    machine_state="$(printf '%s' "$status_json" | tr -d '\n' | grep -oE '"state"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | sed 's/.*"state"[[:space:]]*:[[:space:]]*"//;s/"//')"
+    if [[ -n "$machine_state" ]] && [[ "$machine_state" != "started" ]] && [[ "$machine_state" != "running" ]]; then
+      printf '  Machine state: %s\n' "$machine_state" >&2
+    fi
+  fi
+
+  # Suggest diagnostics
+  printf '\n  Troubleshooting:\n' >&2
+  printf '    hermes-fly logs    — view recent app logs\n' >&2
+  printf '    hermes-fly doctor  — run full diagnostics\n' >&2
+
+  return 1
 }
 
 # --------------------------------------------------------------------------

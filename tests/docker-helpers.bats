@@ -52,6 +52,12 @@ teardown() { _common_teardown; }
   assert_output --partial "xz-utils"
 }
 
+@test "templates/Dockerfile.template adds ~/.local/bin to PATH" {
+  local template="${PROJECT_ROOT}/templates/Dockerfile.template"
+  run cat "$template"
+  assert_output --partial '/root/.local/bin'
+}
+
 @test "templates/Dockerfile.template passes --skip-setup to installer" {
   local template="${PROJECT_ROOT}/templates/Dockerfile.template"
   run cat "$template"

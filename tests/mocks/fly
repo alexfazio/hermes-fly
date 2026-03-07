@@ -120,6 +120,11 @@ case "${1:-}" in
             echo "Error: deployment failed" >&2
             exit 1
         fi
+        if [[ "${MOCK_FLY_DEPLOY:-success}" == "crash_loop" ]]; then
+            echo "Error: machines failed to reach a healthy state" >&2
+            echo "This machine has exhausted its maximum restart attempts (10)" >&2
+            exit 1
+        fi
         # Record deploy args for test verification
         if [[ -n "${MOCK_FLY_DEPLOY_ARGS_FILE:-}" ]]; then
             echo "$*" > "$MOCK_FLY_DEPLOY_ARGS_FILE"

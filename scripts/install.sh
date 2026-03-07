@@ -132,8 +132,13 @@ main() {
 
   install_files "$tmp_dir/hermes-fly" "$HERMES_HOME" "$INSTALL_DIR"
 
+  # Show installed version
+  local version
+  version="$("$INSTALL_DIR/hermes-fly" --version 2>/dev/null || echo "hermes-fly (unknown version)")"
+
   echo ""
   echo "hermes-fly installed successfully!"
+  echo "  $version"
   echo "Run 'hermes-fly deploy' to get started."
 }
 
