@@ -1,6 +1,6 @@
 # hermes-fly
 
-Deploy [Hermes](https://github.com/rubbrband/hermes) to
+Deploy [Hermes](https://github.com/NousResearch/hermes-agent) to
 [Fly.io](https://fly.io) with a single command.
 
 Interactive CLI wizard that provisions, configures,
