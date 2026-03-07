@@ -303,17 +303,18 @@ deploy_collect_org() {
     printf '  │ %d │ %-20s │ %-16s │\n' "$((i + 1))" "${_ORG_NAMES[$i]}" "${_ORG_SLUGS[$i]}" >&2
   done
   printf '  └───┴──────────────────────┴──────────────────┘\n' >&2
-  printf 'Choice [1]: ' >&2
 
   local choice
-  IFS= read -r choice
-  [[ -z "$choice" ]] && choice=1
-
-  if [[ "$choice" =~ ^[0-9]+$ ]] && ((choice >= 1 && choice <= ${#_ORG_SLUGS[@]})); then
-    eval "$varname=\"\${_ORG_SLUGS[$((choice - 1))]}\""
-  else
-    eval "$varname=\"\${_ORG_SLUGS[0]}\""
-  fi
+  while true; do
+    printf 'Choice [1]: ' >&2
+    IFS= read -r choice
+    [[ -z "$choice" ]] && choice=1
+    if [[ "$choice" =~ ^[0-9]+$ ]] && ((choice >= 1 && choice <= ${#_ORG_SLUGS[@]})); then
+      eval "$varname=\"\${_ORG_SLUGS[$((choice - 1))]}\""
+      return 0
+    fi
+    printf 'Invalid choice. Please enter a number between 1 and %d.\n' "${#_ORG_SLUGS[@]}" >&2
+  done
 }
 
 # --------------------------------------------------------------------------
@@ -427,20 +428,18 @@ deploy_collect_region() {
     printf '  │ %2d │  %-31s │ %s  │\n' "$((i + 1))" "${sorted_names[$i]}" "${sorted_codes[$i]}" >&2
   done
   printf '  └────┴──────────────────────────────────┴──────┘\n' >&2
-  printf 'Choice [1]: ' >&2
 
   local choice
-  IFS= read -r choice
-
-  if [[ -z "$choice" ]]; then
-    choice=1
-  fi
-
-  if [[ "$choice" =~ ^[0-9]+$ ]] && ((choice >= 1 && choice <= ${#sorted_codes[@]})); then
-    eval "$varname=\"\${sorted_codes[$((choice - 1))]}\""
-  else
-    eval "$varname=\"\${sorted_codes[0]}\""
-  fi
+  while true; do
+    printf 'Choice [1]: ' >&2
+    IFS= read -r choice
+    [[ -z "$choice" ]] && choice=1
+    if [[ "$choice" =~ ^[0-9]+$ ]] && ((choice >= 1 && choice <= ${#sorted_codes[@]})); then
+      eval "$varname=\"\${sorted_codes[$((choice - 1))]}\""
+      return 0
+    fi
+    printf 'Invalid choice. Please enter a number between 1 and %d.\n' "${#sorted_codes[@]}" >&2
+  done
 }
 
 # --------------------------------------------------------------------------
@@ -578,31 +577,28 @@ deploy_collect_vm_size() {
     printf '  │ %s │ %-19s │ %-5s │ %-9s │ %-24s │\n' "$n" "$vm" "$rm" "$co" "$uc" >&2
   done
   printf '  └───┴─────────────────────┴───────┴───────────┴──────────────────────────┘\n' >&2
-  printf 'Choice [%d]: ' "$default_idx" >&2
 
   local choice
-  IFS= read -r choice
+  while true; do
+    printf 'Choice [%d]: ' "$default_idx" >&2
+    IFS= read -r choice
+    [[ -z "$choice" ]] && choice=$default_idx
+    if [[ "$choice" =~ ^[0-9]+$ ]] && ((choice >= 1 && choice <= ${#wanted[@]})); then
+      local selected="${wanted[$((choice - 1))]}"
+      local sel_mem
+      sel_mem="$(_deploy_lookup_vm "$selected" mem)"
+      [[ -z "$sel_mem" ]] && sel_mem="$(_deploy_fallback_mem "$selected")"
 
-  if [[ -z "$choice" ]]; then
-    choice=$default_idx
-  fi
-
-  if [[ "$choice" =~ ^[0-9]+$ ]] && ((choice >= 1 && choice <= ${#wanted[@]})); then
-    local selected="${wanted[$((choice - 1))]}"
-    local sel_mem
-    sel_mem="$(_deploy_lookup_vm "$selected" mem)"
-    [[ -z "$sel_mem" ]] && sel_mem="$(_deploy_fallback_mem "$selected")"
-
-    if ((sel_mem >= 1024)); then
-      eval "$memory_var=\"$((sel_mem / 1024))gb\""
-    else
-      eval "$memory_var=\"${sel_mem}mb\""
+      if ((sel_mem >= 1024)); then
+        eval "$memory_var=\"$((sel_mem / 1024))gb\""
+      else
+        eval "$memory_var=\"${sel_mem}mb\""
+      fi
+      eval "$size_var=\"\$selected\""
+      return 0
     fi
-    eval "$size_var=\"\$selected\""
-  else
-    eval "$size_var='shared-cpu-2x'"
-    eval "$memory_var='512mb'"
-  fi
+    printf 'Invalid choice. Please enter a number between 1 and %d.\n' "${#wanted[@]}" >&2
+  done
 }
 
 # --------------------------------------------------------------------------
@@ -626,20 +622,18 @@ deploy_collect_volume_size() {
     printf '  │ %d │ %2d GB │ %-12s │ $%s/mo  │\n' "$((i + 1))" "${sizes[$i]}" "${labels[$i]}" "${costs[$i]}" >&2
   done
   printf '  └───┴──────┴──────────────┴───────────┘\n' >&2
-  printf 'Choice [%d]: ' "$default_idx" >&2
 
   local choice
-  IFS= read -r choice
-
-  if [[ -z "$choice" ]]; then
-    choice=$default_idx
-  fi
-
-  if [[ "$choice" =~ ^[0-9]+$ ]] && ((choice >= 1 && choice <= ${#sizes[@]})); then
-    eval "$varname=\"\${sizes[$((choice - 1))]}\""
-  else
-    eval "$varname='5'"
-  fi
+  while true; do
+    printf 'Choice [%d]: ' "$default_idx" >&2
+    IFS= read -r choice
+    [[ -z "$choice" ]] && choice=$default_idx
+    if [[ "$choice" =~ ^[0-9]+$ ]] && ((choice >= 1 && choice <= ${#sizes[@]})); then
+      eval "$varname=\"\${sizes[$((choice - 1))]}\""
+      return 0
+    fi
+    printf 'Invalid choice. Please enter a number between 1 and %d.\n' "${#sizes[@]}" >&2
+  done
 }
 
 # --------------------------------------------------------------------------
@@ -659,10 +653,17 @@ deploy_collect_llm_config() {
   printf '  │ 2 │ Nous Portal    │ portal.nousresearch.com      │\n' >&2
   printf '  │ 3 │ Custom         │ your own endpoint            │\n' >&2
   printf '  └───┴────────────────┴──────────────────────────────┘\n' >&2
-  printf 'Choice [1]: ' >&2
 
   local provider_choice
-  IFS= read -r provider_choice
+  while true; do
+    printf 'Choice [1]: ' >&2
+    IFS= read -r provider_choice
+    [[ -z "$provider_choice" ]] && provider_choice=1
+    case "$provider_choice" in
+      1 | 2 | 3) break ;;
+      *) printf 'Invalid choice. Please enter 1, 2, or 3.\n' >&2 ;;
+    esac
+  done
 
   case "$provider_choice" in
     2)
@@ -704,7 +705,7 @@ deploy_collect_llm_config() {
       eval "$api_key_var=\"\$api_key\""
       eval "$model_var=''"
       ;;
-    *)
+    1)
       DEPLOY_LLM_PROVIDER="openrouter"
       export DEPLOY_LLM_PROVIDER
 
@@ -745,26 +746,23 @@ deploy_collect_llm_config() {
       done
       printf '  │ 5 │ Custom model ID    │ enter manually      │\n' >&2
       printf '  └───┴────────────────────┴─────────────────────┘\n' >&2
-      printf 'Choice [1]: ' >&2
 
       local model_choice
-      IFS= read -r model_choice
-
-      if [[ -z "$model_choice" ]]; then
-        model_choice=1
-      fi
-
-      if [[ "$model_choice" =~ ^[0-9]+$ ]] && ((model_choice >= 1 && model_choice <= ${#model_ids[@]})); then
-        model="${model_ids[$((model_choice - 1))]}"
-      elif [[ "$model_choice" == "5" ]]; then
-        printf 'Model ID (e.g. anthropic/claude-sonnet-4-20250514): ' >&2
-        IFS= read -r model
-        if [[ -z "$model" ]]; then
-          model="${model_ids[0]}"
+      while true; do
+        printf 'Choice [1]: ' >&2
+        IFS= read -r model_choice
+        [[ -z "$model_choice" ]] && model_choice=1
+        if [[ "$model_choice" =~ ^[0-9]+$ ]] && ((model_choice >= 1 && model_choice <= ${#model_ids[@]})); then
+          model="${model_ids[$((model_choice - 1))]}"
+          break
+        elif [[ "$model_choice" == "5" ]]; then
+          printf 'Model ID (e.g. anthropic/claude-sonnet-4-20250514): ' >&2
+          IFS= read -r model
+          [[ -z "$model" ]] && model="${model_ids[0]}"
+          break
         fi
-      else
-        model="${model_ids[0]}"
-      fi
+        printf 'Invalid choice. Please enter a number between 1 and 5.\n' >&2
+      done
 
       eval "$api_key_var=\"\$api_key\""
       eval "$model_var=\"\$model\""

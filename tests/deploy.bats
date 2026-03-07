@@ -743,6 +743,46 @@ teardown() {
   assert_output --partial "none (configure later)"
 }
 
+# --- Menu re-prompt validation ---
+
+@test "deploy_collect_org re-prompts on invalid input" {
+  export MOCK_FLY_ORGS_JSON='{"personal":"Alex Fazio","ai-garden":"AI Garden"}'
+  run bash -c 'export MOCK_FLY_ORGS_JSON='"'"'{"personal":"Alex Fazio","ai-garden":"AI Garden"}'"'"'; export NO_COLOR=1; export PATH="'"${BATS_TEST_DIRNAME}/mocks:${PATH}"'"; source lib/ui.sh; source lib/fly-helpers.sh; source lib/docker-helpers.sh; source lib/messaging.sh; source lib/config.sh; source lib/status.sh; source lib/deploy.sh; deploy_collect_org RESULT < <(printf "garbage\n1\n") 2>/dev/null; echo "$RESULT"'
+  assert_success
+  assert_output "personal"
+}
+
+@test "deploy_collect_region re-prompts on invalid input" {
+  run bash -c 'export NO_COLOR=1; export PATH="'"${BATS_TEST_DIRNAME}/mocks:${PATH}"'"; source lib/ui.sh; source lib/fly-helpers.sh; source lib/docker-helpers.sh; source lib/messaging.sh; source lib/config.sh; source lib/status.sh; source lib/deploy.sh; deploy_collect_region RESULT < <(printf "garbage\n1\n") 2>/dev/null; echo "$RESULT"'
+  assert_success
+  assert_output "iad"
+}
+
+@test "deploy_collect_vm_size re-prompts on invalid input" {
+  run bash -c 'export NO_COLOR=1; export PATH="'"${BATS_TEST_DIRNAME}/mocks:${PATH}"'"; source lib/ui.sh; source lib/fly-helpers.sh; source lib/docker-helpers.sh; source lib/messaging.sh; source lib/config.sh; source lib/status.sh; source lib/deploy.sh; deploy_collect_vm_size RESULT_SIZE RESULT_MEM < <(printf "garbage\n2\n") 2>/dev/null; echo "$RESULT_SIZE"'
+  assert_success
+  assert_output "shared-cpu-2x"
+}
+
+@test "deploy_collect_volume_size re-prompts on invalid input" {
+  run bash -c 'export NO_COLOR=1; export PATH="'"${BATS_TEST_DIRNAME}/mocks:${PATH}"'"; source lib/ui.sh; source lib/fly-helpers.sh; source lib/docker-helpers.sh; source lib/messaging.sh; source lib/config.sh; source lib/status.sh; source lib/deploy.sh; deploy_collect_volume_size RESULT < <(printf "garbage\n1\n") 2>/dev/null; echo "$RESULT"'
+  assert_success
+  assert_output "1"
+}
+
+@test "deploy_collect_llm_config re-prompts on invalid provider" {
+  run bash -c 'export NO_COLOR=1; export PATH="'"${BATS_TEST_DIRNAME}/mocks:${PATH}"'"; source lib/ui.sh; source lib/fly-helpers.sh; source lib/docker-helpers.sh; source lib/messaging.sh; source lib/config.sh; source lib/status.sh; source lib/deploy.sh; deploy_collect_llm_config KEY MODEL < <(printf "garbage\n2\nnous-key-123\n") 2>/dev/null; echo "PROVIDER=$DEPLOY_LLM_PROVIDER"'
+  assert_success
+  assert_output --partial "PROVIDER=nous"
+}
+
+@test "deploy_collect_llm_config re-prompts on invalid model choice" {
+  # Choice 1 (OpenRouter), API key, garbage model, then valid model 2
+  run bash -c 'export NO_COLOR=1; export PATH="'"${BATS_TEST_DIRNAME}/mocks:${PATH}"'"; source lib/ui.sh; source lib/fly-helpers.sh; source lib/docker-helpers.sh; source lib/messaging.sh; source lib/config.sh; source lib/status.sh; source lib/deploy.sh; deploy_collect_llm_config KEY MODEL < <(printf "1\nsk-test\ngarbage\n2\n") 2>/dev/null; echo "MODEL=$MODEL"'
+  assert_success
+  assert_output "MODEL=anthropic/claude-haiku-4-20250506"
+}
+
 @test "config_save_app after deploy stores app in config.yaml" {
   config_save_app "deploy-test-app" "ord"
   run cat "${HERMES_FLY_CONFIG_DIR}/config.yaml"

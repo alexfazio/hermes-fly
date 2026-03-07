@@ -5,6 +5,12 @@ primary_region = "{{REGION}}"
 
 [env]
 
+[http_service]
+  internal_port = 8080
+  auto_stop_machines = "off"
+  auto_start_machines = true
+  min_machines_running = 1
+
 [[vm]]
   size = "{{VM_SIZE}}"
   memory = "{{VM_MEMORY}}"
