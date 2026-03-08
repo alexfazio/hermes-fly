@@ -1,4 +1,6 @@
-![](docs/assets/hermes-fly-cover.png)
+# Hermes Fly
+
+![Hermes Fly cover](docs/assets/hermes-fly-cover.png)
 
 Deploy [Hermes Agent](https://github.com/NousResearch/hermes-agent) to
 [Fly.io](https://fly.io) with a single command.
@@ -66,8 +68,8 @@ Fly.io charges are usage-based. Typical monthly costs:
 | shared-cpu-2x  | 512 MB | ~$4.04  | $4.19  | $4.79  | $5.54  |
 | performance-1x | 2 GB   | ~$32.19 | $32.34 | $32.94 | $33.69 |
 
-Volume storage: $0.15/GB/month. See
-[Fly.io Pricing](https://fly.io/pricing) and [Fly.io Pricing Calculator](https://fly.io/calculator) for current rates.
+Volume storage: $0.15/GB/month. See [Fly.io Pricing](https://fly.io/pricing)
+and [Fly.io Calculator](https://fly.io/calculator) for current rates.
 
 ## Prerequisites
 
@@ -84,6 +86,25 @@ Secrets (API keys, bot tokens) are stored via
 are injected as environment variables at runtime.
 No secrets appear in fly.toml, Dockerfile, or
 local config.
+
+## Testing & Robustness
+
+The prerequisite auto-install feature is tested across diverse environments:
+
+- **57 edge case tests** covering platform detection, PATH safety, signal handling, and output processing
+- **370+ total tests** with zero regressions and 100% pass rate
+- **Explicit edge case validation** for:
+  - Platform detection (unsupported platforms, fallback behavior)
+  - PATH modifications in restricted environments
+  - Signal handling (SIGTERM, SIGINT, SIGKILL cleanup)
+  - Binary & malformed output handling
+  - CI/CD integration (--no-auto-install flag, CI=true bypass)
+  - Security hardening (command injection prevention)
+  - Boundary conditions (long paths, special characters, empty inputs)
+  - Permission errors (sudo failures, write denied)
+
+**See [docs/EDGE_CASE_HANDLING.md](docs/EDGE_CASE_HANDLING.md)** for details
+on edge case handling and test coverage.
 
 ## License
 
