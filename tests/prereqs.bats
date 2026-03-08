@@ -135,6 +135,7 @@ teardown() {
 @test "install_tool uses HERMES_FLY_FLYCTL_INSTALL_CMD on Darwin:no-brew" {
   export HERMES_FLY_PLATFORM="Darwin"
   PATH="/usr/bin:/bin"  # exclude brew mock
+  export HOME="$(mktemp -d)"
 
   # Create a simple mock install script
   local mock_script
@@ -155,6 +156,7 @@ EOF
   assert_output --partial "installed"
 
   rm -f "$mock_script"
+  rm -rf "$HOME"
 }
 
 @test "install_tool returns 1 and shows guide when install fails" {
@@ -309,6 +311,30 @@ EOF
   assert_success
 }
 
+@test "_prereqs_check_tool_available returns 1 when fly exists but is not callable" {
+  local fake_dir
+  fake_dir="$(mktemp -d)"
+  local fake_home
+  fake_home="$(mktemp -d)"
+  cat > "$fake_dir/fly" <<'EOF'
+#!/bin/bash
+if [[ "${1:-}" == "version" ]]; then
+  exit 1
+fi
+exit 0
+EOF
+  chmod +x "$fake_dir/fly"
+
+  export HERMES_FLY_TEST_MODE=1
+  export HOME="$fake_home"
+  PATH="$fake_dir:/usr/bin:/bin"
+  run _prereqs_check_tool_available "fly"
+  assert_failure
+
+  rm -rf "$fake_dir"
+  rm -rf "$fake_home"
+}
+
 @test "_prereqs_check_tool_available returns 0 when flyctl found and fly sibling symlink exists" {
   local fake_dir
   fake_dir="$(mktemp -d)"
@@ -334,6 +360,32 @@ EOF
   PATH="$fake_dir:/usr/bin:/bin"
   run _prereqs_check_tool_available "fly"
   assert_failure
+
+  rm -rf "$fake_dir"
+}
+
+@test "_prereqs_check_tool_available restores PATH when flyctl fallback fails" {
+  local fake_dir
+  fake_dir="$(mktemp -d)"
+  echo "#!/bin/bash" > "$fake_dir/flyctl"
+  chmod +x "$fake_dir/flyctl"
+
+  run bash -c "
+    export HERMES_FLY_TEST_MODE=1
+    PATH='$fake_dir:/usr/bin:/bin'
+    source '${PROJECT_ROOT}/lib/prereqs.sh'
+    before=\"\$PATH\"
+    _prereqs_check_tool_available 'fly' >/dev/null 2>&1
+    rc=\$?
+    after=\"\$PATH\"
+    echo \"rc=\$rc\"
+    echo \"before=\$before\"
+    echo \"after=\$after\"
+  "
+  assert_success
+  assert_line "rc=1"
+  assert_line "before=$fake_dir:/usr/bin:/bin"
+  assert_line "after=$fake_dir:/usr/bin:/bin"
 
   rm -rf "$fake_dir"
 }
@@ -781,6 +833,24 @@ CONF
   "
   assert_failure
 
+  rm -rf "$fake_home"
+}
+
+@test "_prereqs_reload_shell_config returns 1 when config file is unreadable" {
+  local fake_home
+  fake_home="$(mktemp -d)"
+  echo "export PATH=/tmp/test:\$PATH" > "$fake_home/.bashrc"
+  chmod 000 "$fake_home/.bashrc"
+
+  run bash -c "
+    export HOME='$fake_home'
+    export SHELL='/bin/bash'
+    source '${PROJECT_ROOT}/lib/prereqs.sh'
+    _prereqs_reload_shell_config
+  "
+  assert_failure
+
+  chmod 600 "$fake_home/.bashrc"
   rm -rf "$fake_home"
 }
 

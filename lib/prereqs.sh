@@ -51,8 +51,11 @@ _prereqs_check_tool_available() {
 
   # Special handling for fly tool: check multiple binary names and locations
   if [[ "$tool" == "fly" ]]; then
+    local original_path="${PATH}"
+    local path_mutated=false
+
     # Check for 'fly' binary on PATH
-    if command -v fly >/dev/null 2>&1; then
+    if command -v fly >/dev/null 2>&1 && fly version >/dev/null 2>&1; then
       return 0
     fi
 
@@ -62,25 +65,32 @@ _prereqs_check_tool_available() {
       flyctl_dir="$(dirname "$(command -v flyctl)")"
       if [[ ":${PATH}:" != *":${flyctl_dir}:"* ]]; then
         export PATH="${flyctl_dir}:${PATH}"
+        path_mutated=true
       fi
       # Verify 'fly' is now accessible (flyctl alone is not enough)
-      if command -v fly >/dev/null 2>&1; then
+      if command -v fly >/dev/null 2>&1 && fly version >/dev/null 2>&1; then
         return 0
       fi
     fi
 
     # Check for direct file paths in ~/.fly/bin (unless in test mode)
     if [[ "${HERMES_FLY_TEST_MODE:-}" != "1" ]]; then
-      if [[ -x "${HOME}/.fly/bin/fly" ]] || [[ -x "${HOME}/.fly/bin/flyctl" ]]; then
+      if [[ -x "${HOME}/.fly/bin/fly" ]]; then
         # In CI environments, skip PATH export
         if [[ "${CI:-}" != "true" ]] && [[ ":${PATH}:" != *":${HOME}/.fly/bin:"* ]]; then
           export PATH="${HOME}/.fly/bin:${PATH}"
+          path_mutated=true
         fi
-        # Verify fly is actually callable, not just that the file exists
-        if command -v fly >/dev/null 2>&1; then
+        # Verify fly is actually callable, not just discoverable
+        if command -v fly >/dev/null 2>&1 && fly version >/dev/null 2>&1; then
           return 0
         fi
       fi
+    fi
+
+    # On failure, restore PATH to avoid side effects in later prerequisite checks.
+    if [[ "$path_mutated" == "true" ]]; then
+      export PATH="${original_path}"
     fi
 
     # Not found
@@ -141,14 +151,25 @@ _prereqs_reload_shell_config() {
 
   # Check if config file exists
   [[ -f "$config_file" ]] || return 1
+  [[ -r "$config_file" ]] || return 1
 
   # Safely apply only explicit PATH exports — avoids side effects from full config sourcing.
   # grep -E anchors to '^export PATH=' so only PATH-setting lines are eval'd, preventing
   # arbitrary code execution. The user's own config file is the trust boundary.
+  local path_lines grep_rc=0
+  path_lines="$(grep -E '^export PATH=' "$config_file" 2>/dev/null)" || grep_rc=$?
+  if [[ "$grep_rc" -ne 0 ]] && [[ "$grep_rc" -ne 1 ]]; then
+    return 1
+  fi
+
   local path_line
-  while IFS= read -r path_line; do
-    eval "$path_line" 2>/dev/null || true
-  done < <(grep -E '^export PATH=' "$config_file" 2>/dev/null)
+  if [[ "$grep_rc" -eq 0 ]]; then
+    while IFS= read -r path_line; do
+      eval "$path_line" 2>/dev/null || true
+    done <<< "$path_lines"
+  fi
+
+  return 0
 }
 
 # prereqs_show_guide — display fallback manual installation guide

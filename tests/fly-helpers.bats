@@ -26,16 +26,16 @@ teardown() {
   assert_failure
 }
 
-@test "fly_check_installed returns 0 when flyctl binary found via PATH" {
+@test "fly_check_installed fails when only flyctl exists on PATH" {
   # Create a mock flyctl
   local fake_dir
   fake_dir="$(mktemp -d)"
   echo "#!/bin/bash" > "$fake_dir/flyctl"
   chmod +x "$fake_dir/flyctl"
 
-  PATH="$fake_dir:${PATH}"
+  PATH="$fake_dir:/usr/bin:/bin"
   run fly_check_installed
-  assert_success
+  assert_failure
 
   rm -rf "$fake_dir"
 }
@@ -125,6 +125,33 @@ teardown() {
   "
   assert_failure
   assert_output --partial "Error"
+
+  rm -rf "$fake_dir"
+}
+
+@test "fly_check_installed fallback restores PATH when flyctl probe fails" {
+  local fake_dir
+  fake_dir="$(mktemp -d)"
+  echo "#!/bin/bash" > "$fake_dir/flyctl"
+  chmod +x "$fake_dir/flyctl"
+
+  run bash -c "
+    source '${PROJECT_ROOT}/lib/ui.sh'
+    unset -f _prereqs_check_tool_available 2>/dev/null || true
+    PATH='$fake_dir:/usr/bin:/bin'
+    source '${PROJECT_ROOT}/lib/fly-helpers.sh'
+    before=\"\$PATH\"
+    fly_check_installed >/dev/null 2>&1
+    rc=\$?
+    after=\"\$PATH\"
+    echo \"rc=\$rc\"
+    echo \"before=\$before\"
+    echo \"after=\$after\"
+  "
+  assert_success
+  assert_line "rc=1"
+  assert_line "before=$fake_dir:/usr/bin:/bin"
+  assert_line "after=$fake_dir:/usr/bin:/bin"
 
   rm -rf "$fake_dir"
 }
