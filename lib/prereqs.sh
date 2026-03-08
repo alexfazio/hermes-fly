@@ -56,16 +56,24 @@ _prereqs_check_tool_available() {
       return 0
     fi
 
-    # Check for 'flyctl' binary on PATH (alternative name)
+    # Check for 'flyctl' binary on PATH — add its directory to expose sibling 'fly'
     if command -v flyctl >/dev/null 2>&1; then
-      return 0
+      local flyctl_dir
+      flyctl_dir="$(dirname "$(command -v flyctl)")"
+      if [[ ":${PATH}:" != *":${flyctl_dir}:"* ]]; then
+        export PATH="${flyctl_dir}:${PATH}"
+      fi
+      # Verify 'fly' is now accessible (flyctl alone is not enough)
+      if command -v fly >/dev/null 2>&1; then
+        return 0
+      fi
     fi
 
     # Check for direct file paths in ~/.fly/bin (unless in test mode)
     if [[ "${HERMES_FLY_TEST_MODE:-}" != "1" ]]; then
       if [[ -f "${HOME}/.fly/bin/fly" ]] || [[ -f "${HOME}/.fly/bin/flyctl" ]]; then
         # In CI environments, skip PATH export
-        if [[ "${CI:-}" != "true" ]]; then
+        if [[ "${CI:-}" != "true" ]] && [[ ":${PATH}:" != *":${HOME}/.fly/bin:"* ]]; then
           export PATH="${HOME}/.fly/bin:${PATH}"
         fi
         return 0
@@ -84,25 +92,16 @@ _prereqs_check_tool_available() {
 # No arguments
 # Returns: shell name to stdout (zsh, bash, fish, sh)
 _prereqs_detect_shell() {
-  # Check ZSH_VERSION first
-  if [[ -n "${ZSH_VERSION:-}" ]]; then
-    echo "zsh"
-    return 0
-  fi
-
-  # Check BASH_VERSION
-  if [[ -n "${BASH_VERSION:-}" ]]; then
-    echo "bash"
-    return 0
-  fi
-
-  # Use SHELL environment variable
+  # SHELL env var reflects user's login shell, not the script interpreter
   if [[ -n "${SHELL:-}" ]]; then
     basename "$SHELL"
     return 0
   fi
 
-  # Fallback to sh
+  # Fallback: check version variables (only when SHELL is unset)
+  if [[ -n "${ZSH_VERSION:-}" ]]; then echo "zsh"; return 0; fi
+  if [[ -n "${BASH_VERSION:-}" ]]; then echo "bash"; return 0; fi
+
   echo "sh"
 }
 
@@ -113,24 +112,10 @@ _prereqs_get_shell_config() {
   local shell="$1"
 
   case "$shell" in
-    zsh)
-      # shellcheck disable=SC2088
-      echo "~/.zshrc"
-      return 0
-      ;;
-    bash)
-      # shellcheck disable=SC2088
-      echo "~/.bashrc"
-      return 0
-      ;;
-    fish)
-      # shellcheck disable=SC2088
-      echo "~/.config/fish/config.fish"
-      return 0
-      ;;
-    *)
-      return 1
-      ;;
+    zsh)  echo "${HOME}/.zshrc"; return 0 ;;
+    bash) echo "${HOME}/.bashrc"; return 0 ;;
+    fish) echo "${HOME}/.config/fish/config.fish"; return 0 ;;
+    *)    return 1 ;;
   esac
 }
 
@@ -147,15 +132,14 @@ _prereqs_reload_shell_config() {
   # Get shell config file path
   config_file="$(_prereqs_get_shell_config "$shell")" || return 1
 
-  # Expand ~ to $HOME
-  config_file="${config_file/#\~/$HOME}"
-
   # Check if config file exists
   [[ -f "$config_file" ]] || return 1
 
-  # Source the config file; suppress errors from malformed configs
-  # shellcheck source=/dev/null
-  source "$config_file" 2>/dev/null
+  # Safely apply only explicit PATH exports — avoids side effects
+  local path_line
+  while IFS= read -r path_line; do
+    eval "$path_line" 2>/dev/null || true
+  done < <(grep -E '^export PATH=' "$config_file" 2>/dev/null)
 }
 
 # prereqs_show_guide — display fallback manual installation guide
@@ -268,19 +252,24 @@ prereqs_install_tool() {
   # Post-install verification: verify tool is actually accessible
   if [[ "$tool" == "fly" ]]; then
     if ! _prereqs_check_tool_available "fly" >/dev/null 2>&1; then
-      printf '  \033[31m✗\033[0m Installation completed but binary not accessible. Restart terminal or run: source ~/.zshrc\n' >&2
+      local shell_config_hint="restart your terminal"
+      local _fail_shell _fail_config
+      _fail_shell="$(_prereqs_detect_shell 2>/dev/null)"
+      if _fail_config="$(_prereqs_get_shell_config "$_fail_shell" 2>/dev/null)"; then
+        shell_config_hint="source ${_fail_config}"
+      fi
+      printf '  \033[31m✗\033[0m Installation completed but binary not accessible. Restart terminal or run: %s\n' \
+        "${shell_config_hint}" >&2
       return 1
     fi
   fi
 
-  # flyctl: add ~/.fly/bin to PATH for current session
+  # flyctl: add ~/.fly/bin to PATH for current session (with dedup guard)
   if [[ "$tool" == "fly" ]] && [[ -d "${HOME}/.fly/bin" ]]; then
-    export PATH="${HOME}/.fly/bin:${PATH}"
+    if [[ ":${PATH}:" != *":${HOME}/.fly/bin:"* ]]; then
+      export PATH="${HOME}/.fly/bin:${PATH}"
+    fi
     printf '  \033[32m✓\033[0m flyctl installed and ready\n' >&2
-
-    # Attempt to reload shell config to make PATH updates active
-    # Don't fail the install if reload fails (PATH export already active)
-    _prereqs_reload_shell_config >/dev/null 2>&1 || true
   else
     printf '  \033[32m✓\033[0m %s installed\n' "$tool" >&2
   fi

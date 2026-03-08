@@ -40,6 +40,60 @@ teardown() {
   rm -rf "$fake_dir"
 }
 
+@test "fly_check_installed delegates to _prereqs_check_tool_available when prereqs.sh sourced" {
+  local fake_home
+  fake_home="$(mktemp -d)"
+  mkdir -p "$fake_home/.fly/bin"
+  echo "#!/bin/bash" > "$fake_home/.fly/bin/fly"
+  chmod +x "$fake_home/.fly/bin/fly"
+
+  export HOME="$fake_home"
+  PATH="/usr/bin:/bin"
+
+  run bash -c "
+    source '${PROJECT_ROOT}/lib/prereqs.sh'
+    source '${PROJECT_ROOT}/lib/fly-helpers.sh'
+    fly_check_installed
+  "
+  assert_success
+
+  rm -rf "$fake_home"
+}
+
+@test "fly_check_installed falls back to direct command -v when prereqs.sh not sourced" {
+  run bash -c "
+    # Don't source prereqs.sh — only fly-helpers.sh
+    source '${PROJECT_ROOT}/lib/ui.sh'
+    # Undefine _prereqs_check_tool_available if it exists
+    unset -f _prereqs_check_tool_available 2>/dev/null || true
+
+    PATH='${BATS_TEST_DIRNAME}/mocks:/usr/bin:/bin'
+    source '${PROJECT_ROOT}/lib/fly-helpers.sh'
+    fly_check_installed
+  "
+  assert_success
+}
+
+@test "fly_check_installed returns 0 when fly is in ~/.fly/bin via prereqs delegation" {
+  local fake_home
+  fake_home="$(mktemp -d)"
+  mkdir -p "$fake_home/.fly/bin"
+  echo "#!/bin/bash" > "$fake_home/.fly/bin/fly"
+  chmod +x "$fake_home/.fly/bin/fly"
+
+  export HOME="$fake_home"
+  PATH="/usr/bin:/bin"
+
+  run bash -c "
+    source '${PROJECT_ROOT}/lib/prereqs.sh'
+    source '${PROJECT_ROOT}/lib/fly-helpers.sh'
+    fly_check_installed
+  "
+  assert_success
+
+  rm -rf "$fake_home"
+}
+
 @test "fly_check_installed returns 1 with error message when all checks fail" {
   local fake_home
   fake_home="$(mktemp -d)"

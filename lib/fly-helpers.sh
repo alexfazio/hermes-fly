@@ -23,17 +23,19 @@ fi
 # Side effects: exports PATH when file fallback found (unless in CI)
 # --------------------------------------------------------------------------
 fly_check_installed() {
-  # Check for 'fly' binary on PATH
-  if command -v fly >/dev/null 2>&1; then
-    return 0
+  # Delegate to prereqs helper if available (handles ~/.fly/bin, flyctl symlink, etc.)
+  if declare -f _prereqs_check_tool_available >/dev/null 2>&1; then
+    if _prereqs_check_tool_available "fly"; then
+      return 0
+    fi
+    echo "Error: fly CLI not found. Install from https://fly.io/docs/flyctl/install/" >&2
+    return 1
   fi
 
-  # Check for 'flyctl' binary on PATH (alternative name)
-  if command -v flyctl >/dev/null 2>&1; then
+  # Fallback: direct command checks when prereqs.sh not sourced
+  if command -v fly >/dev/null 2>&1 || command -v flyctl >/dev/null 2>&1; then
     return 0
   fi
-
-  # Not found
   echo "Error: fly CLI not found. Install from https://fly.io/docs/flyctl/install/" >&2
   return 1
 }

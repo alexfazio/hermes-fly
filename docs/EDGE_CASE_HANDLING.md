@@ -710,9 +710,9 @@ Added `_prereqs_check_tool_available()` helper that:
 This makes the tool available in the SAME PROCESS, preventing repeated install attempts.
 
 **Implementation:**
-- Lines 43-73 in `lib/prereqs.sh`
+- `_prereqs_check_tool_available()` lives in `lib/prereqs.sh` (lines 43-73)
 - Integrated into `prereqs_check_and_install()` at lines 282 and 295
-- Also integrated into `fly_check_installed()` in `lib/fly-helpers.sh` lines 24-47
+- `fly_check_installed()` in `lib/fly-helpers.sh` **delegates** to `_prereqs_check_tool_available()` when available, using a `declare -f` guard to check whether `prereqs.sh` has been sourced. This allows `fly_check_installed()` to work both standalone (PATH-only check) and with the full file-path fallback when prereqs.sh is loaded.
 
 **Validating Tests:**
 - Tests 32-39: `_prereqs_check_tool_available()` function tests

@@ -308,15 +308,49 @@ EOF
   assert_success
 }
 
-@test "_prereqs_check_tool_available returns 0 when flyctl binary found via command -v" {
-  # Create a mock flyctl
+@test "_prereqs_check_tool_available returns 0 when flyctl found and fly sibling symlink exists" {
+  local fake_dir
+  fake_dir="$(mktemp -d)"
+  echo "#!/bin/bash" > "$fake_dir/flyctl"
+  chmod +x "$fake_dir/flyctl"
+  ln -s "$fake_dir/flyctl" "$fake_dir/fly"
+
+  export HERMES_FLY_TEST_MODE=1
+  PATH="$fake_dir:/usr/bin:/bin"
+  run _prereqs_check_tool_available "fly"
+  assert_success
+
+  rm -rf "$fake_dir"
+}
+
+@test "_prereqs_check_tool_available returns 1 when flyctl found but no fly symlink exists" {
   local fake_dir
   fake_dir="$(mktemp -d)"
   echo "#!/bin/bash" > "$fake_dir/flyctl"
   chmod +x "$fake_dir/flyctl"
 
-  PATH="$fake_dir:${PATH}"
+  export HERMES_FLY_TEST_MODE=1
+  PATH="$fake_dir:/usr/bin:/bin"
   run _prereqs_check_tool_available "fly"
+  assert_failure
+
+  rm -rf "$fake_dir"
+}
+
+@test "_prereqs_check_tool_available adds flyctl directory to PATH when flyctl found" {
+  local fake_dir
+  fake_dir="$(mktemp -d)"
+  echo "#!/bin/bash" > "$fake_dir/flyctl"
+  chmod +x "$fake_dir/flyctl"
+  ln -s "$fake_dir/flyctl" "$fake_dir/fly"
+
+  run bash -c "
+    export HERMES_FLY_TEST_MODE=1
+    PATH='$fake_dir:/usr/bin:/bin'
+    source '${PROJECT_ROOT}/lib/prereqs.sh'
+    _prereqs_check_tool_available 'fly'
+    echo \"\$PATH\" | grep -c '$fake_dir'
+  "
   assert_success
 
   rm -rf "$fake_dir"
@@ -471,8 +505,30 @@ EOF
 
 # --- STEP 4: _prereqs_detect_shell() Tests ---
 
-@test "_prereqs_detect_shell returns zsh when ZSH_VERSION environment variable is set" {
+@test "_prereqs_detect_shell returns zsh from SHELL=/bin/zsh even when BASH_VERSION is set" {
   run bash -c "
+    export SHELL='/bin/zsh'
+    export BASH_VERSION='5.1.16'
+    source '${PROJECT_ROOT}/lib/prereqs.sh'
+    _prereqs_detect_shell
+  "
+  assert_success
+  assert_output "zsh"
+}
+
+@test "_prereqs_detect_shell returns fish from SHELL=/usr/local/bin/fish via basename extraction" {
+  run bash -c "
+    export SHELL='/usr/local/bin/fish'
+    source '${PROJECT_ROOT}/lib/prereqs.sh'
+    _prereqs_detect_shell
+  "
+  assert_success
+  assert_output "fish"
+}
+
+@test "_prereqs_detect_shell returns zsh from ZSH_VERSION when SHELL env var is unset" {
+  run bash -c "
+    unset SHELL
     export ZSH_VERSION='5.8'
     source '${PROJECT_ROOT}/lib/prereqs.sh'
     _prereqs_detect_shell
@@ -481,26 +537,15 @@ EOF
   assert_output "zsh"
 }
 
-@test "_prereqs_detect_shell returns bash when BASH_VERSION set and ZSH_VERSION unset" {
+@test "_prereqs_detect_shell returns bash from BASH_VERSION when SHELL unset and ZSH_VERSION unset" {
   run bash -c "
-    unset ZSH_VERSION
+    unset SHELL ZSH_VERSION
     export BASH_VERSION='5.1.16'
     source '${PROJECT_ROOT}/lib/prereqs.sh'
     _prereqs_detect_shell
   "
   assert_success
   assert_output "bash"
-}
-
-@test "_prereqs_detect_shell returns shell name from SHELL env variable as fallback" {
-  run bash -c "
-    unset ZSH_VERSION BASH_VERSION
-    export SHELL='/usr/bin/fish'
-    source '${PROJECT_ROOT}/lib/prereqs.sh'
-    _prereqs_detect_shell
-  "
-  assert_success
-  assert_output "fish"
 }
 
 @test "_prereqs_detect_shell returns sh when no detection variables present" {
@@ -515,31 +560,31 @@ EOF
 
 # --- STEP 5: _prereqs_get_shell_config() Tests ---
 
-@test "_prereqs_get_shell_config returns ~/.zshrc for zsh shell" {
+@test "_prereqs_get_shell_config returns expanded HOME/.zshrc for zsh shell" {
   run bash -c "
     source '${PROJECT_ROOT}/lib/prereqs.sh'
     _prereqs_get_shell_config 'zsh'
   "
   assert_success
-  assert_output "~/.zshrc"
+  assert_output "${HOME}/.zshrc"
 }
 
-@test "_prereqs_get_shell_config returns ~/.bashrc for bash shell" {
+@test "_prereqs_get_shell_config returns expanded HOME/.bashrc for bash shell" {
   run bash -c "
     source '${PROJECT_ROOT}/lib/prereqs.sh'
     _prereqs_get_shell_config 'bash'
   "
   assert_success
-  assert_output "~/.bashrc"
+  assert_output "${HOME}/.bashrc"
 }
 
-@test "_prereqs_get_shell_config returns ~/.config/fish/config.fish for fish shell" {
+@test "_prereqs_get_shell_config returns expanded HOME/.config/fish/config.fish for fish shell" {
   run bash -c "
     source '${PROJECT_ROOT}/lib/prereqs.sh'
     _prereqs_get_shell_config 'fish'
   "
   assert_success
-  assert_output "~/.config/fish/config.fish"
+  assert_output "${HOME}/.config/fish/config.fish"
 }
 
 @test "_prereqs_get_shell_config returns exit code 1 for unknown shell" {
@@ -551,6 +596,89 @@ EOF
 }
 
 # --- STEP 6: _prereqs_reload_shell_config() Tests ---
+
+@test "_prereqs_reload_shell_config does not terminate process when config has exit 42" {
+  local fake_home
+  fake_home="$(mktemp -d)"
+  echo "exit 42" > "$fake_home/.bashrc"
+
+  run bash -c "
+    export HOME='$fake_home'
+    export SHELL='/bin/bash'
+    source '${PROJECT_ROOT}/lib/prereqs.sh'
+    _prereqs_reload_shell_config
+    echo 'process_survived'
+  "
+  assert_success
+  assert_output --partial "process_survived"
+
+  rm -rf "$fake_home"
+}
+
+@test "_prereqs_reload_shell_config extracts and applies export PATH line from config" {
+  local fake_home
+  fake_home="$(mktemp -d)"
+  cat > "$fake_home/.bashrc" <<'CONF'
+# some comment
+alias ll='ls -la'
+export PATH=/custom/new/path:$PATH
+my_function() { echo hello; }
+CONF
+
+  run bash -c "
+    export HOME='$fake_home'
+    export SHELL='/bin/bash'
+    source '${PROJECT_ROOT}/lib/prereqs.sh'
+    _prereqs_reload_shell_config
+    echo \"\$PATH\" | grep -c '/custom/new/path'
+  "
+  assert_success
+  assert_output "1"
+
+  rm -rf "$fake_home"
+}
+
+@test "_prereqs_reload_shell_config returns 0 when config has no export PATH line" {
+  local fake_home
+  fake_home="$(mktemp -d)"
+  echo "# just a comment" > "$fake_home/.bashrc"
+
+  run bash -c "
+    export HOME='$fake_home'
+    export SHELL='/bin/bash'
+    source '${PROJECT_ROOT}/lib/prereqs.sh'
+    _prereqs_reload_shell_config
+  "
+  assert_success
+
+  rm -rf "$fake_home"
+}
+
+@test "_prereqs_reload_shell_config does not import functions or aliases from config" {
+  local fake_home
+  fake_home="$(mktemp -d)"
+  cat > "$fake_home/.bashrc" <<'CONF'
+my_test_func() { echo "imported"; }
+alias my_test_alias='echo imported'
+export PATH=/some/path:$PATH
+CONF
+
+  run bash -c "
+    export HOME='$fake_home'
+    export SHELL='/bin/bash'
+    source '${PROJECT_ROOT}/lib/prereqs.sh'
+    _prereqs_reload_shell_config
+    if declare -f my_test_func >/dev/null 2>&1; then
+      echo 'FUNCTION_IMPORTED'
+    else
+      echo 'NO_FUNCTION'
+    fi
+  "
+  assert_success
+  assert_output "NO_FUNCTION"
+
+  rm -rf "$fake_home"
+}
 
 @test "_prereqs_reload_shell_config returns 0 when config file exists and sources successfully" {
   local fake_home
@@ -618,6 +746,134 @@ EOF
 
 # --- STEP 7: Updated prereqs_install_tool() Tests ---
 
+@test "_prereqs_check_tool_available twice does not duplicate ~/.fly/bin in PATH" {
+  local fake_home
+  fake_home="$(mktemp -d)"
+  mkdir -p "$fake_home/.fly/bin"
+  echo "#!/bin/bash" > "$fake_home/.fly/bin/fly"
+  chmod +x "$fake_home/.fly/bin/fly"
+
+  run bash -c "
+    export HOME='$fake_home'
+    PATH='/usr/bin:/bin'
+    source '${PROJECT_ROOT}/lib/prereqs.sh'
+    _prereqs_check_tool_available 'fly'
+    _prereqs_check_tool_available 'fly'
+    echo \"\$PATH\" | tr ':' '\n' | grep -c '.fly/bin'
+  "
+  assert_success
+  assert_output "1"
+
+  rm -rf "$fake_home"
+}
+
+@test "prereqs_install_tool does not add ~/.fly/bin to PATH when already present" {
+  export HERMES_FLY_PLATFORM="Darwin"
+  PATH="${BATS_TEST_DIRNAME}/mocks:${PATH}"
+
+  local fake_home
+  fake_home="$(mktemp -d)"
+  mkdir -p "$fake_home/.fly/bin"
+  echo "#!/bin/bash" > "$fake_home/.fly/bin/fly"
+  chmod +x "$fake_home/.fly/bin/fly"
+
+  run bash -c "
+    export HOME='$fake_home'
+    export PATH='${BATS_TEST_DIRNAME}/mocks:$fake_home/.fly/bin:/usr/bin:/bin'
+    source '${PROJECT_ROOT}/lib/ui.sh'
+    source '${PROJECT_ROOT}/lib/prereqs.sh'
+    prereqs_install_tool 'fly' 'Darwin:brew'
+    echo \"\$PATH\" | tr ':' '\n' | grep -c '.fly/bin'
+  "
+  assert_success
+  assert_output --partial "1"
+
+  rm -rf "$fake_home"
+}
+
+@test "_prereqs_check_tool_available first call correctly adds ~/.fly/bin when absent" {
+  local fake_home
+  fake_home="$(mktemp -d)"
+  mkdir -p "$fake_home/.fly/bin"
+  echo "#!/bin/bash" > "$fake_home/.fly/bin/fly"
+  chmod +x "$fake_home/.fly/bin/fly"
+
+  run bash -c "
+    export HOME='$fake_home'
+    PATH='/usr/bin:/bin'
+    source '${PROJECT_ROOT}/lib/prereqs.sh'
+    _prereqs_check_tool_available 'fly'
+    echo \"\$PATH\" | tr ':' '\n' | grep -c '.fly/bin'
+  "
+  assert_success
+  assert_output "1"
+
+  rm -rf "$fake_home"
+}
+
+@test "install_tool shows source ~/.zshrc in failure message when SHELL is zsh" {
+  local fake_home
+  fake_home="$(mktemp -d)"
+
+  run bash -c "
+    export HOME='$fake_home'
+    export SHELL='/bin/zsh'
+    export HERMES_FLY_TEST_MODE=1
+    PATH='${BATS_TEST_DIRNAME}/mocks:/usr/bin:/bin'
+    source '${PROJECT_ROOT}/lib/ui.sh'
+    source '${PROJECT_ROOT}/lib/prereqs.sh'
+    # Force post-install verification to fail
+    _prereqs_check_tool_available() { return 1; }
+    prereqs_install_tool 'fly' 'Darwin:brew' 2>&1
+  "
+  assert_failure
+  assert_output --partial '.zshrc'
+
+  rm -rf "$fake_home"
+}
+
+@test "install_tool shows source ~/.bashrc in failure message when SHELL is bash" {
+  local fake_home
+  fake_home="$(mktemp -d)"
+
+  run bash -c "
+    export HOME='$fake_home'
+    export SHELL='/bin/bash'
+    export HERMES_FLY_TEST_MODE=1
+    PATH='${BATS_TEST_DIRNAME}/mocks:/usr/bin:/bin'
+    source '${PROJECT_ROOT}/lib/ui.sh'
+    source '${PROJECT_ROOT}/lib/prereqs.sh'
+    # Force post-install verification to fail
+    _prereqs_check_tool_available() { return 1; }
+    prereqs_install_tool 'fly' 'Darwin:brew' 2>&1
+  "
+  assert_failure
+  assert_output --partial '.bashrc'
+
+  rm -rf "$fake_home"
+}
+
+@test "install_tool falls back to restart your terminal for unknown shell" {
+  local fake_home
+  fake_home="$(mktemp -d)"
+
+  run bash -c "
+    export HOME='$fake_home'
+    unset SHELL ZSH_VERSION BASH_VERSION
+    export HERMES_FLY_TEST_MODE=1
+    PATH='${BATS_TEST_DIRNAME}/mocks:/usr/bin:/bin'
+    source '${PROJECT_ROOT}/lib/ui.sh'
+    source '${PROJECT_ROOT}/lib/prereqs.sh'
+    # Force post-install verification to fail
+    _prereqs_check_tool_available() { return 1; }
+    prereqs_install_tool 'fly' 'Darwin:brew' 2>&1
+  "
+  assert_failure
+  assert_output --partial 'restart your terminal'
+
+  rm -rf "$fake_home"
+}
+
 @test "install_tool post-install verification succeeds when file exists and callable" {
   export HERMES_FLY_PLATFORM="Darwin"
   PATH="${BATS_TEST_DIRNAME}/mocks:${PATH}"
@@ -641,7 +897,7 @@ EOF
   rm -rf "$fake_home"
 }
 
-@test "install_tool shell config reload is attempted after successful flyctl install" {
+@test "install_tool does NOT call _prereqs_reload_shell_config on success" {
   export HERMES_FLY_PLATFORM="Darwin"
   PATH="${BATS_TEST_DIRNAME}/mocks:${PATH}"
 
@@ -658,9 +914,12 @@ EOF
   run bash -c "
     source '${PROJECT_ROOT}/lib/ui.sh'
     source '${PROJECT_ROOT}/lib/prereqs.sh'
+    # Override _prereqs_reload_shell_config to detect if called
+    _prereqs_reload_shell_config() { echo 'RELOAD_CALLED'; }
     prereqs_install_tool 'fly' 'Darwin:brew'
   "
   assert_success
+  refute_output --partial "RELOAD_CALLED"
 
   rm -rf "$fake_home"
 }

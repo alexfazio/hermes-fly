@@ -188,6 +188,10 @@ Tests use environment variables to customize behavior without modifying real fil
 | `HERMES_FLY_CONFIG_DIR=$(mktemp -d)` | Isolated config directory per test |
 | `HERMES_FLY_LOG_DIR=$(mktemp -d)` | Isolated log directory per test |
 | `NO_COLOR=1` | Disable colors for predictable text matching |
+| `HERMES_FLY_TEST_MODE=1` | Skip `~/.fly/bin` file-path fallback in `_prereqs_check_tool_available` |
+| `HERMES_FLY_NO_AUTO_INSTALL=1` | Disable auto-install prompts (non-interactive CI mode) |
+| `HERMES_FLY_FLYCTL_INSTALL_CMD=...` | Override flyctl install command for custom install testing |
+| `HERMES_FLY_VERBOSE=1` | Stream install output directly instead of capturing |
 
 Example cleanup:
 
