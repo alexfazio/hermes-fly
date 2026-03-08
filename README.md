@@ -1,7 +1,5 @@
 ![](docs/assets/hermes-fly-cover.png)
 
-# hermes-fly
-
 Deploy [Hermes](https://github.com/rubbrband/hermes) to
 [Fly.io](https://fly.io) with a single command.
 
