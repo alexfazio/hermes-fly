@@ -60,14 +60,14 @@ The wizard walks you through:
 
 Fly.io charges are usage-based. Typical monthly costs:
 
-| VM Size        | Mem    | VM     | +1 GB  | +5 GB  | +10 GB |
-| -------------- | ------ | ------ | ------ | ------ | ------ |
-| shared-cpu-1x  | 256 MB | ~$1.94 | $2.09  | $2.69  | $3.44  |
-| shared-cpu-2x  | 512 MB | ~$3.88 | $4.03  | $4.63  | $5.38  |
-| performance-1x | 2 GB   | ~$12   | $12.15 | $12.75 | $13.50 |
+| VM Size        | Mem    | VM      | +1 GB  | +5 GB  | +10 GB |
+| -------------- | ------ | ------- | ------ | ------ | ------ |
+| shared-cpu-1x  | 256 MB | ~$2.02  | $2.17  | $2.77  | $3.52  |
+| shared-cpu-2x  | 512 MB | ~$4.04  | $4.19  | $4.79  | $5.54  |
+| performance-1x | 2 GB   | ~$32.19 | $32.34 | $32.94 | $33.69 |
 
 Volume storage: $0.15/GB/month. See
-[Fly.io Pricing](https://fly.io/pricing) for current rates.
+[Fly.io Pricing](https://fly.io/pricing) and [Fly.io Pricing Calculator](https://fly.io/calculator) for current rates.
 
 ## Prerequisites
 
@@ -96,3 +96,13 @@ See the [docs/](docs/) directory for detailed guides:
 - [Getting Started](docs/getting-started.md) -- step-by-step deployment walkthrough
 - [Messaging Setup](docs/messaging.md) -- Telegram and Discord configuration
 - [Troubleshooting](docs/troubleshooting.md) -- common issues and fixes
+
+---
+
+## References
+
+- [Fly.io Detailed Pricing Documentation](https://fly.io/docs/about/pricing/)
+- [Fly.io Pricing Overview](https://fly.io/pricing)
+- [Fly.io flyctl Installation Guide](https://fly.io/docs/flyctl/install/)
+- [NousResearch hermes-agent Repository](https://github.com/NousResearch/hermes-agent)
+- [alexfazio hermes-fly Repository](https://github.com/alexfazio/hermes-fly)

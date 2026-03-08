@@ -14,6 +14,7 @@ unset _self _dir
 
 # Source all library modules
 source "${SCRIPT_DIR}/lib/ui.sh"
+source "${SCRIPT_DIR}/lib/prereqs.sh"
 source "${SCRIPT_DIR}/lib/fly-helpers.sh"
 source "${SCRIPT_DIR}/lib/docker-helpers.sh"
 source "${SCRIPT_DIR}/lib/messaging.sh"
@@ -76,7 +77,11 @@ Guides you through deploying Hermes Agent to Fly.io:
   7. Verifies deployment health
 
 Usage:
-  hermes-fly deploy [--help]
+  hermes-fly deploy [--help] [--no-auto-install]
+
+Options:
+  --no-auto-install   Skip automatic installation of missing prerequisites
+                      (also honoured when CI=true is set)
 
 The wizard will prompt for all required information interactively.
 EOF
@@ -93,6 +98,9 @@ main() {
                 show_deploy_help
                 return 0
             fi
+            for arg in "$@"; do
+                [[ "$arg" == "--no-auto-install" ]] && export HERMES_FLY_NO_AUTO_INSTALL=1
+            done
             cmd_deploy "$@"
             ;;
         status)

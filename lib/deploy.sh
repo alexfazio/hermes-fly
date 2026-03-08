@@ -103,7 +103,10 @@ deploy_preflight() {
     deploy_check_platform || return 1
 
     ui_step 2 "$total" "Checking prerequisites"
-    deploy_check_prerequisites || return 1
+    if ! deploy_check_prerequisites 2>/dev/null; then
+      prereqs_check_and_install || return 1
+      deploy_check_prerequisites || return 1
+    fi
 
     ui_step 3 "$total" "Checking fly CLI"
     fly_check_installed || return 1
@@ -131,8 +134,15 @@ deploy_preflight() {
 
   ui_spinner_update "Checking prerequisites..."
   if ! deploy_check_prerequisites 2>/dev/null; then
-    ui_spinner_stop 1 "Missing prerequisites"
-    return 1
+    ui_spinner_stop 1 "Missing prerequisites — attempting to help"
+    if ! prereqs_check_and_install; then
+      return 1
+    fi
+    if ! deploy_check_prerequisites 2>/dev/null; then
+      ui_error "Still missing prerequisites after install attempts."
+      return 1
+    fi
+    ui_spinner_start "Continuing preflight..."
   fi
 
   ui_spinner_update "Checking fly CLI..."

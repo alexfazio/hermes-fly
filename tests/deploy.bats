@@ -907,3 +907,53 @@ teardown() {
   assert_success
   assert_output --partial "free tier"
 }
+
+# --- deploy_preflight with prereqs integration ---
+
+@test "deploy_preflight calls prereqs_check_and_install when prerequisites missing" {
+  export NO_COLOR=1
+  export PATH="/usr/bin:/bin"  # exclude mocks so tools are missing
+  export HERMES_FLY_VERBOSE=0  # use spinner mode
+
+  run bash -c 'source '"${PROJECT_ROOT}"'/lib/ui.sh; source '"${PROJECT_ROOT}"'/lib/fly-helpers.sh;
+    source '"${PROJECT_ROOT}"'/lib/docker-helpers.sh; source '"${PROJECT_ROOT}"'/lib/messaging.sh;
+    source '"${PROJECT_ROOT}"'/lib/config.sh; source '"${PROJECT_ROOT}"'/lib/status.sh;
+    source '"${PROJECT_ROOT}"'/lib/prereqs.sh;
+    prereqs_check_and_install() { echo "PREREQS_CALLED=1"; return 0; }
+    export -f prereqs_check_and_install
+    source '"${PROJECT_ROOT}"'/lib/deploy.sh;
+    deploy_preflight 2>&1 || true'
+  assert_output --partial "PREREQS_CALLED=1"
+}
+
+@test "deploy_preflight returns 1 if prereqs_check_and_install fails" {
+  export NO_COLOR=1
+  export PATH="/usr/bin:/bin"  # exclude mocks
+  export HERMES_FLY_VERBOSE=0
+
+  run bash -c 'source '"${PROJECT_ROOT}"'/lib/ui.sh; source '"${PROJECT_ROOT}"'/lib/fly-helpers.sh;
+    source '"${PROJECT_ROOT}"'/lib/docker-helpers.sh; source '"${PROJECT_ROOT}"'/lib/messaging.sh;
+    source '"${PROJECT_ROOT}"'/lib/config.sh; source '"${PROJECT_ROOT}"'/lib/status.sh;
+    source '"${PROJECT_ROOT}"'/lib/prereqs.sh;
+    prereqs_check_and_install() { return 1; }
+    export -f prereqs_check_and_install
+    source '"${PROJECT_ROOT}"'/lib/deploy.sh;
+    deploy_preflight 2>&1'
+  assert_failure
+}
+
+@test "verbose deploy_preflight calls prereqs_check_and_install on failure" {
+  export NO_COLOR=1
+  export PATH="/usr/bin:/bin"  # exclude mocks
+  export HERMES_FLY_VERBOSE=1
+
+  run bash -c 'source '"${PROJECT_ROOT}"'/lib/ui.sh; source '"${PROJECT_ROOT}"'/lib/fly-helpers.sh;
+    source '"${PROJECT_ROOT}"'/lib/docker-helpers.sh; source '"${PROJECT_ROOT}"'/lib/messaging.sh;
+    source '"${PROJECT_ROOT}"'/lib/config.sh; source '"${PROJECT_ROOT}"'/lib/status.sh;
+    source '"${PROJECT_ROOT}"'/lib/prereqs.sh;
+    prereqs_check_and_install() { echo "VERBOSE_PREREQS_CALLED=1"; return 0; }
+    export -f prereqs_check_and_install
+    source '"${PROJECT_ROOT}"'/lib/deploy.sh;
+    deploy_preflight 2>&1 || true'
+  assert_output --partial "VERBOSE_PREREQS_CALLED=1"
+}

@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+# tests/mocks/mock-fail-gracefully — Mock utility for edge case testing
+# Triggers specific failure modes based on env var for controlled testing
+# Usage: trigger specific failures based on FAIL_MODE argument
+
+FAIL_MODE="${1:-}"
+
+case "$FAIL_MODE" in
+  exit_code_256)
+    # Non-standard exit code (bash clamps to 0-255, but test intent is clear)
+    exit 1
+    ;;
+  binary_garbage)
+    # Output binary garbage to simulate malformed response
+    printf '\x00\x01\x02\xFF'
+    exit 1
+    ;;
+  timeout)
+    # Simulate long-running/hanging command
+    sleep 3600
+    ;;
+  no_output_on_fail)
+    # Exit with error but no stderr output
+    exit 1
+    ;;
+  *)
+    # Passthrough: act like the tool being mocked
+    exit 0
+    ;;
+esac
