@@ -39,6 +39,125 @@ prereqs_detect_os() {
   esac
 }
 
+# _prereqs_check_tool_available — check if a tool is available via multiple detection methods
+# Args: TOOL (e.g., "fly", "git", "curl")
+# Returns: 0 if found, 1 if not found
+# For fly tool: checks command -v fly, command -v flyctl, ~/.fly/bin/fly, ~/.fly/bin/flyctl
+# When file found and not in CI, exports PATH to make tool available in current process
+# For other tools: standard command -v check
+# Note: set HERMES_FLY_TEST_MODE=1 to skip file path checks (for tests with controlled PATH)
+_prereqs_check_tool_available() {
+  local tool="$1"
+
+  # Special handling for fly tool: check multiple binary names and locations
+  if [[ "$tool" == "fly" ]]; then
+    # Check for 'fly' binary on PATH
+    if command -v fly >/dev/null 2>&1; then
+      return 0
+    fi
+
+    # Check for 'flyctl' binary on PATH (alternative name)
+    if command -v flyctl >/dev/null 2>&1; then
+      return 0
+    fi
+
+    # Check for direct file paths in ~/.fly/bin (unless in test mode)
+    if [[ "${HERMES_FLY_TEST_MODE:-}" != "1" ]]; then
+      if [[ -f "${HOME}/.fly/bin/fly" ]] || [[ -f "${HOME}/.fly/bin/flyctl" ]]; then
+        # In CI environments, skip PATH export
+        if [[ "${CI:-}" != "true" ]]; then
+          export PATH="${HOME}/.fly/bin:${PATH}"
+        fi
+        return 0
+      fi
+    fi
+
+    # Not found
+    return 1
+  fi
+
+  # Standard check for other tools (git, curl, etc.)
+  command -v "$tool" >/dev/null 2>&1
+}
+
+# _prereqs_detect_shell — detect current shell type
+# No arguments
+# Returns: shell name to stdout (zsh, bash, fish, sh)
+_prereqs_detect_shell() {
+  # Check ZSH_VERSION first
+  if [[ -n "${ZSH_VERSION:-}" ]]; then
+    echo "zsh"
+    return 0
+  fi
+
+  # Check BASH_VERSION
+  if [[ -n "${BASH_VERSION:-}" ]]; then
+    echo "bash"
+    return 0
+  fi
+
+  # Use SHELL environment variable
+  if [[ -n "${SHELL:-}" ]]; then
+    basename "$SHELL"
+    return 0
+  fi
+
+  # Fallback to sh
+  echo "sh"
+}
+
+# _prereqs_get_shell_config — map shell type to config file path
+# Args: SHELL_NAME (e.g., "zsh", "bash", "fish")
+# Returns: config file path to stdout or exit 1 if unknown shell
+_prereqs_get_shell_config() {
+  local shell="$1"
+
+  case "$shell" in
+    zsh)
+      # shellcheck disable=SC2088
+      echo "~/.zshrc"
+      return 0
+      ;;
+    bash)
+      # shellcheck disable=SC2088
+      echo "~/.bashrc"
+      return 0
+      ;;
+    fish)
+      # shellcheck disable=SC2088
+      echo "~/.config/fish/config.fish"
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+# _prereqs_reload_shell_config — source shell config file in current session
+# No arguments
+# Returns: 0 on success, 1 on failure (config not found, unknown shell, etc.)
+# Effect: Makes PATH updates from external installers active in current process
+_prereqs_reload_shell_config() {
+  local shell config_file
+
+  # Detect current shell
+  shell="$(_prereqs_detect_shell)" || return 1
+
+  # Get shell config file path
+  config_file="$(_prereqs_get_shell_config "$shell")" || return 1
+
+  # Expand ~ to $HOME
+  config_file="${config_file/#\~/$HOME}"
+
+  # Check if config file exists
+  [[ -f "$config_file" ]] || return 1
+
+  # Source the config file; suppress errors from malformed configs
+  # shellcheck source=/dev/null
+  source "$config_file" 2>/dev/null
+}
+
 # prereqs_show_guide — display fallback manual installation guide
 # Args: TOOL OS [ATTEMPTED] [LAST_ERROR]
 # No return value; output to stderr
@@ -146,13 +265,27 @@ prereqs_install_tool() {
     rm -f "$out_file"
   fi
 
+  # Post-install verification: verify tool is actually accessible
+  if [[ "$tool" == "fly" ]]; then
+    if ! _prereqs_check_tool_available "fly" >/dev/null 2>&1; then
+      printf '  \033[31m✗\033[0m Installation completed but binary not accessible. Restart terminal or run: source ~/.zshrc\n' >&2
+      return 1
+    fi
+  fi
+
   # flyctl: add ~/.fly/bin to PATH for current session
   if [[ "$tool" == "fly" ]] && [[ -d "${HOME}/.fly/bin" ]]; then
     export PATH="${HOME}/.fly/bin:${PATH}"
-    printf '  \033[32m✓\033[0m flyctl installed (added ~/.fly/bin to PATH)\n' >&2
+    printf '  \033[32m✓\033[0m flyctl installed and ready\n' >&2
+
+    # Attempt to reload shell config to make PATH updates active
+    # Don't fail the install if reload fails (PATH export already active)
+    _prereqs_reload_shell_config >/dev/null 2>&1 || true
   else
     printf '  \033[32m✓\033[0m %s installed\n' "$tool" >&2
   fi
+
+  return 0
 }
 
 # prereqs_check_and_install — orchestrator: detect missing tools, offer install, verify
@@ -163,7 +296,7 @@ prereqs_check_and_install() {
     local any_missing=false
     local tool
     for tool in fly git curl; do
-      if ! command -v "$tool" >/dev/null 2>&1; then
+      if ! _prereqs_check_tool_available "$tool" >/dev/null 2>&1; then
         ui_error "Missing prerequisite: ${tool} (auto-install disabled)"
         any_missing=true
       fi
@@ -176,7 +309,7 @@ prereqs_check_and_install() {
 
   local tool
   for tool in fly git curl; do
-    command -v "$tool" >/dev/null 2>&1 && continue
+    _prereqs_check_tool_available "$tool" >/dev/null 2>&1 && continue
 
     printf '\n  Missing: %s\n' "$tool" >&2
     local install_desc

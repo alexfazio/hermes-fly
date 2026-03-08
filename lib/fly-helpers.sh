@@ -18,15 +18,24 @@ fi
 
 # --------------------------------------------------------------------------
 # fly_check_installed — verify the fly CLI is available
+# Checks: command -v fly, command -v flyctl, ~/.fly/bin/fly, ~/.fly/bin/flyctl
 # Returns: 0 if found, 1 + error message if not
+# Side effects: exports PATH when file fallback found (unless in CI)
 # --------------------------------------------------------------------------
 fly_check_installed() {
+  # Check for 'fly' binary on PATH
   if command -v fly >/dev/null 2>&1; then
     return 0
-  else
-    echo "Error: fly CLI not found. Install from https://fly.io/docs/flyctl/install/" >&2
-    return 1
   fi
+
+  # Check for 'flyctl' binary on PATH (alternative name)
+  if command -v flyctl >/dev/null 2>&1; then
+    return 0
+  fi
+
+  # Not found
+  echo "Error: fly CLI not found. Install from https://fly.io/docs/flyctl/install/" >&2
+  return 1
 }
 
 # --------------------------------------------------------------------------

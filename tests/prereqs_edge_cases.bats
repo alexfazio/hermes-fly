@@ -156,7 +156,7 @@ EOF
   PATH="/usr/bin:/bin"  # no mocks
   export HERMES_FLY_NO_AUTO_INSTALL=1  # skip prompts
 
-  run bash -c 'source "${PROJECT_ROOT}/lib/ui.sh"; source "${PROJECT_ROOT}/lib/prereqs.sh"; export HERMES_FLY_NO_AUTO_INSTALL=1; prereqs_check_and_install >/dev/null 2>&1'
+  run bash -c 'export HERMES_FLY_TEST_MODE=1; source "${PROJECT_ROOT}/lib/ui.sh"; source "${PROJECT_ROOT}/lib/prereqs.sh"; export HERMES_FLY_NO_AUTO_INSTALL=1; prereqs_check_and_install >/dev/null 2>&1'
   assert_failure
 }
 
@@ -169,7 +169,7 @@ EOF
   PATH="/usr/bin:/bin"  # no mocks to trigger missing
   export CI=true
 
-  run bash -c 'source "${PROJECT_ROOT}/lib/ui.sh"; source "${PROJECT_ROOT}/lib/prereqs.sh"; prereqs_check_and_install 2>&1'
+  run bash -c 'export HERMES_FLY_TEST_MODE=1; source "${PROJECT_ROOT}/lib/ui.sh"; source "${PROJECT_ROOT}/lib/prereqs.sh"; prereqs_check_and_install 2>&1'
   assert_failure
   [[ "${output}" == *"disabled"* ]] || [[ "${output}" == *"Missing"* ]] || [[ "${output}" == *"fly"* ]]
 }
@@ -188,7 +188,7 @@ EOF
   PATH="/usr/bin:/bin"  # no mocks
   export HERMES_FLY_NO_AUTO_INSTALL=1
 
-  run bash -c 'source "${PROJECT_ROOT}/lib/ui.sh"; source "${PROJECT_ROOT}/lib/prereqs.sh"; prereqs_check_and_install 2>&1'
+  run bash -c 'export HERMES_FLY_TEST_MODE=1; source "${PROJECT_ROOT}/lib/ui.sh"; source "${PROJECT_ROOT}/lib/prereqs.sh"; prereqs_check_and_install 2>&1'
   assert_failure
   [[ "${output}" == *"disabled"* ]] || [[ "${output}" == *"Missing"* ]]
 }
@@ -199,7 +199,7 @@ EOF
   export CI=true
   export HERMES_FLY_NO_AUTO_INSTALL=1
 
-  run bash -c 'source "${PROJECT_ROOT}/lib/ui.sh"; source "${PROJECT_ROOT}/lib/prereqs.sh"; prereqs_check_and_install 2>&1'
+  run bash -c 'export HERMES_FLY_TEST_MODE=1; source "${PROJECT_ROOT}/lib/ui.sh"; source "${PROJECT_ROOT}/lib/prereqs.sh"; prereqs_check_and_install 2>&1'
   assert_failure
   # Both should skip, and message should reflect that
   [[ "${output}" == *"disabled"* ]] || [[ "${output}" == *"Missing"* ]]
@@ -407,7 +407,7 @@ EOF
   PATH="/usr/bin:/bin"  # exclude mocks (no apt-get either)
   export HERMES_FLY_NO_AUTO_INSTALL=1
 
-  run bash -c 'source "${PROJECT_ROOT}/lib/ui.sh"; source "${PROJECT_ROOT}/lib/prereqs.sh"; prereqs_check_and_install 2>&1'
+  run bash -c 'export HERMES_FLY_TEST_MODE=1; source "${PROJECT_ROOT}/lib/ui.sh"; source "${PROJECT_ROOT}/lib/prereqs.sh"; prereqs_check_and_install 2>&1'
   assert_failure
 }
 

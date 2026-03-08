@@ -87,6 +87,7 @@ teardown() {
 
 @test "hermes-fly deploy --no-auto-install skips install when fly not on PATH" {
   export PATH="/usr/bin:/bin"  # exclude mocks
+  export HERMES_FLY_TEST_MODE=1
   run "${PROJECT_ROOT}/hermes-fly" deploy --no-auto-install 2>&1
   # Should show error about missing prerequisites with auto-install disabled
   assert_output --partial "auto-install disabled"

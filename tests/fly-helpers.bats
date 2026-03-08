@@ -26,6 +26,36 @@ teardown() {
   assert_failure
 }
 
+@test "fly_check_installed returns 0 when flyctl binary found via PATH" {
+  # Create a mock flyctl
+  local fake_dir
+  fake_dir="$(mktemp -d)"
+  echo "#!/bin/bash" > "$fake_dir/flyctl"
+  chmod +x "$fake_dir/flyctl"
+
+  PATH="$fake_dir:${PATH}"
+  run fly_check_installed
+  assert_success
+
+  rm -rf "$fake_dir"
+}
+
+@test "fly_check_installed returns 1 with error message when all checks fail" {
+  local fake_home
+  fake_home="$(mktemp -d)"
+  export HOME="$fake_home"
+  PATH="/usr/bin:/bin"  # exclude mocks and ~/.fly/bin doesn't exist
+
+  run bash -c "
+    source '${PROJECT_ROOT}/lib/fly-helpers.sh'
+    fly_check_installed
+  "
+  assert_failure
+  assert_output --partial "Error"
+
+  rm -rf "$fake_home"
+}
+
 # --- fly_check_version ---
 
 @test "fly_check_version returns 0 for v0.3.52" {

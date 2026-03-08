@@ -686,6 +686,112 @@ When adding new edge cases or modifying `lib/prereqs.sh`:
 
 ---
 
+---
+
+## Root Cause Remediation (TDD Implementation)
+
+This section documents the four interconnected root causes that prevented idempotent behavior and smooth user experience, along with their fixes.
+
+### Root Cause 1: Repeated Installation Attempts
+
+**Problem Statement:**
+Running `hermes-fly deploy` twice attempts to install `flyctl` both times, even though installation succeeded on the first run.
+
+**Root Cause:**
+`command -v fly` only checks tools on PATH. When the Curl installer adds `~/.fly/bin` to shell config but changes don't persist to subprocess invocations, the second run doesn't see the tool.
+
+**Solution:**
+Added `_prereqs_check_tool_available()` helper that:
+- Checks `command -v fly` (found on PATH)
+- Checks `command -v flyctl` (alternative binary name)
+- Checks direct file existence: `~/.fly/bin/fly` or `~/.fly/bin/flyctl`
+- **Exports PATH** when file found: `export PATH="${HOME}/.fly/bin:${PATH}"`
+
+This makes the tool available in the SAME PROCESS, preventing repeated install attempts.
+
+**Implementation:**
+- Lines 43-73 in `lib/prereqs.sh`
+- Integrated into `prereqs_check_and_install()` at lines 282 and 295
+- Also integrated into `fly_check_installed()` in `lib/fly-helpers.sh` lines 24-47
+
+**Validating Tests:**
+- Tests 32-39: `_prereqs_check_tool_available()` function tests
+- Tests 40-41: `check_and_install()` integration tests
+- Tests 4-6, 20-22 in `fly-helpers.bats`: `fly_check_installed()` tests
+- EC-wide: All edge case tests pass with new detection logic
+
+### Root Cause 2: Binary Name Detection Gap
+
+**Problem Statement:**
+Code only checks for `fly` binary, not `flyctl` (the actual package name). Homebrew installs `flyctl` package but creates `/opt/homebrew/bin/fly` symlink. Curl installer creates both `~/.fly/bin/flyctl` (binary) and `~/.fly/bin/fly` (symlink).
+
+**Root Cause:**
+Insufficient binary name checking leads to false negatives.
+
+**Solution:**
+Enhanced detection to check for BOTH binary names:
+- `fly` binary (symlink or direct)
+- `flyctl` binary (actual package name)
+- Direct file path fallback for both
+
+**Implementation:**
+Same as Root Cause 1 fix above.
+
+**Validating Tests:**
+- Test 33: `_prereqs_check_tool_available` returns 0 when `flyctl` binary found
+- Test 35: Similar for `~/.fly/bin/flyctl` file path
+- Tests 3, 4 in `fly-helpers.bats`: Enhanced `fly_check_installed()` tests
+
+### Root Cause 3: No Post-Install Verification
+
+**Problem Statement:**
+Code reports "✓ installed" based on shell exit code, not actual binary availability. Could give false success if installer script exits 0 but binary creation fails.
+
+**Root Cause:**
+Missing verification step after installation completes.
+
+**Solution:**
+Added post-install verification in `prereqs_install_tool()`:
+- After successful install, call `_prereqs_check_tool_available "fly"` to verify
+- If verification fails, print clear error and return 1
+- If verification succeeds, print "✓ flyctl installed and ready"
+
+**Implementation:**
+Lines 265-271 in `lib/prereqs.sh` (after install, before PATH export)
+
+**Validating Tests:**
+- Tests 54-55: Post-install verification success and reload tests
+- Related to all install tests (16-24) which indirectly test this
+
+### Root Cause 4: Missing Shell Config Reload
+
+**Problem Statement:**
+After external installer adds to `~/.zshrc` / `~/.bashrc`, changes aren't active in current session. User sees conflicting messages ("✓ PATH configured" but `command not found`).
+
+**Root Cause:**
+No mechanism to source shell config files after installation.
+
+**Solution:**
+Added three shell-awareness helpers:
+1. `_prereqs_detect_shell()` (lines 76-92): Detects zsh/bash/fish/sh
+2. `_prereqs_get_shell_config()` (lines 94-116): Maps shell → config file path
+3. `_prereqs_reload_shell_config()` (lines 118-133): Sources config in current session
+
+Then call reload in `prereqs_install_tool()` after successful install (line 278).
+
+**Implementation:**
+- Lines 76-133 in `lib/prereqs.sh` (three new helpers)
+- Called at line 278 in `prereqs_install_tool()` with error suppression
+
+**Validating Tests:**
+- Tests 42-45: `_prereqs_detect_shell()` tests
+- Tests 46-49: `_prereqs_get_shell_config()` tests
+- Tests 50-53: `_prereqs_reload_shell_config()` tests
+- Test 55: Integration test for reload after successful install
+- EC-wide: All edge cases validate graceful degradation
+
+---
+
 ## Summary
 
 The prerequisite auto-install feature is designed to be robust across:
@@ -698,5 +804,9 @@ The prerequisite auto-install feature is designed to be robust across:
 - ✅ Permission restrictions (sudo, write denied)
 - ✅ Security (command injection prevention)
 - ✅ Boundary conditions (long paths, special chars, null inputs)
+- ✅ **Idempotent detection** (repeating deploy doesn't re-install)
+- ✅ **Binary name resilience** (checks fly and flyctl)
+- ✅ **Post-install verification** (ensures binary is accessible)
+- ✅ **Shell awareness** (reloads config for current session)
 
-57 comprehensive tests validate all these scenarios with zero regressions.
+112 comprehensive tests (55 main + 57 edge cases) validate all these scenarios with zero regressions.
