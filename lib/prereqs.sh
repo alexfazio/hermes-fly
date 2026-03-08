@@ -76,7 +76,10 @@ _prereqs_check_tool_available() {
         if [[ "${CI:-}" != "true" ]] && [[ ":${PATH}:" != *":${HOME}/.fly/bin:"* ]]; then
           export PATH="${HOME}/.fly/bin:${PATH}"
         fi
-        return 0
+        # Verify fly is actually callable, not just that the file exists
+        if command -v fly >/dev/null 2>&1; then
+          return 0
+        fi
       fi
     fi
 
@@ -119,10 +122,14 @@ _prereqs_get_shell_config() {
   esac
 }
 
-# _prereqs_reload_shell_config — source shell config file in current session
+# _prereqs_reload_shell_config — utility: source PATH exports from shell config
 # No arguments
 # Returns: 0 on success, 1 on failure (config not found, unknown shell, etc.)
 # Effect: Makes PATH updates from external installers active in current process
+#
+# NOTE: This utility is not called by the active install flow. The
+# _prereqs_check_tool_available() fallback handles PATH updates in-process.
+# This function is available for future use if a caller needs explicit config reload.
 _prereqs_reload_shell_config() {
   local shell config_file
 
@@ -135,7 +142,9 @@ _prereqs_reload_shell_config() {
   # Check if config file exists
   [[ -f "$config_file" ]] || return 1
 
-  # Safely apply only explicit PATH exports — avoids side effects
+  # Safely apply only explicit PATH exports — avoids side effects from full config sourcing.
+  # grep -E anchors to '^export PATH=' so only PATH-setting lines are eval'd, preventing
+  # arbitrary code execution. The user's own config file is the trust boundary.
   local path_line
   while IFS= read -r path_line; do
     eval "$path_line" 2>/dev/null || true

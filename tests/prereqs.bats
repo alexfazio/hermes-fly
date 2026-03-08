@@ -145,6 +145,7 @@ mkdir -p ~/.fly/bin
 echo "#!/bin/bash" > ~/.fly/bin/flyctl
 echo "echo 'mock flyctl'" >> ~/.fly/bin/flyctl
 chmod +x ~/.fly/bin/flyctl
+ln -sf ~/.fly/bin/flyctl ~/.fly/bin/fly
 EOF
   chmod +x "$mock_script"
 
@@ -377,12 +378,13 @@ EOF
   rm -rf "$fake_home"
 }
 
-@test "_prereqs_check_tool_available returns 0 and exports PATH when ~/.fly/bin/flyctl file found" {
+@test "_prereqs_check_tool_available returns 0 and exports PATH when ~/.fly/bin/flyctl file found with fly symlink" {
   local fake_home
   fake_home="$(mktemp -d)"
   mkdir -p "$fake_home/.fly/bin"
   echo "#!/bin/bash" > "$fake_home/.fly/bin/flyctl"
   chmod +x "$fake_home/.fly/bin/flyctl"
+  ln -s "$fake_home/.fly/bin/flyctl" "$fake_home/.fly/bin/fly"
 
   export HOME="$fake_home"
   PATH="/usr/bin:/bin"  # exclude mocks
@@ -425,7 +427,7 @@ EOF
   assert_success
 }
 
-@test "_prereqs_check_tool_available skips PATH export when CI=true" {
+@test "_prereqs_check_tool_available skips PATH export and returns 1 when CI=true" {
   local fake_home
   fake_home="$(mktemp -d)"
   mkdir -p "$fake_home/.fly/bin"
@@ -439,11 +441,9 @@ EOF
   run bash -c "
     source '${PROJECT_ROOT}/lib/prereqs.sh'
     _prereqs_check_tool_available 'fly'
-    echo \"PATH_MODIFIED=\$(echo \$PATH | grep -c '.fly/bin' || true)\"
   "
-  # Should still succeed (file found) but PATH not exported
-  assert_success
-  assert_output --partial "PATH_MODIFIED=0"
+  # CI=true skips PATH export, so fly is not callable even though file exists
+  assert_failure
 
   rm -rf "$fake_home"
 }
@@ -893,6 +893,46 @@ CONF
   "
   assert_success
   assert_output --partial "installed"
+
+  rm -rf "$fake_home"
+}
+
+@test "_prereqs_check_tool_available returns 1 when only ~/.fly/bin/flyctl exists (flyctl-only, no fly symlink)" {
+  local fake_home
+  fake_home="$(mktemp -d)"
+  mkdir -p "$fake_home/.fly/bin"
+  echo "#!/bin/bash" > "$fake_home/.fly/bin/flyctl"
+  chmod +x "$fake_home/.fly/bin/flyctl"
+  # No fly symlink — only flyctl exists
+
+  run bash -c "
+    export HOME='$fake_home'
+    export HERMES_FLY_TEST_MODE=0
+    PATH='/usr/bin:/bin'
+    source '${PROJECT_ROOT}/lib/prereqs.sh'
+    _prereqs_check_tool_available 'fly'
+  "
+  assert_failure  # Should return 1: file exists but fly is not callable
+
+  rm -rf "$fake_home"
+}
+
+@test "_prereqs_check_tool_available returns 1 when CI=true and fly only in ~/.fly/bin (PATH not exported)" {
+  local fake_home
+  fake_home="$(mktemp -d)"
+  mkdir -p "$fake_home/.fly/bin"
+  echo "#!/bin/bash" > "$fake_home/.fly/bin/fly"
+  chmod +x "$fake_home/.fly/bin/fly"
+
+  run bash -c "
+    export HOME='$fake_home'
+    export CI=true
+    export HERMES_FLY_TEST_MODE=0
+    PATH='/usr/bin:/bin'
+    source '${PROJECT_ROOT}/lib/prereqs.sh'
+    _prereqs_check_tool_available 'fly'
+  "
+  assert_failure  # Should return 1: CI=true skips PATH export, so fly not callable
 
   rm -rf "$fake_home"
 }

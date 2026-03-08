@@ -686,8 +686,6 @@ When adding new edge cases or modifying `lib/prereqs.sh`:
 
 ---
 
----
-
 ## Root Cause Remediation (TDD Implementation)
 
 This section documents the four interconnected root causes that prevented idempotent behavior and smooth user experience, along with their fixes.
@@ -710,8 +708,8 @@ Added `_prereqs_check_tool_available()` helper that:
 This makes the tool available in the SAME PROCESS, preventing repeated install attempts.
 
 **Implementation:**
-- `_prereqs_check_tool_available()` lives in `lib/prereqs.sh` (lines 43-73)
-- Integrated into `prereqs_check_and_install()` at lines 282 and 295
+- `_prereqs_check_tool_available()` in `lib/prereqs.sh`
+- Called by `prereqs_check_and_install()` to check all prerequisite tools
 - `fly_check_installed()` in `lib/fly-helpers.sh` **delegates** to `_prereqs_check_tool_available()` when available, using a `declare -f` guard to check whether `prereqs.sh` has been sourced. This allows `fly_check_installed()` to work both standalone (PATH-only check) and with the full file-path fallback when prereqs.sh is loaded.
 
 **Validating Tests:**
@@ -757,7 +755,7 @@ Added post-install verification in `prereqs_install_tool()`:
 - If verification succeeds, print "✓ flyctl installed and ready"
 
 **Implementation:**
-Lines 265-271 in `lib/prereqs.sh` (after install, before PATH export)
+In `prereqs_install_tool()` after successful installation
 
 **Validating Tests:**
 - Tests 54-55: Post-install verification success and reload tests
@@ -773,15 +771,13 @@ No mechanism to source shell config files after installation.
 
 **Solution:**
 Added three shell-awareness helpers:
-1. `_prereqs_detect_shell()` (lines 76-92): Detects zsh/bash/fish/sh
-2. `_prereqs_get_shell_config()` (lines 94-116): Maps shell → config file path
-3. `_prereqs_reload_shell_config()` (lines 118-133): Sources config in current session
-
-Then call reload in `prereqs_install_tool()` after successful install (line 278).
+1. `_prereqs_detect_shell()`: Detects zsh/bash/fish/sh
+2. `_prereqs_get_shell_config()`: Maps shell to config file path
+3. `_prereqs_reload_shell_config()`: Sources config in current session
 
 **Implementation:**
-- Lines 76-133 in `lib/prereqs.sh` (three new helpers)
-- Called at line 278 in `prereqs_install_tool()` with error suppression
+- `_prereqs_detect_shell()`, `_prereqs_get_shell_config()`, and `_prereqs_reload_shell_config()` in `lib/prereqs.sh`
+- Available as a utility for future use; currently handled by `_prereqs_check_tool_available()`
 
 **Validating Tests:**
 - Tests 42-45: `_prereqs_detect_shell()` tests
