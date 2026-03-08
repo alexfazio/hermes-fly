@@ -71,7 +71,7 @@ _prereqs_check_tool_available() {
 
     # Check for direct file paths in ~/.fly/bin (unless in test mode)
     if [[ "${HERMES_FLY_TEST_MODE:-}" != "1" ]]; then
-      if [[ -f "${HOME}/.fly/bin/fly" ]] || [[ -f "${HOME}/.fly/bin/flyctl" ]]; then
+      if [[ -x "${HOME}/.fly/bin/fly" ]] || [[ -x "${HOME}/.fly/bin/flyctl" ]]; then
         # In CI environments, skip PATH export
         if [[ "${CI:-}" != "true" ]] && [[ ":${PATH}:" != *":${HOME}/.fly/bin:"* ]]; then
           export PATH="${HOME}/.fly/bin:${PATH}"

@@ -448,6 +448,65 @@ EOF
   rm -rf "$fake_home"
 }
 
+@test "_prereqs_check_tool_available returns 1 when ~/.fly/bin/fly exists but is NOT executable (fallback path)" {
+  local fake_home
+  fake_home="$(mktemp -d)"
+  mkdir -p "$fake_home/.fly/bin"
+  echo "#!/bin/bash" > "$fake_home/.fly/bin/fly"
+  # Explicitly do NOT chmod +x — file is non-executable
+
+  export HOME="$fake_home"
+  PATH="/usr/bin:/bin"  # exclude mocks to force fallback detection
+
+  run bash -c "
+    source '${PROJECT_ROOT}/lib/prereqs.sh'
+    _prereqs_check_tool_available 'fly'
+  "
+  assert_failure
+
+  rm -rf "$fake_home"
+}
+
+@test "_prereqs_check_tool_available returns 1 when ~/.fly/bin/flyctl exists but is NOT executable (fallback path)" {
+  local fake_home
+  fake_home="$(mktemp -d)"
+  mkdir -p "$fake_home/.fly/bin"
+  echo "#!/bin/bash" > "$fake_home/.fly/bin/flyctl"
+  # Explicitly do NOT chmod +x — file is non-executable
+
+  export HOME="$fake_home"
+  PATH="/usr/bin:/bin"  # exclude mocks to force fallback detection
+
+  run bash -c "
+    source '${PROJECT_ROOT}/lib/prereqs.sh'
+    _prereqs_check_tool_available 'fly'
+  "
+  assert_failure
+
+  rm -rf "$fake_home"
+}
+
+@test "_prereqs_check_tool_available returns 0 when ~/.fly/bin/fly exists AND IS executable (fallback path regression)" {
+  local fake_home
+  fake_home="$(mktemp -d)"
+  mkdir -p "$fake_home/.fly/bin"
+  echo "#!/bin/bash" > "$fake_home/.fly/bin/fly"
+  chmod +x "$fake_home/.fly/bin/fly"
+
+  export HOME="$fake_home"
+  PATH="/usr/bin:/bin"  # exclude mocks to force fallback detection
+
+  run bash -c "
+    source '${PROJECT_ROOT}/lib/prereqs.sh'
+    _prereqs_check_tool_available 'fly'
+    echo \"PATH_CONTAINS_FLY_BIN=\$(echo \$PATH | grep -c '.fly/bin' || true)\"
+  "
+  assert_success
+  assert_output --partial "PATH_CONTAINS_FLY_BIN=1"
+
+  rm -rf "$fake_home"
+}
+
 # --- STEP 3: Updated prereqs_check_and_install() Tests ---
 
 @test "check_and_install does not prompt to install fly when ~/.fly/bin/fly detected in second run" {
