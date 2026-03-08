@@ -33,9 +33,23 @@ fly_check_installed() {
   fi
 
   # Fallback: direct command checks when prereqs.sh not sourced
-  if command -v fly >/dev/null 2>&1 || command -v flyctl >/dev/null 2>&1; then
+  if command -v fly >/dev/null 2>&1; then
     return 0
   fi
+
+  # Check for 'flyctl' and expose sibling 'fly' symlink if present
+  if command -v flyctl >/dev/null 2>&1; then
+    local flyctl_dir
+    flyctl_dir="$(dirname "$(command -v flyctl)")"
+    if [[ ":${PATH}:" != *":${flyctl_dir}:"* ]]; then
+      export PATH="${flyctl_dir}:${PATH}"
+    fi
+    # Verify 'fly' is now callable
+    if command -v fly >/dev/null 2>&1; then
+      return 0
+    fi
+  fi
+
   echo "Error: fly CLI not found. Install from https://fly.io/docs/flyctl/install/" >&2
   return 1
 }

@@ -110,6 +110,63 @@ teardown() {
   rm -rf "$fake_home"
 }
 
+@test "fly_check_installed returns 1 when only flyctl exists (no fly sibling) in fallback path" {
+  local fake_dir
+  fake_dir="$(mktemp -d)"
+  echo "#!/bin/bash" > "$fake_dir/flyctl"
+  chmod +x "$fake_dir/flyctl"
+
+  run bash -c "
+    source '${PROJECT_ROOT}/lib/ui.sh'
+    unset -f _prereqs_check_tool_available 2>/dev/null || true
+    PATH='$fake_dir:/usr/bin:/bin'
+    source '${PROJECT_ROOT}/lib/fly-helpers.sh'
+    fly_check_installed
+  "
+  assert_failure
+  assert_output --partial "Error"
+
+  rm -rf "$fake_dir"
+}
+
+@test "fly_check_installed returns 0 when flyctl exists with fly sibling in fallback path" {
+  local fake_dir
+  fake_dir="$(mktemp -d)"
+  echo "#!/bin/bash" > "$fake_dir/flyctl"
+  chmod +x "$fake_dir/flyctl"
+  # Create fly symlink alongside flyctl
+  ln -s "$fake_dir/flyctl" "$fake_dir/fly"
+
+  run bash -c "
+    source '${PROJECT_ROOT}/lib/ui.sh'
+    unset -f _prereqs_check_tool_available 2>/dev/null || true
+    PATH='$fake_dir:/usr/bin:/bin'
+    source '${PROJECT_ROOT}/lib/fly-helpers.sh'
+    fly_check_installed
+  "
+  assert_success
+
+  rm -rf "$fake_dir"
+}
+
+@test "fly_check_installed returns 0 when fly directly on PATH in fallback path" {
+  local fake_dir
+  fake_dir="$(mktemp -d)"
+  echo "#!/bin/bash" > "$fake_dir/fly"
+  chmod +x "$fake_dir/fly"
+
+  run bash -c "
+    source '${PROJECT_ROOT}/lib/ui.sh'
+    unset -f _prereqs_check_tool_available 2>/dev/null || true
+    PATH='$fake_dir:/usr/bin:/bin'
+    source '${PROJECT_ROOT}/lib/fly-helpers.sh'
+    fly_check_installed
+  "
+  assert_success
+
+  rm -rf "$fake_dir"
+}
+
 # --- fly_check_version ---
 
 @test "fly_check_version returns 0 for v0.3.52" {
