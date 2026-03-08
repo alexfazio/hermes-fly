@@ -1,6 +1,6 @@
 # Hermes Fly
 
-![Hermes Fly cover](docs/assets/hermes-fly-cover.png)
+![Hermes Fly cover](docs/assets/hermes-fly-cover.png?v=20260308)
 
 Deploy [Hermes Agent](https://github.com/NousResearch/hermes-agent) to
 [Fly.io](https://fly.io) with a single command.
@@ -91,7 +91,7 @@ local config.
 
 The prerequisite auto-install feature is tested across diverse environments:
 
-- **57 edge case tests** covering platform detection, PATH safety, signal handling, and output processing
+- **57 edge case tests** covering platform detection, PATH safety, and signal handling
 - **370+ total tests** with zero regressions and 100% pass rate
 - **Explicit edge case validation** for:
   - Platform detection (unsupported platforms, fallback behavior)
