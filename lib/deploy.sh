@@ -569,10 +569,10 @@ _deploy_fallback_mem() {
 
 _deploy_fallback_price() {
   case "$1" in
-    shared-cpu-1x) echo "1.94" ;;
-    shared-cpu-2x) echo "3.88" ;;
-    performance-1x) echo "12.00" ;;
-    performance-2x) echo "24.00" ;;
+    shared-cpu-1x) echo "2.02" ;;
+    shared-cpu-2x) echo "4.04" ;;
+    performance-1x) echo "32.19" ;;
+    performance-2x) echo "64.39" ;;
     *) echo "0" ;;
   esac
 }

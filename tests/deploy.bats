@@ -185,12 +185,19 @@ teardown() {
 
 @test "deploy_collect_vm_size hides tiers not in API response" {
   # Mock only returns shared-cpu-1x and shared-cpu-2x
-  run bash -c 'export NO_COLOR=1; export MOCK_FLY_VM_SIZES_JSON='"'"'[{"name":"shared-cpu-1x","cpu_cores":1,"memory_mb":256,"price_month":1.94},{"name":"shared-cpu-2x","cpu_cores":2,"memory_mb":512,"price_month":3.88}]'"'"'; export PATH="'"${BATS_TEST_DIRNAME}/mocks:${PATH}"'"; source lib/ui.sh; source lib/fly-helpers.sh; source lib/docker-helpers.sh; source lib/messaging.sh; source lib/config.sh; source lib/status.sh; source lib/deploy.sh; deploy_collect_vm_size SIZE MEM <<< "1" 2>&1'
+  run bash -c 'export NO_COLOR=1; export MOCK_FLY_VM_SIZES_JSON='"'"'[{"name":"shared-cpu-1x","cpu_cores":1,"memory_mb":256,"price_month":2.02},{"name":"shared-cpu-2x","cpu_cores":2,"memory_mb":512,"price_month":4.04}]'"'"'; export PATH="'"${BATS_TEST_DIRNAME}/mocks:${PATH}"'"; source lib/ui.sh; source lib/fly-helpers.sh; source lib/docker-helpers.sh; source lib/messaging.sh; source lib/config.sh; source lib/status.sh; source lib/deploy.sh; deploy_collect_vm_size SIZE MEM <<< "1" 2>&1'
   assert_success
   assert_output --partial "Starter"
   assert_output --partial "Standard"
   refute_output --partial "Pro"
   refute_output --partial "Power"
+}
+
+@test "deploy_collect_vm_size fallback shows correct performance-1x price ~32" {
+  # Force fallback by making fly platform vm-sizes fail (MOCK_FLY_VM_SIZES_FAIL=true)
+  run bash -c 'export NO_COLOR=1; export MOCK_FLY_VM_SIZES_FAIL=true; export PATH="'"${BATS_TEST_DIRNAME}/mocks:${PATH}"'"; source lib/ui.sh; source lib/fly-helpers.sh; source lib/docker-helpers.sh; source lib/messaging.sh; source lib/config.sh; source lib/status.sh; source lib/deploy.sh; deploy_collect_vm_size SIZE MEM <<< "3" 2>&1'
+  assert_success
+  assert_output --partial '$32.19'
 }
 
 @test "deploy_collect_vm_size shows pricing disclaimer with calculator link" {
@@ -544,7 +551,7 @@ teardown() {
 # --- deploy_parse_vm_sizes ---
 
 @test "deploy_parse_vm_sizes extracts names and prices from JSON" {
-  local json='[{"name":"shared-cpu-1x","cpu_cores":1,"memory_mb":256,"price_month":1.94},{"name":"shared-cpu-2x","cpu_cores":2,"memory_mb":512,"price_month":3.88}]'
+  local json='[{"name":"shared-cpu-1x","cpu_cores":1,"memory_mb":256,"price_month":2.02},{"name":"shared-cpu-2x","cpu_cores":2,"memory_mb":512,"price_month":4.04}]'
   deploy_parse_vm_sizes "$json"
   [[ "${_VM_NAMES[0]}" == "shared-cpu-1x" ]]
   [[ "${_VM_NAMES[1]}" == "shared-cpu-2x" ]]

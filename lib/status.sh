@@ -27,10 +27,10 @@ status_estimate_cost() {
   local base_cost=0
 
   case "$vm_size" in
-    shared-cpu-1x) base_cost=194 ;;     # $1.94 in cents
-    shared-cpu-2x) base_cost=388 ;;     # $3.88 in cents
-    performance-1x) base_cost=1200 ;;   # $12.00 in cents
-    performance-2x) base_cost=2400 ;;  # $24.00 in cents
+    shared-cpu-1x) base_cost=202 ;;     # $2.02 in cents
+    shared-cpu-2x) base_cost=404 ;;     # $4.04 in cents
+    performance-1x) base_cost=3219 ;;   # $32.19 in cents
+    performance-2x) base_cost=6439 ;;   # $64.39 in cents
     dedicated-cpu-1x) base_cost=2300 ;; # $23.00 in cents
     *)
       echo "Unknown VM size: $vm_size" >&2

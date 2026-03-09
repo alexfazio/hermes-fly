@@ -192,7 +192,7 @@ case "${1:-}" in
                 if [[ -n "${MOCK_FLY_VM_SIZES_JSON:-}" ]]; then
                     echo "$MOCK_FLY_VM_SIZES_JSON"
                 else
-                    echo '[{"name":"shared-cpu-1x","cpu_cores":1,"memory_mb":256,"price_month":1.94},{"name":"shared-cpu-2x","cpu_cores":2,"memory_mb":512,"price_month":3.88},{"name":"performance-1x","cpu_cores":1,"memory_mb":2048,"price_month":12.00},{"name":"performance-2x","cpu_cores":2,"memory_mb":4096,"price_month":24.00}]'
+                    echo '[{"name":"shared-cpu-1x","cpu_cores":1,"memory_mb":256,"price_month":2.02},{"name":"shared-cpu-2x","cpu_cores":2,"memory_mb":512,"price_month":4.04},{"name":"performance-1x","cpu_cores":1,"memory_mb":2048,"price_month":32.19},{"name":"performance-2x","cpu_cores":2,"memory_mb":4096,"price_month":64.39}]'
                 fi
                 ;;
             regions)
