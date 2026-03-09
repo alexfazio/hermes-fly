@@ -1101,6 +1101,52 @@ teardown() {
   refute_output --partial "Continue with this key anyway"
 }
 
+@test "deploy_validate_nous_key returns 1 on rate limit (429)" {
+  run bash -c 'export NO_COLOR=1; export PATH="'"${BATS_TEST_DIRNAME}/mocks:${PATH}"'"; export MOCK_NOUS_RATE_LIMIT=true;
+    source '"${PROJECT_ROOT}"'/lib/ui.sh; source '"${PROJECT_ROOT}"'/lib/fly-helpers.sh;
+    source '"${PROJECT_ROOT}"'/lib/docker-helpers.sh; source '"${PROJECT_ROOT}"'/lib/messaging.sh;
+    source '"${PROJECT_ROOT}"'/lib/config.sh; source '"${PROJECT_ROOT}"'/lib/status.sh;
+    source '"${PROJECT_ROOT}"'/lib/deploy.sh;
+    deploy_validate_nous_key "some-key" 2>/dev/null'
+  assert_failure
+}
+
+@test "deploy_collect_llm_config Nous loops until valid key" {
+  # Feed: choice=2 (Nous), 2 bad keys, then valid key
+  run bash -c 'export NO_COLOR=1; export PATH="'"${BATS_TEST_DIRNAME}/mocks:${PATH}"'";
+    source '"${PROJECT_ROOT}"'/lib/ui.sh; source '"${PROJECT_ROOT}"'/lib/fly-helpers.sh;
+    source '"${PROJECT_ROOT}"'/lib/docker-helpers.sh; source '"${PROJECT_ROOT}"'/lib/messaging.sh;
+    source '"${PROJECT_ROOT}"'/lib/config.sh; source '"${PROJECT_ROOT}"'/lib/status.sh;
+    source '"${PROJECT_ROOT}"'/lib/deploy.sh;
+    MOCK_NOUS_FAIL_DIR="$(mktemp -d)"
+    touch "$MOCK_NOUS_FAIL_DIR/fail1" "$MOCK_NOUS_FAIL_DIR/fail2"
+    curl() {
+      if printf "%s" "$*" | grep -q "nousresearch.com"; then
+        for f in "$MOCK_NOUS_FAIL_DIR"/fail*; do
+          if [[ -f "$f" ]]; then
+            rm -f "$f"
+            if printf "%s" "$*" | grep -q "%{http_code}"; then
+              printf "401"; return 0
+            fi
+            printf "{\"error\":\"Unauthorized\"}\n"; return 22
+          fi
+        done
+        if printf "%s" "$*" | grep -q "%{http_code}"; then
+          printf "200"; return 0
+        fi
+        printf "{\"status\":\"ok\"}\n"; return 0
+      fi
+      command curl "$@"
+    }
+    export -f curl
+    export MOCK_NOUS_FAIL_DIR
+    deploy_collect_llm_config DEPLOY_API_KEY DEPLOY_MODEL < <(printf "2\nbad-key1\nbad-key2\nvalid-key-123\n") 2>/dev/null
+    rm -rf "$MOCK_NOUS_FAIL_DIR"
+    echo "KEY=$DEPLOY_API_KEY"'
+  assert_success
+  assert_output --partial "KEY=valid-key-123"
+}
+
 @test "deploy_write_summary creates YAML with all fields" {
   export DEPLOY_APP_NAME="my-agent" DEPLOY_REGION="ams" DEPLOY_VM_SIZE="shared-cpu-2x"
   export DEPLOY_VOLUME_SIZE="5" DEPLOY_MODEL="anthropic/claude-haiku-4.5"

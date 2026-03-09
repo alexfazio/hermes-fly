@@ -58,6 +58,10 @@ if printf '%s' "$*" | grep -q "nousresearch.com"; then
             printf '500'
             exit 0
         fi
+        if [[ "${MOCK_NOUS_RATE_LIMIT:-false}" == "true" ]]; then
+            printf '429'
+            exit 0
+        fi
         printf '200'
         exit 0
     fi

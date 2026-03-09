@@ -964,6 +964,11 @@ deploy_validate_nous_key() {
     return 1
   fi
 
+  # Any other non-2xx: reject (e.g., 429 rate limit, 404)
+  if [[ "$http_code" -lt 200 ]] || [[ "$http_code" -ge 300 ]]; then
+    return 1
+  fi
+
   return 0
 }
 
