@@ -94,6 +94,20 @@ fly_check_version() {
 }
 
 # --------------------------------------------------------------------------
+# fly_auth_login_command — resolve the safest auth command to show the user
+# Prefer ~/.fly/bin/fly when present so the command also works in a new shell
+# right after curl-based installation.
+# --------------------------------------------------------------------------
+fly_auth_login_command() {
+  local fly_bin="${HOME}/.fly/bin/fly"
+  if [[ -x "$fly_bin" ]]; then
+    printf '%q auth login\n' "$fly_bin"
+  else
+    printf 'fly auth login\n'
+  fi
+}
+
+# --------------------------------------------------------------------------
 # fly_check_auth — verify the user is authenticated with fly
 # Returns: 0 on success, EXIT_AUTH (2) on failure
 # --------------------------------------------------------------------------
@@ -101,7 +115,9 @@ fly_check_auth() {
   if fly auth whoami >/dev/null 2>&1; then
     return 0
   else
-    echo "Error: not authenticated with Fly.io. Run 'fly auth login' first." >&2
+    local login_cmd
+    login_cmd="$(fly_auth_login_command)"
+    printf "Error: not authenticated with Fly.io. Run '%s' first.\n" "$login_cmd" >&2
     return "$EXIT_AUTH"
   fi
 }
@@ -116,7 +132,9 @@ fly_check_auth_interactive() {
     return 0
   fi
 
-  echo "Not authenticated with Fly.io. Please run 'fly auth login' in another terminal." >&2
+  local login_cmd
+  login_cmd="$(fly_auth_login_command)"
+  printf "Not authenticated with Fly.io. Please run '%s' in another terminal.\n" "$login_cmd" >&2
   printf "Press Enter when ready to retry... " >&2
   IFS= read -r -t 60 _ || true
 

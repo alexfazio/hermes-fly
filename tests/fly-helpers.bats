@@ -222,6 +222,25 @@ teardown() {
   assert [ "$status" -eq 2 ]
 }
 
+@test "fly_auth_login_command uses explicit ~/.fly/bin/fly path when available" {
+  local fake_home
+  fake_home="$(mktemp -d)"
+  mkdir -p "$fake_home/.fly/bin"
+  printf '#!/usr/bin/env bash\nexit 0\n' > "$fake_home/.fly/bin/fly"
+  chmod +x "$fake_home/.fly/bin/fly"
+
+  run bash -c "
+    export HOME='$fake_home'
+    PATH='${BATS_TEST_DIRNAME}/mocks:/usr/bin:/bin'
+    source '${PROJECT_ROOT}/lib/fly-helpers.sh'
+    fly_auth_login_command
+  "
+  assert_success
+  assert_output "$fake_home/.fly/bin/fly auth login"
+
+  rm -rf "$fake_home"
+}
+
 # --- fly_create_app ---
 
 @test "fly_create_app passes name and returns JSON" {
@@ -292,6 +311,27 @@ teardown() {
   # Simulate user pressing Enter for the retry prompt
   run fly_check_auth_interactive <<< ""
   assert_success
+}
+
+@test "fly_check_auth_interactive suggests explicit ~/.fly/bin/fly path when available" {
+  local fake_home
+  fake_home="$(mktemp -d)"
+  mkdir -p "$fake_home/.fly/bin"
+  printf '#!/usr/bin/env bash\nexit 0\n' > "$fake_home/.fly/bin/fly"
+  chmod +x "$fake_home/.fly/bin/fly"
+
+  run bash -c "
+    export HOME='$fake_home'
+    export MOCK_FLY_AUTH=fail
+    PATH='${BATS_TEST_DIRNAME}/mocks:/usr/bin:/bin'
+    source '${PROJECT_ROOT}/lib/fly-helpers.sh'
+    fly_check_auth_interactive < /dev/null
+  "
+  assert_failure
+  assert [ "$status" -eq 2 ]
+  assert_output --partial "$fake_home/.fly/bin/fly auth login"
+
+  rm -rf "$fake_home"
 }
 
 # --- fly_deploy timeout ---

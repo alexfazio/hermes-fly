@@ -160,8 +160,10 @@ deploy_preflight() {
   ui_spinner_update "Checking authentication..."
   if ! fly_check_auth 2>/dev/null; then
     # Auth failed — stop spinner for interactive retry
+    local login_cmd
+    login_cmd="$(fly_auth_login_command)"
     ui_spinner_stop 1 "Not authenticated"
-    printf 'Run "fly auth login" in another terminal.\n' >&2
+    printf 'Run "%s" in another terminal.\n' "$login_cmd" >&2
     printf 'Press Enter when ready to retry... ' >&2
     IFS= read -r -t 60 _ || true
 

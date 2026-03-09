@@ -705,6 +705,24 @@ teardown() {
   assert_output --partial "Checking connectivity"
 }
 
+@test "deploy_preflight auth retry prompt uses explicit ~/.fly/bin/fly path when available" {
+  local fake_home
+  fake_home="$(mktemp -d)"
+  mkdir -p "$fake_home/.fly/bin"
+  printf '#!/usr/bin/env bash\nexit 0\n' > "$fake_home/.fly/bin/fly"
+  chmod +x "$fake_home/.fly/bin/fly"
+
+  export HOME="$fake_home"
+  export MOCK_FLY_AUTH=fail
+
+  run deploy_preflight < /dev/null
+  assert_failure
+  assert [ "$status" -eq 2 ]
+  assert_output --partial "$fake_home/.fly/bin/fly auth login"
+
+  rm -rf "$fake_home"
+}
+
 # --- config persistence ---
 
 @test "deploy_provision_resources skips app creation when DEPLOY_APP_CREATED is set" {
