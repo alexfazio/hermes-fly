@@ -224,9 +224,12 @@ deploy_collect_app_name() {
   local suggestion
   suggestion="$(deploy_generate_app_name)"
 
+  printf 'Each deployment needs a unique name on Fly.io.\n' >&2
+  printf 'Suggestion: %s\n\n' "$suggestion" >&2
+
   local input
   while true; do
-    printf 'App name [%s]: ' "$suggestion" >&2
+    printf 'Deployment name [%s]: ' "$suggestion" >&2
     IFS= read -r input
     if [[ -z "$input" ]]; then
       eval "$varname=\"\$suggestion\""
@@ -304,9 +307,9 @@ deploy_collect_org() {
   fi
 
   # Multiple orgs: show selection table
-  printf '\nSelect organization:\n' >&2
+  printf '\nYour Fly.io account has multiple workspaces. Choose where to deploy:\n\n' >&2
   printf '  ┌───┬──────────────────────┬──────────────────┐\n' >&2
-  printf '  │ # │ Organization         │ Slug             │\n' >&2
+  printf '  │ # │ Workspace            │ ID               │\n' >&2
   printf '  ├───┼──────────────────────┼──────────────────┤\n' >&2
   local i
   for i in "${!_ORG_SLUGS[@]}"; do
@@ -316,7 +319,7 @@ deploy_collect_org() {
 
   local choice
   while true; do
-    printf 'Choice [1]: ' >&2
+    printf 'Choose a workspace [1]: ' >&2
     IFS= read -r choice
     [[ -z "$choice" ]] && choice=1
     if [[ "$choice" =~ ^[0-9]+$ ]] && ((choice >= 1 && choice <= ${#_ORG_SLUGS[@]})); then
@@ -369,9 +372,9 @@ deploy_get_region_continent() {
 }
 
 # --------------------------------------------------------------------------
-# deploy_collect_region VARNAME — select a Fly.io region
-# Fetches regions dynamically from fly API, groups by continent.
-# Falls back to static list on API failure.
+# deploy_collect_region VARNAME — select a Fly.io region (two-step picker)
+# Step 1: continent selection. Step 2: city within continent.
+# Fetches regions dynamically from fly API. Falls back to static list.
 # --------------------------------------------------------------------------
 deploy_collect_region() {
   local varname="$1"
@@ -405,50 +408,78 @@ deploy_collect_region() {
     _REGION_NAMES=("${fallback_names[@]}")
   fi
 
-  # Sort into continent groups maintaining order within each group
+  # Build continent buckets
   local continent_order=("Americas" "Europe" "Asia-Pacific" "Oceania" "South America" "Africa" "Other")
-  local sorted_codes=() sorted_names=() sorted_groups=()
+  local -a continent_list=()
+  local -a continent_counts=()
   local continent code i
 
   for continent in "${continent_order[@]}"; do
-    local found=false
+    local count=0
     for i in "${!_REGION_CODES[@]}"; do
       code="${_REGION_CODES[$i]}"
       if [[ "$(deploy_get_region_continent "$code")" == "$continent" ]]; then
-        if [[ "$found" == "false" ]]; then
-          sorted_groups+=("$continent")
-          found=true
-        else
-          sorted_groups+=("")
-        fi
-        sorted_codes+=("$code")
-        sorted_names+=("${_REGION_NAMES[$i]}")
+        ((count++))
       fi
     done
-  done
-
-  printf '\nSelect a region:\n' >&2
-  printf '  ┌────┬──────────────────────────────────┬──────┐\n' >&2
-  printf '  │ #  │ Location                         │ Code │\n' >&2
-  for i in "${!sorted_codes[@]}"; do
-    if [[ -n "${sorted_groups[$i]}" ]]; then
-      printf '  ├────┼──────────────────────────────────┼──────┤\n' >&2
-      printf '  │    │ \033[1m%-32s\033[0m │      │\n' "${sorted_groups[$i]}" >&2
+    if ((count > 0)); then
+      continent_list+=("$continent")
+      continent_counts+=("$count")
     fi
-    printf '  │ %2d │  %-31s │ %s  │\n' "$((i + 1))" "${sorted_names[$i]}" "${sorted_codes[$i]}" >&2
   done
-  printf '  └────┴──────────────────────────────────┴──────┘\n' >&2
 
-  local choice
+  # Step 1: continent picker
+  printf '\nWhere are you (or your users) located?\n\n' >&2
+  printf '  ┌───┬──────────────────┬────────────┐\n' >&2
+  printf '  │ # │ Region           │ Locations  │\n' >&2
+  printf '  ├───┼──────────────────┼────────────┤\n' >&2
+  for i in "${!continent_list[@]}"; do
+    printf '  │ %d │ %-16s │ %d locations │\n' "$((i + 1))" "${continent_list[$i]}" "${continent_counts[$i]}" >&2
+  done
+  printf '  └───┴──────────────────┴────────────┘\n' >&2
+
+  local cont_choice
   while true; do
-    printf 'Choice [1]: ' >&2
-    IFS= read -r choice
-    [[ -z "$choice" ]] && choice=1
-    if [[ "$choice" =~ ^[0-9]+$ ]] && ((choice >= 1 && choice <= ${#sorted_codes[@]})); then
-      eval "$varname=\"\${sorted_codes[$((choice - 1))]}\""
+    printf 'Choose a region [1]: ' >&2
+    IFS= read -r cont_choice
+    [[ -z "$cont_choice" ]] && cont_choice=1
+    if [[ "$cont_choice" =~ ^[0-9]+$ ]] && ((cont_choice >= 1 && cont_choice <= ${#continent_list[@]})); then
+      break
+    fi
+    printf 'Invalid choice. Please enter a number between 1 and %d.\n' "${#continent_list[@]}" >&2
+  done
+
+  local selected_continent="${continent_list[$((cont_choice - 1))]}"
+
+  # Step 2: city picker within selected continent
+  local -a city_codes=() city_names=()
+  for i in "${!_REGION_CODES[@]}"; do
+    code="${_REGION_CODES[$i]}"
+    if [[ "$(deploy_get_region_continent "$code")" == "$selected_continent" ]]; then
+      city_codes+=("$code")
+      city_names+=("${_REGION_NAMES[$i]}")
+    fi
+  done
+
+  printf '\n%s locations:\n\n' "$selected_continent" >&2
+  printf '  ┌───┬──────────────────────────────────┬──────┐\n' >&2
+  printf '  │ # │ Location                         │ Code │\n' >&2
+  printf '  ├───┼──────────────────────────────────┼──────┤\n' >&2
+  for i in "${!city_codes[@]}"; do
+    printf '  │ %d │ %-32s │ %-4s │\n' "$((i + 1))" "${city_names[$i]}" "${city_codes[$i]}" >&2
+  done
+  printf '  └───┴──────────────────────────────────┴──────┘\n' >&2
+
+  local city_choice
+  while true; do
+    printf 'Choose a location [1]: ' >&2
+    IFS= read -r city_choice
+    [[ -z "$city_choice" ]] && city_choice=1
+    if [[ "$city_choice" =~ ^[0-9]+$ ]] && ((city_choice >= 1 && city_choice <= ${#city_codes[@]})); then
+      eval "$varname=\"\${city_codes[$((city_choice - 1))]}\""
       return 0
     fi
-    printf 'Invalid choice. Please enter a number between 1 and %d.\n' "${#sorted_codes[@]}" >&2
+    printf 'Invalid choice. Please enter a number between 1 and %d.\n' "${#city_codes[@]}" >&2
   done
 }
 
@@ -489,14 +520,27 @@ deploy_parse_vm_sizes() {
 }
 
 # --------------------------------------------------------------------------
+# deploy_get_vm_tier NAME — return tier label for VM size
+# --------------------------------------------------------------------------
+deploy_get_vm_tier() {
+  case "$1" in
+    shared-cpu-1x) echo "Starter" ;;
+    shared-cpu-2x) echo "Standard" ;;
+    performance-1x) echo "Pro" ;;
+    performance-2x) echo "Power" ;;
+    *) echo "" ;;
+  esac
+}
+
+# --------------------------------------------------------------------------
 # deploy_get_vm_recommendation NAME — return recommendation label
 # --------------------------------------------------------------------------
 deploy_get_vm_recommendation() {
   case "$1" in
-    shared-cpu-1x) echo "lightweight testing" ;;
-    shared-cpu-2x) echo "recommended for most use" ;;
-    performance-1x) echo "multi-tool agents" ;;
-    dedicated-cpu-1x) echo "sustained workloads" ;;
+    shared-cpu-1x) echo "Testing & light use" ;;
+    shared-cpu-2x) echo "Recommended for most" ;;
+    performance-1x) echo "Multi-tool agents" ;;
+    performance-2x) echo "Heavy / multi-user" ;;
     *) echo "" ;;
   esac
 }
@@ -509,8 +553,8 @@ _deploy_fallback_mem() {
   case "$1" in
     shared-cpu-1x) echo 256 ;;
     shared-cpu-2x) echo 512 ;;
-    performance-1x) echo 1024 ;;
-    dedicated-cpu-1x) echo 1024 ;;
+    performance-1x) echo 2048 ;;
+    performance-2x) echo 4096 ;;
     *) echo 0 ;;
   esac
 }
@@ -520,7 +564,7 @@ _deploy_fallback_price() {
     shared-cpu-1x) echo "1.94" ;;
     shared-cpu-2x) echo "3.88" ;;
     performance-1x) echo "12.00" ;;
-    dedicated-cpu-1x) echo "23.00" ;;
+    performance-2x) echo "24.00" ;;
     *) echo "0" ;;
   esac
 }
@@ -543,9 +587,9 @@ _deploy_lookup_vm() {
 deploy_collect_vm_size() {
   local size_var="$1" memory_var="$2"
 
-  # Sizes we offer (in display order)
-  local wanted=("shared-cpu-1x" "shared-cpu-2x" "performance-1x" "dedicated-cpu-1x")
-  local default_idx=2 # 1-based: option 2 = shared-cpu-2x
+  # All possible tiers in display order
+  local all_tiers=("shared-cpu-1x" "shared-cpu-2x" "performance-1x" "performance-2x")
+  local default_vm="shared-cpu-2x"
 
   # Try dynamic fetch
   _VM_NAMES=()
@@ -556,45 +600,65 @@ deploy_collect_vm_size() {
     deploy_parse_vm_sizes "$vm_json"
   fi
 
+  # Filter to available tiers (those found in API or all if API failed)
+  local available=() name
+  if [[ ${#_VM_NAMES[@]} -gt 0 ]]; then
+    for name in "${all_tiers[@]}"; do
+      if _deploy_lookup_vm "$name" mem >/dev/null 2>&1 && [[ -n "$(_deploy_lookup_vm "$name" mem)" ]]; then
+        available+=("$name")
+      fi
+    done
+  fi
+  # Fallback: show all tiers with static data
+  [[ ${#available[@]} -eq 0 ]] && available=("${all_tiers[@]}")
+
+  # Find default index
+  local default_idx=1 i
+  for i in "${!available[@]}"; do
+    [[ "${available[$i]}" == "$default_vm" ]] && default_idx=$((i + 1))
+  done
+
   # Build table rows
-  local idx=0 name mem price rec mem_label
+  local idx=0 mem price rec mem_label tier
   local rows=()
-  for name in "${wanted[@]}"; do
+  for name in "${available[@]}"; do
     idx=$((idx + 1))
     mem="$(_deploy_lookup_vm "$name" mem)"
     price="$(_deploy_lookup_vm "$name" price)"
     [[ -z "$mem" ]] && mem="$(_deploy_fallback_mem "$name")"
     [[ -z "$price" ]] && price="$(_deploy_fallback_price "$name")"
+    tier="$(deploy_get_vm_tier "$name")"
     rec="$(deploy_get_vm_recommendation "$name")"
 
     if ((mem >= 1024)); then
-      mem_label="$((mem / 1024))gb"
+      mem_label="$((mem / 1024)) GB"
     else
-      mem_label="${mem}mb"
+      mem_label="${mem} MB"
     fi
 
-    rows+=("$(printf '%d│%-19s│%-5s│$%-8s│%s' "$idx" "$name" "$mem_label" "$price/mo" "$rec")")
+    rows+=("$(printf '%d│%-10s│%-6s│$%-8s│%s' "$idx" "$tier" "$mem_label" "$price/mo" "$rec")")
   done
 
-  printf '\nSelect VM size:\n' >&2
-  printf '  ┌───┬─────────────────────┬───────┬───────────┬──────────────────────────┐\n' >&2
-  printf '  │ # │ VM Size             │ RAM   │ Cost      │ Use Case                 │\n' >&2
-  printf '  ├───┼─────────────────────┼───────┼───────────┼──────────────────────────┤\n' >&2
+  printf '\nChoose a VM tier:\n' >&2
+  printf '  ┌───┬────────────┬────────┬───────────┬──────────────────────────┐\n' >&2
+  printf '  │ # │ Tier       │ RAM    │ Cost      │ Best for                 │\n' >&2
+  printf '  ├───┼────────────┼────────┼───────────┼──────────────────────────┤\n' >&2
   local row
   for row in "${rows[@]}"; do
-    local n vm rm co uc
-    IFS='│' read -r n vm rm co uc <<<"$row"
-    printf '  │ %s │ %-19s │ %-5s │ %-9s │ %-24s │\n' "$n" "$vm" "$rm" "$co" "$uc" >&2
+    local n ti rm co bf
+    IFS='│' read -r n ti rm co bf <<<"$row"
+    printf '  │ %s │ %-10s │ %-6s │ %-9s │ %-24s │\n' "$n" "$ti" "$rm" "$co" "$bf" >&2
   done
-  printf '  └───┴─────────────────────┴───────┴───────────┴──────────────────────────┘\n' >&2
+  printf '  └───┴────────────┴────────┴───────────┴──────────────────────────┘\n' >&2
+  printf '  Prices are estimates based on Fly.io rates.\n' >&2
 
   local choice
   while true; do
-    printf 'Choice [%d]: ' "$default_idx" >&2
+    printf 'Choose a tier [%d]: ' "$default_idx" >&2
     IFS= read -r choice
     [[ -z "$choice" ]] && choice=$default_idx
-    if [[ "$choice" =~ ^[0-9]+$ ]] && ((choice >= 1 && choice <= ${#wanted[@]})); then
-      local selected="${wanted[$((choice - 1))]}"
+    if [[ "$choice" =~ ^[0-9]+$ ]] && ((choice >= 1 && choice <= ${#available[@]})); then
+      local selected="${available[$((choice - 1))]}"
       local sel_mem
       sel_mem="$(_deploy_lookup_vm "$selected" mem)"
       [[ -z "$sel_mem" ]] && sel_mem="$(_deploy_fallback_mem "$selected")"
@@ -607,7 +671,7 @@ deploy_collect_vm_size() {
       eval "$size_var=\"\$selected\""
       return 0
     fi
-    printf 'Invalid choice. Please enter a number between 1 and %d.\n' "${#wanted[@]}" >&2
+    printf 'Invalid choice. Please enter a number between 1 and %d.\n' "${#available[@]}" >&2
   done
 }
 
@@ -619,19 +683,20 @@ deploy_collect_volume_size() {
   local varname="$1"
 
   local sizes=(1 5 10)
-  local labels=("light usage" "recommended" "heavy usage")
+  local labels=("Testing & light use" "Recommended for most" "Media & heavy usage")
   local costs=("0.15" "0.75" "1.50")
   local default_idx=2
 
-  printf '\nSelect volume size:\n' >&2
-  printf '  ┌───┬──────┬──────────────┬───────────┐\n' >&2
-  printf '  │ # │ Size │ Use Case     │ Cost      │\n' >&2
-  printf '  ├───┼──────┼──────────────┼───────────┤\n' >&2
+  printf '\nHow much storage should your agent have?\n\n' >&2
+  printf '  ┌───┬──────┬───────────────────────┬───────────┐\n' >&2
+  printf '  │ # │ Size │ Best for              │ Cost      │\n' >&2
+  printf '  ├───┼──────┼───────────────────────┼───────────┤\n' >&2
   local i
   for i in "${!sizes[@]}"; do
-    printf '  │ %d │ %2d GB │ %-12s │ $%s/mo  │\n' "$((i + 1))" "${sizes[$i]}" "${labels[$i]}" "${costs[$i]}" >&2
+    printf '  │ %d │ %2d GB │ %-21s │ $%s/mo  │\n' "$((i + 1))" "${sizes[$i]}" "${labels[$i]}" "${costs[$i]}" >&2
   done
-  printf '  └───┴──────┴──────────────┴───────────┘\n' >&2
+  printf '  └───┴──────┴───────────────────────┴───────────┘\n' >&2
+  printf '  Prices are estimates based on Fly.io rates.\n' >&2
 
   local choice
   while true; do
@@ -653,7 +718,18 @@ deploy_collect_volume_size() {
 # --------------------------------------------------------------------------
 deploy_collect_llm_config() {
   local api_key_var="$1" model_var="$2"
-  local api_key="" model=""
+  local api_key=""
+  # shellcheck disable=SC2034 # model is set indirectly via deploy_collect_model eval
+  local model=""
+
+  # Expert override: if all custom env vars are pre-set, skip the menu
+  if [[ "${DEPLOY_LLM_PROVIDER:-}" == "custom" ]] \
+     && [[ -n "${DEPLOY_LLM_BASE_URL:-}" ]] \
+     && [[ -n "${DEPLOY_API_KEY:-}" ]]; then
+    eval "$api_key_var=\"\$DEPLOY_API_KEY\""
+    eval "$model_var=''"
+    return 0
+  fi
 
   printf '\nSelect LLM provider:\n' >&2
   printf '  ┌───┬────────────────┬──────────────────────────────┐\n' >&2
@@ -661,7 +737,6 @@ deploy_collect_llm_config() {
   printf '  ├───┼────────────────┼──────────────────────────────┤\n' >&2
   printf '  │ 1 │ OpenRouter     │ openrouter.ai                │\n' >&2
   printf '  │ 2 │ Nous Portal    │ portal.nousresearch.com      │\n' >&2
-  printf '  │ 3 │ Custom         │ your own endpoint            │\n' >&2
   printf '  └───┴────────────────┴──────────────────────────────┘\n' >&2
 
   local provider_choice
@@ -670,8 +745,8 @@ deploy_collect_llm_config() {
     IFS= read -r provider_choice
     [[ -z "$provider_choice" ]] && provider_choice=1
     case "$provider_choice" in
-      1 | 2 | 3) break ;;
-      *) printf 'Invalid choice. Please enter 1, 2, or 3.\n' >&2 ;;
+      1 | 2) break ;;
+      *) printf 'Invalid choice. Please enter 1 or 2.\n' >&2 ;;
     esac
   done
 
@@ -680,38 +755,21 @@ deploy_collect_llm_config() {
       DEPLOY_LLM_PROVIDER="nous"
       export DEPLOY_LLM_PROVIDER
 
+      printf '\nGet your API key at: https://portal.nousresearch.com\n\n' >&2
       while [[ -z "$api_key" ]]; do
-        ui_ask_secret 'Nous API key (from portal.nousresearch.com, required):' api_key
+        ui_ask_secret 'Nous API key (required):' api_key
         if [[ -z "$api_key" ]]; then
           printf 'API key cannot be empty.\n' >&2
         fi
       done
 
-      eval "$api_key_var=\"\$api_key\""
-      eval "$model_var=''"
-      ;;
-    3)
-      DEPLOY_LLM_PROVIDER="custom"
-      export DEPLOY_LLM_PROVIDER
-
-      local base_url=""
-      while [[ -z "$base_url" ]]; do
-        printf 'LLM base URL (required): ' >&2
-        IFS= read -r base_url
-        if [[ -z "$base_url" ]]; then
-          printf 'Base URL cannot be empty.\n' >&2
-        fi
+      # Validate key via Nous API
+      printf 'Verifying Nous API key...\n' >&2
+      while ! deploy_validate_nous_key "$api_key"; do
+        printf 'Error: Nous Portal rejected this key. Check it and try again.\n' >&2
+        ui_ask_secret 'Nous API key (required):' api_key
       done
 
-      while [[ -z "$api_key" ]]; do
-        ui_ask_secret 'LLM API key (required):' api_key
-        if [[ -z "$api_key" ]]; then
-          printf 'API key cannot be empty.\n' >&2
-        fi
-      done
-
-      DEPLOY_LLM_BASE_URL="$base_url"
-      export DEPLOY_LLM_BASE_URL
       eval "$api_key_var=\"\$api_key\""
       eval "$model_var=''"
       ;;
@@ -719,6 +777,7 @@ deploy_collect_llm_config() {
       DEPLOY_LLM_PROVIDER="openrouter"
       export DEPLOY_LLM_PROVIDER
 
+      printf '\nGet your API key at: https://openrouter.ai/settings/keys\n\n' >&2
       while [[ -z "$api_key" ]]; do
         ui_ask_secret 'OpenRouter API key (required):' api_key
         if [[ -z "$api_key" ]]; then
@@ -733,58 +792,113 @@ deploy_collect_llm_config() {
         ui_ask_secret 'OpenRouter API key (required):' api_key
       done
 
-      # Model selection table
-      local model_ids=(
-        "anthropic/claude-sonnet-4"
-        "anthropic/claude-haiku-4.5"
-        "google/gemini-2.5-flash"
-        "meta-llama/llama-4-maverick"
-      )
-      local model_labels=(
-        "Claude Sonnet 4"
-        "Claude Haiku 4.5"
-        "Gemini 2.5 Flash"
-        "Llama 4 Maverick"
-      )
-      local model_notes=(
-        "balanced, recommended"
-        "fast & affordable"
-        "fast alternative"
-        "open source"
-      )
-
-      printf '\nSelect model:\n' >&2
-      printf '  ┌───┬────────────────────┬─────────────────────┐\n' >&2
-      printf '  │ # │ Model              │ Notes               │\n' >&2
-      printf '  ├───┼────────────────────┼─────────────────────┤\n' >&2
-      local mi
-      for mi in "${!model_labels[@]}"; do
-        printf '  │ %d │ %-18s │ %-19s │\n' "$((mi + 1))" "${model_labels[$mi]}" "${model_notes[$mi]}" >&2
-      done
-      printf '  │ 5 │ Custom model ID    │ enter manually      │\n' >&2
-      printf '  └───┴────────────────────┴─────────────────────┘\n' >&2
-
-      local model_choice
-      while true; do
-        printf 'Choice [1]: ' >&2
-        IFS= read -r model_choice
-        [[ -z "$model_choice" ]] && model_choice=1
-        if [[ "$model_choice" =~ ^[0-9]+$ ]] && ((model_choice >= 1 && model_choice <= ${#model_ids[@]})); then
-          model="${model_ids[$((model_choice - 1))]}"
-          break
-        elif [[ "$model_choice" == "5" ]]; then
-          printf 'Model ID (e.g. anthropic/claude-sonnet-4-20250514): ' >&2
-          IFS= read -r model
-          [[ -z "$model" ]] && model="${model_ids[0]}"
-          break
-        fi
-        printf 'Invalid choice. Please enter a number between 1 and 5.\n' >&2
-      done
+      # Model selection (dynamic or static fallback)
+      deploy_collect_model model
 
       eval "$api_key_var=\"\$api_key\""
       eval "$model_var=\"\$model\""
       ;;
   esac
+}
+
+# --------------------------------------------------------------------------
+# deploy_collect_model RESULT_VAR — pick an OpenRouter model
+# Tries dynamic fetch from API (requires jq); falls back to static list.
+# --------------------------------------------------------------------------
+deploy_collect_model() {
+  local result_var="${1:?Usage: deploy_collect_model RESULT_VAR}"
+  local _dcm_selected=""
+  local model_ids=()
+  local model_labels=()
+  local model_notes=()
+  local dynamic=false
+
+  # Try dynamic model list from OpenRouter API (requires jq)
+  if command -v jq >/dev/null 2>&1; then
+    local api_response
+    api_response="$(curl -sf --max-time 10 "https://openrouter.ai/api/v1/models" \
+      -H "Authorization: Bearer ${DEPLOY_API_KEY:-}" 2>/dev/null)" || true
+
+    if [[ -n "$api_response" ]]; then
+      local whitelisted='anthropic|openai|google|meta-llama|mistralai'
+      local filtered
+      filtered="$(printf '%s' "$api_response" | jq -r --arg wl "$whitelisted" \
+        '[.data[] | select(.id | test($wl)) | {id, name}] | sort_by(.id)' 2>/dev/null)" || true
+
+      if [[ -n "$filtered" ]] && [[ "$filtered" != "[]" ]] && [[ "$filtered" != "null" ]]; then
+        local count
+        count="$(printf '%s' "$filtered" | jq 'length')"
+        if [[ "$count" -gt 0 ]] 2>/dev/null; then
+          dynamic=true
+          local i
+          for ((i = 0; i < count; i++)); do
+            local mid mname provider
+            mid="$(printf '%s' "$filtered" | jq -r ".[$i].id")"
+            mname="$(printf '%s' "$filtered" | jq -r ".[$i].name")"
+            provider="$(printf '%s' "$mid" | cut -d/ -f1)"
+            model_ids+=("$mid")
+            model_labels+=("$mname")
+            model_notes+=("$provider")
+          done
+        fi
+      fi
+    fi
+  fi
+
+  # Fall back to static list
+  if [[ "$dynamic" == "false" ]]; then
+    model_ids=(
+      "anthropic/claude-sonnet-4"
+      "anthropic/claude-haiku-4.5"
+      "google/gemini-2.5-flash"
+      "meta-llama/llama-4-maverick"
+    )
+    model_labels=(
+      "Claude Sonnet 4"
+      "Claude Haiku 4.5"
+      "Gemini 2.5 Flash"
+      "Llama 4 Maverick"
+    )
+    model_notes=(
+      "balanced, recommended"
+      "fast & affordable"
+      "fast alternative"
+      "open source"
+    )
+  fi
+
+  local num_models=${#model_ids[@]}
+  local other_num=$((num_models + 1))
+
+  printf '\nSelect model:\n' >&2
+  printf '  ┌───┬────────────────────────────────┬─────────────────────┐\n' >&2
+  printf '  │ # │ Model                          │ Notes               │\n' >&2
+  printf '  ├───┼────────────────────────────────┼─────────────────────┤\n' >&2
+  local mi
+  for mi in "${!model_labels[@]}"; do
+    printf '  │ %d │ %-30s │ %-19s │\n' "$((mi + 1))" "${model_labels[$mi]}" "${model_notes[$mi]}" >&2
+  done
+  printf '  │ %d │ %-30s │ %-19s │\n' "$other_num" "Custom model ID" "enter manually" >&2
+  printf '  └───┴────────────────────────────────┴─────────────────────┘\n' >&2
+
+  local model_choice
+  while true; do
+    printf 'Choice [1]: ' >&2
+    IFS= read -r model_choice
+    [[ -z "$model_choice" ]] && model_choice=1
+    if [[ "$model_choice" =~ ^[0-9]+$ ]] && ((model_choice >= 1 && model_choice <= num_models)); then
+      _dcm_selected="${model_ids[$((model_choice - 1))]}"
+      break
+    elif [[ "$model_choice" == "$other_num" ]]; then
+      printf 'Model ID (e.g. anthropic/claude-sonnet-4-20250514): ' >&2
+      IFS= read -r _dcm_selected
+      [[ -z "$_dcm_selected" ]] && _dcm_selected="${model_ids[0]}"
+      break
+    fi
+    printf 'Invalid choice. Please enter a number between 1 and %d.\n' "$other_num" >&2
+  done
+
+  eval "$result_var=\"\$_dcm_selected\""
 }
 
 # --------------------------------------------------------------------------
@@ -807,6 +921,33 @@ deploy_validate_openrouter_key() {
   if [[ "$is_free_tier" == "true" ]] && [[ "${usage:-1}" == "0" ]]; then
     printf 'Warning: OpenRouter account appears to be on free tier with no usage. Add credits at https://openrouter.ai/credits\n' >&2
   fi
+  return 0
+}
+
+# --------------------------------------------------------------------------
+# deploy_validate_nous_key KEY — validate Nous API key via portal
+# Returns 0 on valid, 1 on auth failure. Warns on timeout/error.
+# --------------------------------------------------------------------------
+deploy_validate_nous_key() {
+  local api_key="$1"
+  local response exit_code=0
+  response="$(curl -sf --max-time 10 "https://api.nousresearch.com/v1/models" \
+    -H "Authorization: Bearer ${api_key}" 2>/dev/null)" || exit_code=$?
+
+  # Timeout (exit 28) or connection failure
+  if [[ $exit_code -ne 0 ]]; then
+    printf 'Warning: Could not verify Nous API key (connection issue).\n' >&2
+    if ui_confirm "Continue with this key anyway?"; then
+      return 0
+    fi
+    return 1
+  fi
+
+  # Auth failure in response body
+  if printf '%s' "$response" | grep -qiE '"error"|"Unauthorized"'; then
+    return 1
+  fi
+
   return 0
 }
 
@@ -835,9 +976,6 @@ deploy_collect_config() {
     telegram)
       messaging_setup_telegram
       ;;
-    discord)
-      messaging_setup_discord
-      ;;
     *)
       : # skip messaging
       ;;
@@ -852,8 +990,6 @@ deploy_collect_config() {
   printf '  Model:       %s\n' "$DEPLOY_MODEL" >&2
   if [[ -n "${DEPLOY_TELEGRAM_BOT_TOKEN:-}" ]]; then
     printf '  Messaging:   Telegram (configured)\n' >&2
-  elif [[ -n "${DEPLOY_DISCORD_BOT_TOKEN:-}" ]]; then
-    printf '  Messaging:   Discord (configured)\n' >&2
   else
     printf '  Messaging:   none (configure later)\n' >&2
   fi
@@ -946,18 +1082,22 @@ deploy_provision_resources() {
       ;;
   esac
 
+  # Add app identity
+  secrets+=("HERMES_APP_NAME=${DEPLOY_APP_NAME}")
+
+  # Add gateway config if set
+  if [[ -n "${DEPLOY_GATEWAY_ALLOW_ALL_USERS:-}" ]]; then
+    secrets+=("GATEWAY_ALLOW_ALL_USERS=${DEPLOY_GATEWAY_ALLOW_ALL_USERS}")
+  fi
+  if [[ -n "${DEPLOY_TELEGRAM_HOME_CHANNEL:-}" ]]; then
+    secrets+=("TELEGRAM_HOME_CHANNEL=${DEPLOY_TELEGRAM_HOME_CHANNEL}")
+  fi
+
   # Add messaging secrets if configured
   if [[ -n "${DEPLOY_TELEGRAM_BOT_TOKEN:-}" ]]; then
     secrets+=("TELEGRAM_BOT_TOKEN=${DEPLOY_TELEGRAM_BOT_TOKEN}")
     if [[ -n "${DEPLOY_TELEGRAM_ALLOWED_USERS:-}" ]]; then
       secrets+=("TELEGRAM_ALLOWED_USERS=${DEPLOY_TELEGRAM_ALLOWED_USERS}")
-    fi
-  fi
-
-  if [[ -n "${DEPLOY_DISCORD_BOT_TOKEN:-}" ]]; then
-    secrets+=("DISCORD_BOT_TOKEN=${DEPLOY_DISCORD_BOT_TOKEN}")
-    if [[ -n "${DEPLOY_DISCORD_ALLOWED_USERS:-}" ]]; then
-      secrets+=("DISCORD_ALLOWED_USERS=${DEPLOY_DISCORD_ALLOWED_USERS}")
     fi
   fi
 
@@ -1093,13 +1233,14 @@ deploy_show_success() {
   printf '  Est. cost:   %s\n' "$cost"
   if [[ -n "${DEPLOY_TELEGRAM_BOT_USERNAME:-}" ]]; then
     printf '  Telegram:    @%s\n' "$DEPLOY_TELEGRAM_BOT_USERNAME"
+    printf '  Chat link:   https://t.me/%s?start=%s\n' "$DEPLOY_TELEGRAM_BOT_USERNAME" "$DEPLOY_APP_NAME"
   fi
   printf '\n'
   printf '  Next steps:\n'
   printf '    - Check app status:  hermes-fly status\n'
   printf '    - View logs:         hermes-fly logs\n'
   printf '    - Run diagnostics:   hermes-fly doctor\n'
-  if [[ -z "${DEPLOY_TELEGRAM_BOT_TOKEN:-}" ]] && [[ -z "${DEPLOY_DISCORD_BOT_TOKEN:-}" ]]; then
+  if [[ -z "${DEPLOY_TELEGRAM_BOT_TOKEN:-}" ]]; then
     printf '    - Set up messaging:  hermes-fly messaging\n'
   fi
   printf '\n'

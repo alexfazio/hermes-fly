@@ -172,3 +172,30 @@ teardown() {
   assert_output --partial "! -f"
   assert_output --partial "telegram-approved.json"
 }
+
+@test "entrypoint.sh contains bot description auto-config" {
+  run cat "${PROJECT_ROOT}/templates/entrypoint.sh"
+  assert_success
+  assert_output --partial "setMyDescription"
+}
+
+@test "entrypoint.sh bot description does not block startup on failure" {
+  run cat "${PROJECT_ROOT}/templates/entrypoint.sh"
+  assert_success
+  assert_output --partial "|| true"
+  assert_output --partial "Warning"
+}
+
+@test "entrypoint.sh bot description uses URL encoding" {
+  run cat "${PROJECT_ROOT}/templates/entrypoint.sh"
+  assert_success
+  assert_output --partial "data-urlencode"
+}
+
+@test "entrypoint.sh bridges HERMES_APP_NAME GATEWAY_ALLOW_ALL_USERS TELEGRAM_HOME_CHANNEL" {
+  run cat "${PROJECT_ROOT}/templates/entrypoint.sh"
+  assert_success
+  assert_output --partial "HERMES_APP_NAME"
+  assert_output --partial "GATEWAY_ALLOW_ALL_USERS"
+  assert_output --partial "TELEGRAM_HOME_CHANNEL"
+}

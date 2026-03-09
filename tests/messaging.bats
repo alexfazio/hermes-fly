@@ -30,23 +30,6 @@ teardown() {
   assert_failure
 }
 
-# --- messaging_validate_discord_token ---
-
-@test "messaging_validate_discord_token accepts valid token" {
-  run messaging_validate_discord_token "MTIzNDU2Nzg5MDEyMzQ1Njc4.GhIjKl.abcdefghijklmnopqrstuvwxyz1234567890AB"
-  assert_success
-}
-
-@test "messaging_validate_discord_token rejects empty" {
-  run messaging_validate_discord_token ""
-  assert_failure
-}
-
-@test "messaging_validate_discord_token rejects short token" {
-  run messaging_validate_discord_token "tooshort"
-  assert_failure
-}
-
 # --- messaging_validate_user_ids ---
 
 @test "messaging_validate_user_ids accepts numeric IDs" {
@@ -71,12 +54,18 @@ teardown() {
 
 # --- messaging_setup_menu ---
 
-@test "messaging_setup_menu renders as box-drawing table" {
+@test "messaging_setup_menu shows Telegram and Skip only" {
   run bash -c 'export NO_COLOR=1; source lib/ui.sh; source lib/messaging.sh; echo "1" | messaging_setup_menu 2>&1'
   assert_success
-  assert_output --partial "┌"
-  assert_output --partial "Platform"
   assert_output --partial "Telegram"
+  assert_output --partial "Skip"
+  refute_output --partial "Discord"
+}
+
+@test "messaging_setup_menu default returns skip" {
+  run bash -c 'export NO_COLOR=1; source lib/ui.sh; source lib/messaging.sh; echo "" | messaging_setup_menu 2>/dev/null'
+  assert_success
+  assert_output --partial "skip"
 }
 
 @test "messaging_setup_menu with 1 returns telegram" {
@@ -85,8 +74,8 @@ teardown() {
   assert_output --partial "telegram"
 }
 
-@test "messaging_setup_menu with 3 returns skip" {
-  run bash -c 'export NO_COLOR=1; source lib/ui.sh; source lib/messaging.sh; echo "3" | messaging_setup_menu 2>/dev/null'
+@test "messaging_setup_menu with 2 returns skip" {
+  run bash -c 'export NO_COLOR=1; source lib/ui.sh; source lib/messaging.sh; echo "2" | messaging_setup_menu 2>/dev/null'
   assert_success
   assert_output --partial "skip"
 }
@@ -99,7 +88,7 @@ teardown() {
 }
 
 @test "messaging_setup_menu rejects bot token pasted as choice" {
-  _run_with_stdin() { printf '8617478383:AAGtp-test\n3\n' | messaging_setup_menu 2>/dev/null; }
+  _run_with_stdin() { printf '8617478383:AAGtp-test\n2\n' | messaging_setup_menu 2>/dev/null; }
   run _run_with_stdin
   assert_success
   assert_output "skip"
@@ -107,28 +96,61 @@ teardown() {
 
 # --- messaging_setup_telegram ---
 
-@test "messaging_setup_telegram shows how to find user ID" {
+@test "messaging_setup_telegram shows BotFather deep link" {
   run bash -c 'export NO_COLOR=1; export PATH="'"${BATS_TEST_DIRNAME}/mocks:${PATH}"'";
     source lib/ui.sh; source lib/messaging.sh;
-    messaging_setup_telegram < <(printf "123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11\ny\n12345\n") 2>&1'
+    messaging_setup_telegram < <(printf "123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11\ny\n1\n12345\n") 2>&1'
   assert_success
-  assert_output --partial "@userinfobot"
+  assert_output --partial "t.me/BotFather"
 }
 
-@test "messaging_setup_telegram sets token and users" {
+@test "messaging_setup_telegram Only me stores single user ID" {
+  # token, confirm bot, access=1(Only me), user ID
   run bash -c 'export NO_COLOR=1; export PATH="'"${BATS_TEST_DIRNAME}/mocks:${PATH}"'";
     source lib/ui.sh; source lib/messaging.sh;
-    messaging_setup_telegram < <(printf "123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11\ny\n12345,67890\n") 2>/dev/null
+    messaging_setup_telegram < <(printf "123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11\ny\n1\n12345\n") 2>/dev/null
+    echo "TOKEN=$DEPLOY_TELEGRAM_BOT_TOKEN USERS=$DEPLOY_TELEGRAM_ALLOWED_USERS"'
+  assert_success
+  assert_output --partial "TOKEN=123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11"
+  assert_output --partial "USERS=12345"
+}
+
+@test "messaging_setup_telegram Specific people stores comma-separated IDs" {
+  # token, confirm bot, access=2(Specific people), comma-separated IDs
+  run bash -c 'export NO_COLOR=1; export PATH="'"${BATS_TEST_DIRNAME}/mocks:${PATH}"'";
+    source lib/ui.sh; source lib/messaging.sh;
+    messaging_setup_telegram < <(printf "123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11\ny\n2\n12345,67890\n") 2>/dev/null
     echo "TOKEN=$DEPLOY_TELEGRAM_BOT_TOKEN USERS=$DEPLOY_TELEGRAM_ALLOWED_USERS"'
   assert_success
   assert_output --partial "TOKEN=123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11"
   assert_output --partial "USERS=12345,67890"
 }
 
+@test "messaging_setup_telegram Anyone requires y confirmation" {
+  # token, confirm bot, access=3(Anyone), confirm y
+  run bash -c 'export NO_COLOR=1; export PATH="'"${BATS_TEST_DIRNAME}/mocks:${PATH}"'";
+    source lib/ui.sh; source lib/messaging.sh;
+    messaging_setup_telegram < <(printf "123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11\ny\n3\ny\n") 2>/dev/null
+    echo "ALLOW_ALL=$DEPLOY_GATEWAY_ALLOW_ALL_USERS"'
+  assert_success
+  assert_output --partial "ALLOW_ALL=true"
+}
+
+@test "messaging_setup_telegram Anyone rejected falls back" {
+  # token, confirm bot, access=3(Anyone), reject n, then access=1(Only me), user ID
+  run bash -c 'export NO_COLOR=1; export PATH="'"${BATS_TEST_DIRNAME}/mocks:${PATH}"'";
+    source lib/ui.sh; source lib/messaging.sh;
+    messaging_setup_telegram < <(printf "123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11\ny\n3\nn\n1\n12345\n") 2>/dev/null
+    echo "USERS=$DEPLOY_TELEGRAM_ALLOWED_USERS ALLOW_ALL=[$DEPLOY_GATEWAY_ALLOW_ALL_USERS]"'
+  assert_success
+  assert_output --partial "USERS=12345"
+  assert_output --partial "ALLOW_ALL=[]"
+}
+
 @test "messaging_setup_telegram re-prompts on non-numeric user IDs" {
   run bash -c 'export NO_COLOR=1; export PATH="'"${BATS_TEST_DIRNAME}/mocks:${PATH}"'";
     source lib/ui.sh; source lib/messaging.sh;
-    messaging_setup_telegram < <(printf "123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11\ny\nalexfazio\n12345\n") 2>&1'
+    messaging_setup_telegram < <(printf "123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11\ny\n1\nalexfazio\n12345\n") 2>&1'
   assert_success
   assert_output --partial "user IDs must be numeric"
 }
@@ -136,65 +158,47 @@ teardown() {
 @test "messaging_setup_telegram still captures token with masked input" {
   run bash -c 'export NO_COLOR=1; export PATH="'"${BATS_TEST_DIRNAME}/mocks:${PATH}"'";
     source lib/ui.sh; source lib/messaging.sh;
-    messaging_setup_telegram < <(printf "123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11\ny\n12345\n") 2>/dev/null
+    messaging_setup_telegram < <(printf "123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11\ny\n1\n12345\n") 2>/dev/null
     echo "TOKEN=$DEPLOY_TELEGRAM_BOT_TOKEN"'
   assert_success
   assert_output --partial "TOKEN=123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11"
 }
 
-@test "messaging_setup_telegram allows empty user IDs" {
+@test "messaging_setup_telegram prompts for home channel" {
+  # token, confirm bot, access=1(Only me), user_id, accept default home channel
   run bash -c 'export NO_COLOR=1; export PATH="'"${BATS_TEST_DIRNAME}/mocks:${PATH}"'";
     source lib/ui.sh; source lib/messaging.sh;
-    messaging_setup_telegram < <(printf "123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11\ny\n\n") 2>/dev/null
-    echo "TOKEN=$DEPLOY_TELEGRAM_BOT_TOKEN USERS=[$DEPLOY_TELEGRAM_ALLOWED_USERS]"'
+    messaging_setup_telegram < <(printf "123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11\ny\n1\n12345\ny\n") 2>/dev/null
+    echo "HOME_CHANNEL=$DEPLOY_TELEGRAM_HOME_CHANNEL"'
   assert_success
-  assert_output --partial "TOKEN=123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11"
-  assert_output --partial "USERS=[]"
+  assert_output --partial "HOME_CHANNEL=12345"
 }
 
-# --- messaging_setup_discord ---
-
-@test "messaging_setup_discord shows how to find user ID" {
-  run bash -c 'export NO_COLOR=1; source lib/ui.sh; source lib/messaging.sh; messaging_setup_discord < <(printf "MTIzNDU2Nzg5MDEyMzQ1Njc4.GhIjKl.abcdefghijklmnopqrstuvwxyz1234567890AB\n111222\n") 2>&1'
+@test "messaging_setup_telegram skips home channel for Anyone" {
+  # token, confirm bot, access=3(Anyone), confirm y
+  run bash -c 'export NO_COLOR=1; export PATH="'"${BATS_TEST_DIRNAME}/mocks:${PATH}"'";
+    source lib/ui.sh; source lib/messaging.sh;
+    messaging_setup_telegram < <(printf "123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11\ny\n3\ny\n") 2>&1'
   assert_success
-  assert_output --partial "Developer Mode"
+  refute_output --partial "home channel"
 }
 
-@test "messaging_setup_discord sets token and users" {
-  run bash -c 'export NO_COLOR=1; source lib/ui.sh; source lib/messaging.sh; messaging_setup_discord <<EOF 2>/dev/null
-MTIzNDU2Nzg5MDEyMzQ1Njc4.GhIjKl.abcdefghijklmnopqrstuvwxyz1234567890AB
-111222,333444
-EOF
-echo "TOKEN=$DEPLOY_DISCORD_BOT_TOKEN USERS=$DEPLOY_DISCORD_ALLOWED_USERS"'
+@test "messaging_setup_telegram home channel declined leaves var unset" {
+  # token, confirm bot, access=1(Only me), user_id, decline home channel
+  run bash -c 'export NO_COLOR=1; export PATH="'"${BATS_TEST_DIRNAME}/mocks:${PATH}"'";
+    source lib/ui.sh; source lib/messaging.sh;
+    messaging_setup_telegram < <(printf "123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11\ny\n1\n12345\nn\n") 2>/dev/null
+    echo "HOME_CHANNEL=[${DEPLOY_TELEGRAM_HOME_CHANNEL:-}]"'
   assert_success
-  assert_output --partial "TOKEN=MTIzNDU2Nzg5MDEyMzQ1Njc4.GhIjKl.abcdefghijklmnopqrstuvwxyz1234567890AB"
-  assert_output --partial "USERS=111222,333444"
+  assert_output --partial "HOME_CHANNEL=[]"
 }
 
-@test "messaging_setup_discord warns on non-numeric user IDs" {
-  run bash -c 'export NO_COLOR=1; source lib/ui.sh; source lib/messaging.sh; messaging_setup_discord < <(printf "MTIzNDU2Nzg5MDEyMzQ1Njc4.GhIjKl.abcdefghijklmnopqrstuvwxyz1234567890AB\nmyuser\n") 2>&1'
+@test "messaging_setup_telegram shows userinfobot deep link" {
+  run bash -c 'export NO_COLOR=1; export PATH="'"${BATS_TEST_DIRNAME}/mocks:${PATH}"'";
+    source lib/ui.sh; source lib/messaging.sh;
+    messaging_setup_telegram < <(printf "123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11\ny\n1\n12345\n") 2>&1'
   assert_success
-  assert_output --partial "user IDs should be numeric"
-}
-
-@test "messaging_setup_discord still captures token with masked input" {
-  run bash -c 'export NO_COLOR=1; source lib/ui.sh; source lib/messaging.sh; messaging_setup_discord <<EOF 2>/dev/null
-MTIzNDU2Nzg5MDEyMzQ1Njc4.GhIjKl.abcdefghijklmnopqrstuvwxyz1234567890AB
-111222
-EOF
-echo "TOKEN=$DEPLOY_DISCORD_BOT_TOKEN"'
-  assert_success
-  assert_output --partial "TOKEN=MTIzNDU2Nzg5MDEyMzQ1Njc4.GhIjKl.abcdefghijklmnopqrstuvwxyz1234567890AB"
-}
-
-@test "messaging_setup_discord allows empty user IDs" {
-  run bash -c 'export NO_COLOR=1; source lib/ui.sh; source lib/messaging.sh; messaging_setup_discord <<EOF 2>/dev/null
-MTIzNDU2Nzg5MDEyMzQ1Njc4.GhIjKl.abcdefghijklmnopqrstuvwxyz1234567890AB
-
-EOF
-echo "TOKEN=$DEPLOY_DISCORD_BOT_TOKEN USERS=[$DEPLOY_DISCORD_ALLOWED_USERS]"'
-  assert_success
-  assert_output --partial "USERS=[]"
+  assert_output --partial "t.me/userinfobot"
 }
 
 # --- messaging_validate_telegram_token_api ---
@@ -216,10 +220,11 @@ echo "TOKEN=$DEPLOY_DISCORD_BOT_TOKEN USERS=[$DEPLOY_DISCORD_ALLOWED_USERS]"'
 }
 
 @test "messaging_setup_telegram re-prompts on non-numeric user ID until valid" {
+  # token, confirm bot, access=1(Only me), bad ID, good ID
   run bash -c 'export NO_COLOR=1; export PATH="'"${BATS_TEST_DIRNAME}/mocks:${PATH}"'";
     source '"${PROJECT_ROOT}"'/lib/ui.sh; source '"${PROJECT_ROOT}"'/lib/fly-helpers.sh;
     source '"${PROJECT_ROOT}"'/lib/messaging.sh;
-    messaging_setup_telegram < <(printf "123456:ValidToken\ny\nalexfazio\n123456789\n") 2>/dev/null
+    messaging_setup_telegram < <(printf "123456:ValidToken\ny\n1\nalexfazio\n123456789\n") 2>/dev/null
     echo "USERS=$DEPLOY_TELEGRAM_ALLOWED_USERS"'
   assert_success
   assert_output --partial "USERS=123456789"
@@ -229,7 +234,7 @@ echo "TOKEN=$DEPLOY_DISCORD_BOT_TOKEN USERS=[$DEPLOY_DISCORD_ALLOWED_USERS]"'
   run bash -c 'export NO_COLOR=1; export PATH="'"${BATS_TEST_DIRNAME}/mocks:${PATH}"'";
     source '"${PROJECT_ROOT}"'/lib/ui.sh; source '"${PROJECT_ROOT}"'/lib/fly-helpers.sh;
     source '"${PROJECT_ROOT}"'/lib/messaging.sh;
-    messaging_setup_telegram < <(printf "123456:ValidToken\ny\n123456789\n") 2>&1'
+    messaging_setup_telegram < <(printf "123456:ValidToken\ny\n1\n123456789\n") 2>&1'
   assert_success
   assert_output --partial "@test_hermes_bot"
 }
@@ -238,7 +243,7 @@ echo "TOKEN=$DEPLOY_DISCORD_BOT_TOKEN USERS=[$DEPLOY_DISCORD_ALLOWED_USERS]"'
   run bash -c 'export NO_COLOR=1; export PATH="'"${BATS_TEST_DIRNAME}/mocks:${PATH}"'";
     source '"${PROJECT_ROOT}"'/lib/ui.sh; source '"${PROJECT_ROOT}"'/lib/fly-helpers.sh;
     source '"${PROJECT_ROOT}"'/lib/messaging.sh;
-    messaging_setup_telegram < <(printf "123456:ValidToken\ny\n123456789\n") 2>/dev/null
+    messaging_setup_telegram < <(printf "123456:ValidToken\ny\n1\n123456789\n") 2>/dev/null
     echo "PLATFORM=$DEPLOY_MESSAGING_PLATFORM"'
   assert_success
   assert_output --partial "PLATFORM=telegram"

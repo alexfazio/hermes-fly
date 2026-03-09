@@ -72,6 +72,19 @@ teardown() {
   assert_output --partial "hermes-"
 }
 
+@test "deploy_collect_app_name prompt says Deployment name" {
+  run bash -c 'export NO_COLOR=1; export PATH="'"${BATS_TEST_DIRNAME}/mocks:${PATH}"'"; source lib/ui.sh; source lib/fly-helpers.sh; source lib/docker-helpers.sh; source lib/messaging.sh; source lib/config.sh; source lib/status.sh; source lib/deploy.sh; deploy_collect_app_name RESULT <<< "" 2>&1'
+  assert_success
+  assert_output --partial "Deployment name"
+  refute_output --partial "App name"
+}
+
+@test "deploy_collect_app_name shows guidance about unique names" {
+  run bash -c 'export NO_COLOR=1; export PATH="'"${BATS_TEST_DIRNAME}/mocks:${PATH}"'"; source lib/ui.sh; source lib/fly-helpers.sh; source lib/docker-helpers.sh; source lib/messaging.sh; source lib/config.sh; source lib/status.sh; source lib/deploy.sh; deploy_collect_app_name RESULT <<< "" 2>&1'
+  assert_success
+  assert_output --partial "unique name"
+}
+
 @test "deploy_collect_app_name uses custom input" {
   run bash -c 'export NO_COLOR=1; export PATH="'"${BATS_TEST_DIRNAME}/mocks:${PATH}"'"; source lib/ui.sh; source lib/fly-helpers.sh; source lib/docker-helpers.sh; source lib/messaging.sh; source lib/config.sh; source lib/status.sh; source lib/deploy.sh; deploy_collect_app_name RESULT <<< "my-hermes" 2>/dev/null; echo "$RESULT"'
   assert_success
@@ -143,10 +156,40 @@ teardown() {
   assert_output "SIZE=shared-cpu-2x MEM=512mb"
 }
 
-@test "deploy_collect_vm_size option 4 selects dedicated-cpu-1x" {
-  run bash -c 'export NO_COLOR=1; export PATH="'"${BATS_TEST_DIRNAME}/mocks:${PATH}"'"; source lib/ui.sh; source lib/fly-helpers.sh; source lib/docker-helpers.sh; source lib/messaging.sh; source lib/config.sh; source lib/status.sh; source lib/deploy.sh; deploy_collect_vm_size SIZE MEM <<< "4" 2>/dev/null; echo "SIZE=$SIZE MEM=$MEM"'
+@test "deploy_collect_vm_size option 3 selects performance-1x with 2gb" {
+  run bash -c 'export NO_COLOR=1; export PATH="'"${BATS_TEST_DIRNAME}/mocks:${PATH}"'"; source lib/ui.sh; source lib/fly-helpers.sh; source lib/docker-helpers.sh; source lib/messaging.sh; source lib/config.sh; source lib/status.sh; source lib/deploy.sh; deploy_collect_vm_size SIZE MEM <<< "3" 2>/dev/null; echo "SIZE=$SIZE MEM=$MEM"'
   assert_success
-  assert_output --partial "SIZE=dedicated-cpu-1x"
+  assert_output "SIZE=performance-1x MEM=2gb"
+}
+
+@test "deploy_collect_vm_size shows tier names" {
+  run bash -c 'export NO_COLOR=1; export PATH="'"${BATS_TEST_DIRNAME}/mocks:${PATH}"'"; source lib/ui.sh; source lib/fly-helpers.sh; source lib/docker-helpers.sh; source lib/messaging.sh; source lib/config.sh; source lib/status.sh; source lib/deploy.sh; deploy_collect_vm_size SIZE MEM <<< "1" 2>&1'
+  assert_success
+  assert_output --partial "Starter"
+  assert_output --partial "Standard"
+  assert_output --partial "Pro"
+}
+
+@test "deploy_collect_vm_size Pro shows 2 GB RAM" {
+  run bash -c 'export NO_COLOR=1; export PATH="'"${BATS_TEST_DIRNAME}/mocks:${PATH}"'"; source lib/ui.sh; source lib/fly-helpers.sh; source lib/docker-helpers.sh; source lib/messaging.sh; source lib/config.sh; source lib/status.sh; source lib/deploy.sh; deploy_collect_vm_size SIZE MEM <<< "1" 2>&1'
+  assert_success
+  assert_output --partial "2 GB"
+}
+
+@test "deploy_collect_vm_size hides tiers not in API response" {
+  # Mock only returns shared-cpu-1x and shared-cpu-2x
+  run bash -c 'export NO_COLOR=1; export MOCK_FLY_VM_SIZES_JSON='"'"'[{"name":"shared-cpu-1x","cpu_cores":1,"memory_mb":256,"price_month":1.94},{"name":"shared-cpu-2x","cpu_cores":2,"memory_mb":512,"price_month":3.88}]'"'"'; export PATH="'"${BATS_TEST_DIRNAME}/mocks:${PATH}"'"; source lib/ui.sh; source lib/fly-helpers.sh; source lib/docker-helpers.sh; source lib/messaging.sh; source lib/config.sh; source lib/status.sh; source lib/deploy.sh; deploy_collect_vm_size SIZE MEM <<< "1" 2>&1'
+  assert_success
+  assert_output --partial "Starter"
+  assert_output --partial "Standard"
+  refute_output --partial "Pro"
+  refute_output --partial "Power"
+}
+
+@test "deploy_collect_vm_size shows pricing disclaimer" {
+  run bash -c 'export NO_COLOR=1; export PATH="'"${BATS_TEST_DIRNAME}/mocks:${PATH}"'"; source lib/ui.sh; source lib/fly-helpers.sh; source lib/docker-helpers.sh; source lib/messaging.sh; source lib/config.sh; source lib/status.sh; source lib/deploy.sh; deploy_collect_vm_size SIZE MEM <<< "1" 2>&1'
+  assert_success
+  assert_output --partial "estimates"
 }
 
 # --- deploy_collect_volume_size ---
@@ -163,7 +206,25 @@ teardown() {
   assert_output --partial "┌"
   assert_output --partial "┘"
   assert_output --partial "Size"
-  assert_output --partial "recommended"
+  assert_output --partial "Recommended"
+}
+
+@test "deploy_collect_volume_size shows storage guidance" {
+  run bash -c 'export NO_COLOR=1; export PATH="'"${BATS_TEST_DIRNAME}/mocks:${PATH}"'"; source lib/ui.sh; source lib/fly-helpers.sh; source lib/docker-helpers.sh; source lib/messaging.sh; source lib/config.sh; source lib/status.sh; source lib/deploy.sh; deploy_collect_volume_size VSIZE <<< "1" 2>&1'
+  assert_success
+  assert_output --partial "storage"
+}
+
+@test "deploy_collect_volume_size shows Best for column" {
+  run bash -c 'export NO_COLOR=1; export PATH="'"${BATS_TEST_DIRNAME}/mocks:${PATH}"'"; source lib/ui.sh; source lib/fly-helpers.sh; source lib/docker-helpers.sh; source lib/messaging.sh; source lib/config.sh; source lib/status.sh; source lib/deploy.sh; deploy_collect_volume_size VSIZE <<< "1" 2>&1'
+  assert_success
+  assert_output --partial "Best for"
+}
+
+@test "deploy_collect_volume_size shows pricing disclaimer" {
+  run bash -c 'export NO_COLOR=1; export PATH="'"${BATS_TEST_DIRNAME}/mocks:${PATH}"'"; source lib/ui.sh; source lib/fly-helpers.sh; source lib/docker-helpers.sh; source lib/messaging.sh; source lib/config.sh; source lib/status.sh; source lib/deploy.sh; deploy_collect_volume_size VSIZE <<< "1" 2>&1'
+  assert_success
+  assert_output --partial "estimates"
 }
 
 # --- deploy_create_build_context ---
@@ -190,16 +251,31 @@ teardown() {
   run bash -c 'export NO_COLOR=1; export PATH="'"${BATS_TEST_DIRNAME}/mocks:${PATH}"'"; source lib/ui.sh; source lib/fly-helpers.sh; source lib/docker-helpers.sh; source lib/messaging.sh; source lib/config.sh; source lib/status.sh; source lib/deploy.sh; deploy_collect_org DEPLOY_ORG 2>&1; echo "ORG=$DEPLOY_ORG"'
   assert_success
   assert_output --partial "ORG=personal"
-  refute_output --partial "Select organization"
+  refute_output --partial "Choose a workspace"
 }
 
 @test "deploy_collect_org shows table for multiple orgs" {
   export MOCK_FLY_ORGS_JSON='{"personal":"Personal","my-team":"My Team"}'
   run bash -c 'export NO_COLOR=1; export MOCK_FLY_ORGS_JSON='"'"'{"personal":"Personal","my-team":"My Team"}'"'"'; export PATH="'"${BATS_TEST_DIRNAME}/mocks:${PATH}"'"; source lib/ui.sh; source lib/fly-helpers.sh; source lib/docker-helpers.sh; source lib/messaging.sh; source lib/config.sh; source lib/status.sh; source lib/deploy.sh; deploy_collect_org DEPLOY_ORG < <(printf "1\n") 2>&1; echo "ORG=$DEPLOY_ORG"'
   assert_success
-  assert_output --partial "Select organization"
+  assert_output --partial "Choose a workspace"
   assert_output --partial "my-team"
   assert_output --partial "ORG=personal"
+}
+
+@test "deploy_collect_org table shows Workspace and ID headers" {
+  run bash -c 'export NO_COLOR=1; export MOCK_FLY_ORGS_JSON='"'"'{"personal":"Personal","my-team":"My Team"}'"'"'; export PATH="'"${BATS_TEST_DIRNAME}/mocks:${PATH}"'"; source lib/ui.sh; source lib/fly-helpers.sh; source lib/docker-helpers.sh; source lib/messaging.sh; source lib/config.sh; source lib/status.sh; source lib/deploy.sh; deploy_collect_org DEPLOY_ORG < <(printf "1\n") 2>&1'
+  assert_success
+  assert_output --partial "Workspace"
+  assert_output --partial "ID"
+  refute_output --partial "Organization"
+  refute_output --partial "Slug"
+}
+
+@test "deploy_collect_org shows guidance text for multiple orgs" {
+  run bash -c 'export NO_COLOR=1; export MOCK_FLY_ORGS_JSON='"'"'{"personal":"Personal","my-team":"My Team"}'"'"'; export PATH="'"${BATS_TEST_DIRNAME}/mocks:${PATH}"'"; source lib/ui.sh; source lib/fly-helpers.sh; source lib/docker-helpers.sh; source lib/messaging.sh; source lib/config.sh; source lib/status.sh; source lib/deploy.sh; deploy_collect_org DEPLOY_ORG < <(printf "1\n") 2>&1'
+  assert_success
+  assert_output --partial "workspaces"
 }
 
 @test "deploy_collect_org selects second org from table" {
@@ -250,6 +326,17 @@ teardown() {
   assert_output --partial "Next steps"
 }
 
+@test "deploy_show_success shows Telegram deep link" {
+  export DEPLOY_APP_NAME="my-app"
+  export DEPLOY_REGION="ord"
+  export DEPLOY_VM_SIZE="shared-cpu-1x"
+  export DEPLOY_VOLUME_SIZE="5"
+  export DEPLOY_TELEGRAM_BOT_USERNAME="test_bot"
+  run deploy_show_success
+  assert_success
+  assert_output --partial "t.me/test_bot?start=my-app"
+}
+
 # --- deploy_cleanup_on_failure ---
 
 @test "deploy_cleanup_on_failure destroys app" {
@@ -261,7 +348,7 @@ teardown() {
 
 @test "deploy_collect_llm_config stores API key and default model" {
   # Choice 1 (OpenRouter), API key, model choice 1 (default)
-  run bash -c 'export NO_COLOR=1; export PATH="'"${BATS_TEST_DIRNAME}/mocks:${PATH}"'"; source lib/ui.sh; source lib/fly-helpers.sh; source lib/docker-helpers.sh; source lib/messaging.sh; source lib/config.sh; source lib/status.sh; source lib/deploy.sh; deploy_collect_llm_config KEY MODEL < <(printf "1\nsk-test-123\n1\n") 2>/dev/null; echo "KEY=$KEY MODEL=$MODEL"'
+  run bash -c 'export NO_COLOR=1; export MOCK_OPENROUTER_MODELS_FAIL=true; export PATH="'"${BATS_TEST_DIRNAME}/mocks:${PATH}"'"; source lib/ui.sh; source lib/fly-helpers.sh; source lib/docker-helpers.sh; source lib/messaging.sh; source lib/config.sh; source lib/status.sh; source lib/deploy.sh; deploy_collect_llm_config KEY MODEL < <(printf "1\nsk-test-123\n1\n") 2>/dev/null; echo "KEY=$KEY MODEL=$MODEL"'
   assert_success
   assert_output --partial "KEY=sk-test-123"
   assert_output --partial "MODEL=anthropic/claude-sonnet"
@@ -269,15 +356,27 @@ teardown() {
 
 @test "deploy_collect_llm_config re-prompts on empty key then accepts" {
   # Choice 1 (OpenRouter), empty key (re-prompt), API key, model choice 1
-  run bash -c 'export NO_COLOR=1; export PATH="'"${BATS_TEST_DIRNAME}/mocks:${PATH}"'"; source lib/ui.sh; source lib/fly-helpers.sh; source lib/docker-helpers.sh; source lib/messaging.sh; source lib/config.sh; source lib/status.sh; source lib/deploy.sh; deploy_collect_llm_config KEY MODEL < <(printf "1\n\nsk-test-456\n1\n") 2>/dev/null; echo "KEY=$KEY MODEL=$MODEL"'
+  run bash -c 'export NO_COLOR=1; export MOCK_OPENROUTER_MODELS_FAIL=true; export PATH="'"${BATS_TEST_DIRNAME}/mocks:${PATH}"'"; source lib/ui.sh; source lib/fly-helpers.sh; source lib/docker-helpers.sh; source lib/messaging.sh; source lib/config.sh; source lib/status.sh; source lib/deploy.sh; deploy_collect_llm_config KEY MODEL < <(printf "1\n\nsk-test-456\n1\n") 2>/dev/null; echo "KEY=$KEY MODEL=$MODEL"'
   assert_success
   assert_output --partial "KEY=sk-test-456"
+}
+
+@test "deploy_collect_llm_config shows OpenRouter key URL" {
+  run bash -c 'export NO_COLOR=1; export MOCK_OPENROUTER_MODELS_FAIL=true; export PATH="'"${BATS_TEST_DIRNAME}/mocks:${PATH}"'"; source lib/ui.sh; source lib/fly-helpers.sh; source lib/docker-helpers.sh; source lib/messaging.sh; source lib/config.sh; source lib/status.sh; source lib/deploy.sh; deploy_collect_llm_config KEY MODEL < <(printf "1\nsk-test\n1\n") 2>&1'
+  assert_success
+  assert_output --partial "openrouter.ai/settings/keys"
+}
+
+@test "deploy_collect_llm_config shows Nous Portal key URL" {
+  run bash -c 'export NO_COLOR=1; export PATH="'"${BATS_TEST_DIRNAME}/mocks:${PATH}"'"; source lib/ui.sh; source lib/fly-helpers.sh; source lib/docker-helpers.sh; source lib/messaging.sh; source lib/config.sh; source lib/status.sh; source lib/deploy.sh; deploy_collect_llm_config KEY MODEL < <(printf "2\nnous-key\n") 2>&1'
+  assert_success
+  assert_output --partial "Get your API key"
 }
 
 # --- deploy_collect_llm_config table rendering ---
 
 @test "deploy_collect_llm_config renders provider as box-drawing table" {
-  run bash -c 'export NO_COLOR=1; export PATH="'"${BATS_TEST_DIRNAME}/mocks:${PATH}"'"; source lib/ui.sh; source lib/fly-helpers.sh; source lib/docker-helpers.sh; source lib/messaging.sh; source lib/config.sh; source lib/status.sh; source lib/deploy.sh; deploy_collect_llm_config KEY MODEL < <(printf "1\nsk-test\n1\n") 2>&1'
+  run bash -c 'export NO_COLOR=1; export MOCK_OPENROUTER_MODELS_FAIL=true; export PATH="'"${BATS_TEST_DIRNAME}/mocks:${PATH}"'"; source lib/ui.sh; source lib/fly-helpers.sh; source lib/docker-helpers.sh; source lib/messaging.sh; source lib/config.sh; source lib/status.sh; source lib/deploy.sh; deploy_collect_llm_config KEY MODEL < <(printf "1\nsk-test\n1\n") 2>&1'
   assert_success
   assert_output --partial "┌"
   assert_output --partial "Provider"
@@ -287,14 +386,14 @@ teardown() {
 
 @test "deploy_collect_llm_config OpenRouter shows model table" {
   # Choice 1 (OpenRouter), API key, model choice 1 (default)
-  run bash -c 'export NO_COLOR=1; export PATH="'"${BATS_TEST_DIRNAME}/mocks:${PATH}"'"; source lib/ui.sh; source lib/fly-helpers.sh; source lib/docker-helpers.sh; source lib/messaging.sh; source lib/config.sh; source lib/status.sh; source lib/deploy.sh; deploy_collect_llm_config KEY MODEL < <(printf "1\nsk-test\n1\n") 2>&1; echo "MODEL=$MODEL"'
+  run bash -c 'export NO_COLOR=1; export MOCK_OPENROUTER_MODELS_FAIL=true; export PATH="'"${BATS_TEST_DIRNAME}/mocks:${PATH}"'"; source lib/ui.sh; source lib/fly-helpers.sh; source lib/docker-helpers.sh; source lib/messaging.sh; source lib/config.sh; source lib/status.sh; source lib/deploy.sh; deploy_collect_llm_config KEY MODEL < <(printf "1\nsk-test\n1\n") 2>&1; echo "MODEL=$MODEL"'
   assert_success
   assert_output --partial "Select model"
-  assert_output --partial "claude"
+  assert_output --partial "Claude"
 }
 
 @test "deploy_collect_llm_config OpenRouter model choice 1 picks default" {
-  run bash -c 'export NO_COLOR=1; export PATH="'"${BATS_TEST_DIRNAME}/mocks:${PATH}"'"; source lib/ui.sh; source lib/fly-helpers.sh; source lib/docker-helpers.sh; source lib/messaging.sh; source lib/config.sh; source lib/status.sh; source lib/deploy.sh; deploy_collect_llm_config KEY MODEL < <(printf "1\nsk-test\n1\n") 2>/dev/null; echo "MODEL=$MODEL"'
+  run bash -c 'export NO_COLOR=1; export MOCK_OPENROUTER_MODELS_FAIL=true; export PATH="'"${BATS_TEST_DIRNAME}/mocks:${PATH}"'"; source lib/ui.sh; source lib/fly-helpers.sh; source lib/docker-helpers.sh; source lib/messaging.sh; source lib/config.sh; source lib/status.sh; source lib/deploy.sh; deploy_collect_llm_config KEY MODEL < <(printf "1\nsk-test\n1\n") 2>/dev/null; echo "MODEL=$MODEL"'
   assert_success
   assert_output --partial "MODEL=anthropic/claude-sonnet"
 }
@@ -303,7 +402,7 @@ teardown() {
 
 @test "deploy_collect_llm_config choice 1 sets OpenRouter provider" {
   # Choice 1 = OpenRouter, then API key, then model choice 1
-  run bash -c 'export NO_COLOR=1; export PATH="'"${BATS_TEST_DIRNAME}/mocks:${PATH}"'"; source lib/ui.sh; source lib/fly-helpers.sh; source lib/docker-helpers.sh; source lib/messaging.sh; source lib/config.sh; source lib/status.sh; source lib/deploy.sh; deploy_collect_llm_config KEY MODEL < <(printf "1\nsk-or-key\n1\n") 2>/dev/null; echo "KEY=$KEY MODEL=$MODEL PROVIDER=$DEPLOY_LLM_PROVIDER"'
+  run bash -c 'export NO_COLOR=1; export MOCK_OPENROUTER_MODELS_FAIL=true; export PATH="'"${BATS_TEST_DIRNAME}/mocks:${PATH}"'"; source lib/ui.sh; source lib/fly-helpers.sh; source lib/docker-helpers.sh; source lib/messaging.sh; source lib/config.sh; source lib/status.sh; source lib/deploy.sh; deploy_collect_llm_config KEY MODEL < <(printf "1\nsk-or-key\n1\n") 2>/dev/null; echo "KEY=$KEY MODEL=$MODEL PROVIDER=$DEPLOY_LLM_PROVIDER"'
   assert_success
   assert_output --partial "KEY=sk-or-key"
   assert_output --partial "PROVIDER=openrouter"
@@ -318,12 +417,19 @@ teardown() {
   assert_output --partial "PROVIDER=nous"
 }
 
-@test "deploy_collect_llm_config choice 3 stores base URL in DEPLOY_LLM_BASE_URL" {
-  # Choice 3 = Custom, then base URL, then API key
-  run bash -c 'export NO_COLOR=1; export PATH="'"${BATS_TEST_DIRNAME}/mocks:${PATH}"'"; source lib/ui.sh; source lib/fly-helpers.sh; source lib/docker-helpers.sh; source lib/messaging.sh; source lib/config.sh; source lib/status.sh; source lib/deploy.sh; deploy_collect_llm_config KEY MODEL < <(printf "3\nhttps://my-llm.example.com/v1\ncustom-key-456\n") 2>/dev/null; echo "KEY=$KEY MODEL=$MODEL PROVIDER=$DEPLOY_LLM_PROVIDER BASE_URL=$DEPLOY_LLM_BASE_URL"'
+@test "deploy_collect_llm_config shows only 2 provider options" {
+  run bash -c 'export NO_COLOR=1; export MOCK_OPENROUTER_MODELS_FAIL=true; export PATH="'"${BATS_TEST_DIRNAME}/mocks:${PATH}"'"; source lib/ui.sh; source lib/fly-helpers.sh; source lib/docker-helpers.sh; source lib/messaging.sh; source lib/config.sh; source lib/status.sh; source lib/deploy.sh; deploy_collect_llm_config KEY MODEL < <(printf "1\nsk-test\n1\n") 2>&1'
+  assert_success
+  assert_output --partial "OpenRouter"
+  assert_output --partial "Nous"
+  # Custom provider row removed — "Custom model ID" in model table is expected
+  refute_output --partial "your own endpoint"
+}
+
+@test "deploy_collect_llm_config expert override via env vars skips menu" {
+  run bash -c 'export NO_COLOR=1; export PATH="'"${BATS_TEST_DIRNAME}/mocks:${PATH}"'"; export DEPLOY_LLM_PROVIDER=custom; export DEPLOY_LLM_BASE_URL="https://my-llm.example.com/v1"; export DEPLOY_API_KEY="custom-key-456"; source lib/ui.sh; source lib/fly-helpers.sh; source lib/docker-helpers.sh; source lib/messaging.sh; source lib/config.sh; source lib/status.sh; source lib/deploy.sh; deploy_collect_llm_config KEY MODEL 2>/dev/null; echo "KEY=$KEY PROVIDER=$DEPLOY_LLM_PROVIDER BASE_URL=$DEPLOY_LLM_BASE_URL"'
   assert_success
   assert_output --partial "KEY=custom-key-456"
-  assert_output --partial "MODEL= "
   assert_output --partial "PROVIDER=custom"
   assert_output --partial "BASE_URL=https://my-llm.example.com/v1"
 }
@@ -386,21 +492,37 @@ teardown() {
   [[ "$(deploy_get_region_continent "xyz")" == "Other" ]]
 }
 
-@test "deploy_collect_region uses dynamic regions from fly API" {
-  # Mock returns 10 regions; pick option 4 (ams)
-  run bash -c 'export NO_COLOR=1; export PATH="'"${BATS_TEST_DIRNAME}/mocks:${PATH}"'"; source lib/ui.sh; source lib/fly-helpers.sh; source lib/docker-helpers.sh; source lib/messaging.sh; source lib/config.sh; source lib/status.sh; source lib/deploy.sh; deploy_collect_region RESULT <<< "4" 2>/dev/null; echo "$RESULT"'
+@test "deploy_collect_region step 1 shows continents with counts" {
+  # Select continent 1 (Americas), then city 1
+  run bash -c 'export NO_COLOR=1; export PATH="'"${BATS_TEST_DIRNAME}/mocks:${PATH}"'"; source lib/ui.sh; source lib/fly-helpers.sh; source lib/docker-helpers.sh; source lib/messaging.sh; source lib/config.sh; source lib/status.sh; source lib/deploy.sh; deploy_collect_region RESULT < <(printf "1\n1\n") 2>&1; echo "RESULT=$RESULT"'
   assert_success
-  assert_output "ams"
+  assert_output --partial "Americas"
+  assert_output --partial "locations"
+}
+
+@test "deploy_collect_region step 2 shows cities for selected continent" {
+  # Select continent 2 (Europe), then city 1
+  run bash -c 'export NO_COLOR=1; export PATH="'"${BATS_TEST_DIRNAME}/mocks:${PATH}"'"; source lib/ui.sh; source lib/fly-helpers.sh; source lib/docker-helpers.sh; source lib/messaging.sh; source lib/config.sh; source lib/status.sh; source lib/deploy.sh; deploy_collect_region RESULT < <(printf "2\n1\n") 2>&1; echo "RESULT=$RESULT"'
+  assert_success
+  assert_output --partial "Amsterdam"
+}
+
+@test "deploy_collect_region routes unknown region codes to Other" {
+  # Mock with unknown code
+  run bash -c 'export NO_COLOR=1; export MOCK_FLY_REGIONS_JSON='"'"'[{"code":"xyz","name":"Unknown City"},{"code":"iad","name":"Ashburn"}]'"'"'; export PATH="'"${BATS_TEST_DIRNAME}/mocks:${PATH}"'"; source lib/ui.sh; source lib/fly-helpers.sh; source lib/docker-helpers.sh; source lib/messaging.sh; source lib/config.sh; source lib/status.sh; source lib/deploy.sh; deploy_collect_region RESULT < <(printf "2\n1\n") 2>&1; echo "RESULT=$RESULT"'
+  assert_success
+  assert_output --partial "Other"
 }
 
 @test "deploy_collect_region falls back to static list on API failure" {
-  run bash -c 'export NO_COLOR=1; export MOCK_FLY_REGIONS_FAIL=true; export PATH="'"${BATS_TEST_DIRNAME}/mocks:${PATH}"'"; source lib/ui.sh; source lib/fly-helpers.sh; source lib/docker-helpers.sh; source lib/messaging.sh; source lib/config.sh; source lib/status.sh; source lib/deploy.sh; deploy_collect_region RESULT <<< "1" 2>/dev/null; echo "$RESULT"'
+  # Continent 1 (Americas), then city 1 (Ashburn)
+  run bash -c 'export NO_COLOR=1; export MOCK_FLY_REGIONS_FAIL=true; export PATH="'"${BATS_TEST_DIRNAME}/mocks:${PATH}"'"; source lib/ui.sh; source lib/fly-helpers.sh; source lib/docker-helpers.sh; source lib/messaging.sh; source lib/config.sh; source lib/status.sh; source lib/deploy.sh; deploy_collect_region RESULT < <(printf "1\n1\n") 2>/dev/null; echo "$RESULT"'
   assert_success
   assert_output "iad"
 }
 
 @test "deploy_collect_region does not crash under set -u when API fails" {
-  run bash -c 'set -u; export NO_COLOR=1; export MOCK_FLY_REGIONS_FAIL=true; export PATH="'"${BATS_TEST_DIRNAME}/mocks:${PATH}"'"; source lib/ui.sh; source lib/fly-helpers.sh; source lib/docker-helpers.sh; source lib/messaging.sh; source lib/config.sh; source lib/status.sh; source lib/deploy.sh; deploy_collect_region RESULT <<< "1" 2>/dev/null; echo "$RESULT"'
+  run bash -c 'set -u; export NO_COLOR=1; export MOCK_FLY_REGIONS_FAIL=true; export PATH="'"${BATS_TEST_DIRNAME}/mocks:${PATH}"'"; source lib/ui.sh; source lib/fly-helpers.sh; source lib/docker-helpers.sh; source lib/messaging.sh; source lib/config.sh; source lib/status.sh; source lib/deploy.sh; deploy_collect_region RESULT < <(printf "1\n1\n") 2>/dev/null; echo "$RESULT"'
   assert_success
 }
 
@@ -427,8 +549,8 @@ teardown() {
   assert_success
   assert_output --partial "┌"
   assert_output --partial "┘"
-  assert_output --partial "shared-cpu-1x"
-  assert_output --partial "recommended"
+  assert_output --partial "Starter"
+  assert_output --partial "Recommended"
 }
 
 @test "deploy_collect_vm_size falls back to static on API failure" {
@@ -754,16 +876,51 @@ teardown() {
   assert_output --partial "unauthorized"
 }
 
+# --- deploy_provision_resources new secrets ---
+
+@test "deploy_provision_resources includes HERMES_APP_NAME" {
+  export DEPLOY_APP_NAME="test-app"
+  export DEPLOY_REGION="ord"
+  export DEPLOY_VOLUME_SIZE="5"
+  export DEPLOY_API_KEY="sk-test-key"
+  export DEPLOY_MODEL="anthropic/claude-sonnet-4-20250514"
+  local secrets_file="${BATS_TEST_TMPDIR}/secrets_args"
+  export MOCK_FLY_SECRETS_ARGS_FILE="$secrets_file"
+  run deploy_provision_resources
+  assert_success
+  [[ -f "$secrets_file" ]]
+  run cat "$secrets_file"
+  assert_output --partial "HERMES_APP_NAME=test-app"
+}
+
+@test "deploy_provision_resources includes GATEWAY_ALLOW_ALL_USERS when set" {
+  export DEPLOY_APP_NAME="test-app"
+  export DEPLOY_REGION="ord"
+  export DEPLOY_VOLUME_SIZE="5"
+  export DEPLOY_API_KEY="sk-test-key"
+  export DEPLOY_MODEL="anthropic/claude-sonnet-4-20250514"
+  export DEPLOY_GATEWAY_ALLOW_ALL_USERS="true"
+  local secrets_file="${BATS_TEST_TMPDIR}/secrets_args"
+  export MOCK_FLY_SECRETS_ARGS_FILE="$secrets_file"
+  run deploy_provision_resources
+  assert_success
+  [[ -f "$secrets_file" ]]
+  run cat "$secrets_file"
+  assert_output --partial "GATEWAY_ALLOW_ALL_USERS=true"
+}
+
 # --- deployment summary messaging ---
 
 @test "deployment summary shows Telegram when configured" {
-  run bash -c 'export NO_COLOR=1; export PATH="'"${BATS_TEST_DIRNAME}/mocks:${PATH}"'"; source lib/ui.sh; source lib/fly-helpers.sh; source lib/docker-helpers.sh; source lib/messaging.sh; source lib/config.sh; source lib/status.sh; source lib/deploy.sh; deploy_collect_config < <(printf "my-test-app\n1\n2\n2\n1\nsk-test-key\n1\n1\n123:ABC-token\ny\n12345\ny\n") 2>&1'
+  # Sequence: app, continent, city, vm, vol, provider, key, model, msg(telegram), token, confirm_bot, access(Only me), user_id, home_channel_yes, proceed
+  run bash -c 'export NO_COLOR=1; export MOCK_OPENROUTER_MODELS_FAIL=true; export PATH="'"${BATS_TEST_DIRNAME}/mocks:${PATH}"'"; source lib/ui.sh; source lib/fly-helpers.sh; source lib/docker-helpers.sh; source lib/messaging.sh; source lib/config.sh; source lib/status.sh; source lib/deploy.sh; deploy_collect_config < <(printf "my-test-app\n1\n1\n2\n2\n1\nsk-test-key\n1\n1\n123:ABC-token\ny\n1\n12345\ny\ny\n") 2>&1'
   assert_success
   assert_output --partial "Telegram (configured)"
 }
 
 @test "deployment summary shows none when messaging skipped" {
-  run bash -c 'export NO_COLOR=1; export PATH="'"${BATS_TEST_DIRNAME}/mocks:${PATH}"'"; source lib/ui.sh; source lib/fly-helpers.sh; source lib/docker-helpers.sh; source lib/messaging.sh; source lib/config.sh; source lib/status.sh; source lib/deploy.sh; deploy_collect_config < <(printf "my-test-app\n1\n2\n2\n1\nsk-test-key\n1\n3\ny\n") 2>&1'
+  # Sequence: app_name, continent, city, vm_tier, vol_size, llm_provider, api_key, model, messaging(skip), proceed
+  run bash -c 'export NO_COLOR=1; export MOCK_OPENROUTER_MODELS_FAIL=true; export PATH="'"${BATS_TEST_DIRNAME}/mocks:${PATH}"'"; source lib/ui.sh; source lib/fly-helpers.sh; source lib/docker-helpers.sh; source lib/messaging.sh; source lib/config.sh; source lib/status.sh; source lib/deploy.sh; deploy_collect_config < <(printf "my-test-app\n1\n1\n2\n2\n1\nsk-test-key\n1\n2\ny\n") 2>&1'
   assert_success
   assert_output --partial "none (configure later)"
 }
@@ -778,7 +935,8 @@ teardown() {
 }
 
 @test "deploy_collect_region re-prompts on invalid input" {
-  run bash -c 'export NO_COLOR=1; export PATH="'"${BATS_TEST_DIRNAME}/mocks:${PATH}"'"; source lib/ui.sh; source lib/fly-helpers.sh; source lib/docker-helpers.sh; source lib/messaging.sh; source lib/config.sh; source lib/status.sh; source lib/deploy.sh; deploy_collect_region RESULT < <(printf "garbage\n1\n") 2>/dev/null; echo "$RESULT"'
+  # garbage at continent level, then Americas (1), then city 1
+  run bash -c 'export NO_COLOR=1; export PATH="'"${BATS_TEST_DIRNAME}/mocks:${PATH}"'"; source lib/ui.sh; source lib/fly-helpers.sh; source lib/docker-helpers.sh; source lib/messaging.sh; source lib/config.sh; source lib/status.sh; source lib/deploy.sh; deploy_collect_region RESULT < <(printf "garbage\n1\n1\n") 2>/dev/null; echo "$RESULT"'
   assert_success
   assert_output "iad"
 }
@@ -803,19 +961,19 @@ teardown() {
 
 @test "deploy_collect_llm_config re-prompts on invalid model choice" {
   # Choice 1 (OpenRouter), API key, garbage model, then valid model 2
-  run bash -c 'export NO_COLOR=1; export PATH="'"${BATS_TEST_DIRNAME}/mocks:${PATH}"'"; source lib/ui.sh; source lib/fly-helpers.sh; source lib/docker-helpers.sh; source lib/messaging.sh; source lib/config.sh; source lib/status.sh; source lib/deploy.sh; deploy_collect_llm_config KEY MODEL < <(printf "1\nsk-test\ngarbage\n2\n") 2>/dev/null; echo "MODEL=$MODEL"'
+  run bash -c 'export NO_COLOR=1; export MOCK_OPENROUTER_MODELS_FAIL=true; export PATH="'"${BATS_TEST_DIRNAME}/mocks:${PATH}"'"; source lib/ui.sh; source lib/fly-helpers.sh; source lib/docker-helpers.sh; source lib/messaging.sh; source lib/config.sh; source lib/status.sh; source lib/deploy.sh; deploy_collect_llm_config KEY MODEL < <(printf "1\nsk-test\ngarbage\n2\n") 2>/dev/null; echo "MODEL=$MODEL"'
   assert_success
   assert_output "MODEL=anthropic/claude-haiku-4.5"
 }
 
 @test "deploy_collect_llm_config model choice 1 yields OpenRouter Sonnet 4 ID" {
-  run bash -c 'export NO_COLOR=1; export PATH="'"${BATS_TEST_DIRNAME}/mocks:${PATH}"'"; source lib/ui.sh; source lib/fly-helpers.sh; source lib/docker-helpers.sh; source lib/messaging.sh; source lib/config.sh; source lib/status.sh; source lib/deploy.sh; deploy_collect_llm_config KEY MODEL < <(printf "1\nsk-test\n1\n") 2>/dev/null; echo "MODEL=$MODEL"'
+  run bash -c 'export NO_COLOR=1; export MOCK_OPENROUTER_MODELS_FAIL=true; export PATH="'"${BATS_TEST_DIRNAME}/mocks:${PATH}"'"; source lib/ui.sh; source lib/fly-helpers.sh; source lib/docker-helpers.sh; source lib/messaging.sh; source lib/config.sh; source lib/status.sh; source lib/deploy.sh; deploy_collect_llm_config KEY MODEL < <(printf "1\nsk-test\n1\n") 2>/dev/null; echo "MODEL=$MODEL"'
   assert_success
   assert_output "MODEL=anthropic/claude-sonnet-4"
 }
 
 @test "deploy_collect_llm_config model choice 2 yields OpenRouter Haiku 4.5 ID" {
-  run bash -c 'export NO_COLOR=1; export PATH="'"${BATS_TEST_DIRNAME}/mocks:${PATH}"'"; source lib/ui.sh; source lib/fly-helpers.sh; source lib/docker-helpers.sh; source lib/messaging.sh; source lib/config.sh; source lib/status.sh; source lib/deploy.sh; deploy_collect_llm_config KEY MODEL < <(printf "1\nsk-test\n2\n") 2>/dev/null; echo "MODEL=$MODEL"'
+  run bash -c 'export NO_COLOR=1; export MOCK_OPENROUTER_MODELS_FAIL=true; export PATH="'"${BATS_TEST_DIRNAME}/mocks:${PATH}"'"; source lib/ui.sh; source lib/fly-helpers.sh; source lib/docker-helpers.sh; source lib/messaging.sh; source lib/config.sh; source lib/status.sh; source lib/deploy.sh; deploy_collect_llm_config KEY MODEL < <(printf "1\nsk-test\n2\n") 2>/dev/null; echo "MODEL=$MODEL"'
   assert_success
   assert_output "MODEL=anthropic/claude-haiku-4.5"
 }
@@ -847,6 +1005,37 @@ teardown() {
     source '"${PROJECT_ROOT}"'/lib/deploy.sh;
     deploy_validate_openrouter_key "bad-key" 2>/dev/null'
   assert_failure
+}
+
+@test "deploy_validate_nous_key returns 0 for valid key" {
+  run bash -c 'export NO_COLOR=1; export PATH="'"${BATS_TEST_DIRNAME}/mocks:${PATH}"'";
+    source '"${PROJECT_ROOT}"'/lib/ui.sh; source '"${PROJECT_ROOT}"'/lib/fly-helpers.sh;
+    source '"${PROJECT_ROOT}"'/lib/docker-helpers.sh; source '"${PROJECT_ROOT}"'/lib/messaging.sh;
+    source '"${PROJECT_ROOT}"'/lib/config.sh; source '"${PROJECT_ROOT}"'/lib/status.sh;
+    source '"${PROJECT_ROOT}"'/lib/deploy.sh;
+    deploy_validate_nous_key "valid-nous-key" 2>/dev/null'
+  assert_success
+}
+
+@test "deploy_validate_nous_key returns 1 on auth failure" {
+  run bash -c 'export NO_COLOR=1; export PATH="'"${BATS_TEST_DIRNAME}/mocks:${PATH}"'"; export MOCK_NOUS_AUTH_FAIL=true;
+    source '"${PROJECT_ROOT}"'/lib/ui.sh; source '"${PROJECT_ROOT}"'/lib/fly-helpers.sh;
+    source '"${PROJECT_ROOT}"'/lib/docker-helpers.sh; source '"${PROJECT_ROOT}"'/lib/messaging.sh;
+    source '"${PROJECT_ROOT}"'/lib/config.sh; source '"${PROJECT_ROOT}"'/lib/status.sh;
+    source '"${PROJECT_ROOT}"'/lib/deploy.sh;
+    deploy_validate_nous_key "bad-key" 2>/dev/null'
+  assert_failure
+}
+
+@test "deploy_validate_nous_key warns and allows continue on timeout" {
+  run bash -c 'export NO_COLOR=1; export PATH="'"${BATS_TEST_DIRNAME}/mocks:${PATH}"'"; export MOCK_NOUS_TIMEOUT=true;
+    source '"${PROJECT_ROOT}"'/lib/ui.sh; source '"${PROJECT_ROOT}"'/lib/fly-helpers.sh;
+    source '"${PROJECT_ROOT}"'/lib/docker-helpers.sh; source '"${PROJECT_ROOT}"'/lib/messaging.sh;
+    source '"${PROJECT_ROOT}"'/lib/config.sh; source '"${PROJECT_ROOT}"'/lib/status.sh;
+    source '"${PROJECT_ROOT}"'/lib/deploy.sh;
+    deploy_validate_nous_key "timeout-key" < <(printf "y\n") 2>&1'
+  assert_success
+  assert_output --partial "Continue"
 }
 
 @test "deploy_write_summary creates YAML with all fields" {
@@ -886,7 +1075,7 @@ teardown() {
 @test "deploy_collect_llm_config re-prompts on invalid OpenRouter key" {
   local fail_file="${BATS_TEST_TMPDIR}/openrouter_fail"
   touch "$fail_file"
-  run bash -c 'export NO_COLOR=1; export PATH="'"${BATS_TEST_DIRNAME}/mocks:${PATH}"'";
+  run bash -c 'export NO_COLOR=1; export MOCK_OPENROUTER_MODELS_FAIL=true; export PATH="'"${BATS_TEST_DIRNAME}/mocks:${PATH}"'";
     export MOCK_OPENROUTER_FAIL_FILE="'"${fail_file}"'";
     source '"${PROJECT_ROOT}"'/lib/ui.sh; source '"${PROJECT_ROOT}"'/lib/fly-helpers.sh;
     source '"${PROJECT_ROOT}"'/lib/docker-helpers.sh; source '"${PROJECT_ROOT}"'/lib/messaging.sh;
@@ -940,6 +1129,38 @@ teardown() {
     source '"${PROJECT_ROOT}"'/lib/deploy.sh;
     deploy_preflight 2>&1'
   assert_failure
+}
+
+# --- deploy_collect_model ---
+
+@test "deploy_collect_model shows models grouped by provider with jq" {
+  export DEPLOY_API_KEY="sk-or-test123"
+  run deploy_collect_model MODEL_RESULT <<< "1"
+  assert_success
+  assert_output --partial "anthropic"
+  assert_output --partial "Claude"
+}
+
+@test "deploy_collect_model falls back to static list without jq" {
+  export DEPLOY_API_KEY="sk-or-test123"
+  export MOCK_OPENROUTER_MODELS_FAIL=true
+  run deploy_collect_model MODEL_RESULT <<< "1"
+  assert_success
+  assert_output --partial "Claude Sonnet 4"
+  assert_output --partial "Llama 4 Maverick"
+}
+
+@test "deploy_collect_model Other accepts manual model ID" {
+  export DEPLOY_API_KEY="sk-or-test123"
+  export MOCK_OPENROUTER_MODELS_FAIL=true
+  # Static list has 4 models + Other = option 5
+  _test_collect_model_other() {
+    deploy_collect_model MODEL_RESULT
+    printf 'SELECTED=%s\n' "$MODEL_RESULT"
+  }
+  run _test_collect_model_other <<< $'5\nmy-custom/model-id'
+  assert_success
+  assert_output --partial "SELECTED=my-custom/model-id"
 }
 
 @test "verbose deploy_preflight calls prereqs_check_and_install on failure" {

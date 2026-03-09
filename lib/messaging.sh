@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# lib/messaging.sh — Telegram/Discord setup wizards
+# lib/messaging.sh — Telegram setup wizard
 # Sourced by hermes-fly; not executable directly.
 
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
@@ -45,17 +45,6 @@ messaging_validate_telegram_token_api() {
   return 0
 }
 
-# Validate Discord bot token format.
-# Valid: non-empty string with at least 20 characters.
-# Returns 0 if valid, 1 if not.
-messaging_validate_discord_token() {
-  local token="${1:-}"
-  if [[ -z "$token" ]] || [[ ${#token} -lt 20 ]]; then
-    return 1
-  fi
-  return 0
-}
-
 # Validate user IDs are numeric (comma-separated).
 # Empty input is valid (allow all users).
 # Returns 0 if valid, 1 if any ID is non-numeric.
@@ -77,36 +66,31 @@ messaging_validate_user_ids() {
 
 # Present a choice menu for messaging platform selection.
 # Reads user choice from stdin.
-# Echoes: "telegram", "discord", or "skip"
+# Echoes: "telegram" or "skip"
 # Returns 0.
 messaging_setup_menu() {
-  printf '\nMessaging Platform Setup\n' >&2
-  printf '  ┌───┬──────────┬────────────────────────────────┐\n' >&2
-  printf '  │ # │ Platform │ Description                    │\n' >&2
-  printf '  ├───┼──────────┼────────────────────────────────┤\n' >&2
-  printf '  │ 1 │ Telegram │ chat bot via @BotFather        │\n' >&2
-  printf '  │ 2 │ Discord  │ server bot via Developer Portal│\n' >&2
-  printf '  │ 3 │ Skip     │ configure later                │\n' >&2
-  printf '  └───┴──────────┴────────────────────────────────┘\n' >&2
+  printf '\nWant to chat with your agent via a messaging app?\n' >&2
+  printf '  ┌───┬──────────┬──────────────────────────────────────┐\n' >&2
+  printf '  │ # │ Platform │ Description                          │\n' >&2
+  printf '  ├───┼──────────┼──────────────────────────────────────┤\n' >&2
+  printf '  │ 1 │ Telegram │ Chat with your agent via Telegram bot│\n' >&2
+  printf '  │ 2 │ Skip     │ Set this up later                    │\n' >&2
+  printf '  └───┴──────────┴──────────────────────────────────────┘\n' >&2
   local choice
   while true; do
-    printf 'Choice [3]: ' >&2
+    printf 'Choice [2]: ' >&2
     IFS= read -r choice
-    [[ -z "$choice" ]] && choice=3
+    [[ -z "$choice" ]] && choice=2
     case "$choice" in
       1)
         echo "telegram"
         return 0
         ;;
       2)
-        echo "discord"
-        return 0
-        ;;
-      3)
         echo "skip"
         return 0
         ;;
-      *) printf 'Invalid choice. Please enter 1, 2, or 3.\n' >&2 ;;
+      *) printf 'Invalid choice. Please enter 1 or 2.\n' >&2 ;;
     esac
   done
 }
@@ -120,7 +104,7 @@ messaging_setup_menu() {
 messaging_setup_telegram() {
   printf '\n--- Telegram Bot Setup ---\n' >&2
   printf 'To create a Telegram bot:\n' >&2
-  printf '  1. Open Telegram and search for @BotFather\n' >&2
+  printf '  1. Open https://t.me/BotFather in Telegram\n' >&2
   printf '  2. Send /newbot and follow the prompts\n' >&2
   printf '  3. Copy the bot token provided\n\n' >&2
 
@@ -142,68 +126,73 @@ messaging_setup_telegram() {
     fi
   done
 
-  printf '\nTo find your Telegram user ID:\n' >&2
-  printf '  1. Message @userinfobot on Telegram\n' >&2
-  printf '  2. It replies with your numeric user ID (e.g., 123456789)\n' >&2
-  printf 'Only these IDs can interact with the bot. Leave blank to allow all users.\n\n' >&2
-
-  local users
+  # Access control menu
+  local users="" access_choice
   while true; do
-    printf 'User IDs (comma-separated, or blank for all): ' >&2
-    IFS= read -r users
-    if messaging_validate_user_ids "$users"; then
-      break
-    fi
-    printf 'Error: user IDs must be numeric (e.g., 123456789). Use @userinfobot to find yours.\n' >&2
+    printf '\nWho should be able to talk to this bot?\n' >&2
+    printf '  1. Only me\n' >&2
+    printf '  2. Specific people\n' >&2
+    printf '  3. Anyone\n' >&2
+    printf 'Choice [1]: ' >&2
+    IFS= read -r access_choice
+    [[ -z "$access_choice" ]] && access_choice=1
+
+    case "$access_choice" in
+      1)
+        printf '\nTo find your Telegram user ID:\n' >&2
+        printf '  Open https://t.me/userinfobot — it replies with your numeric ID\n\n' >&2
+        while true; do
+          printf 'Your user ID: ' >&2
+          IFS= read -r users
+          if [[ -n "$users" ]] && messaging_validate_user_ids "$users"; then
+            break
+          fi
+          printf 'Error: user IDs must be numeric (e.g., 123456789).\n' >&2
+        done
+        break
+        ;;
+      2)
+        printf '\nTo find Telegram user IDs:\n' >&2
+        printf '  Open https://t.me/userinfobot — it replies with your numeric ID\n\n' >&2
+        while true; do
+          printf 'User IDs (comma-separated): ' >&2
+          IFS= read -r users
+          if [[ -n "$users" ]] && messaging_validate_user_ids "$users"; then
+            break
+          fi
+          printf 'Error: user IDs must be numeric (e.g., 123456789). Use commas to separate.\n' >&2
+        done
+        break
+        ;;
+      3)
+        if ui_confirm "Allow anyone to use this bot? This is not recommended for most setups."; then
+          DEPLOY_GATEWAY_ALLOW_ALL_USERS="true"
+          export DEPLOY_GATEWAY_ALLOW_ALL_USERS
+          break
+        fi
+        # Rejected — loop back to access menu
+        ;;
+      *)
+        printf 'Invalid choice. Please enter 1, 2, or 3.\n' >&2
+        ;;
+    esac
   done
+
+  # Home channel — auto-suggest first user ID (skip for "Anyone" mode)
+  if [[ -n "$users" ]]; then
+    local first_id
+    first_id="$(printf '%s' "$users" | cut -d',' -f1 | tr -d '[:space:]')"
+    printf '\nSet a home channel for bot status messages.\n' >&2
+    if ui_confirm "Use $first_id as home channel?"; then
+      DEPLOY_TELEGRAM_HOME_CHANNEL="$first_id"
+      export DEPLOY_TELEGRAM_HOME_CHANNEL
+    fi
+  fi
 
   DEPLOY_TELEGRAM_BOT_TOKEN="$token"
   DEPLOY_TELEGRAM_ALLOWED_USERS="$users"
   DEPLOY_MESSAGING_PLATFORM="telegram"
   export DEPLOY_TELEGRAM_BOT_TOKEN DEPLOY_TELEGRAM_ALLOWED_USERS DEPLOY_MESSAGING_PLATFORM
-
-  return 0
-}
-
-# --- Discord setup ---
-
-# Interactive Discord bot setup wizard.
-# Prompts for bot token and allowed user IDs.
-# Sets global vars: DEPLOY_DISCORD_BOT_TOKEN, DEPLOY_DISCORD_ALLOWED_USERS
-# Returns 0 on success.
-messaging_setup_discord() {
-  printf '\n--- Discord Bot Setup ---\n' >&2
-  printf 'To create a Discord bot:\n' >&2
-  printf '  1. Go to https://discord.com/developers/applications\n' >&2
-  printf '  2. Create a new application and add a bot\n' >&2
-  printf '  3. Copy the bot token from the Bot settings page\n' >&2
-  printf '\n' >&2
-
-  local token
-  ui_ask_secret 'Bot token:' token
-
-  if ! messaging_validate_discord_token "$token"; then
-    printf 'Warning: token format looks invalid, proceeding anyway.\n' >&2
-  fi
-
-  printf '\nTo find your Discord user ID:\n' >&2
-  printf '  1. Enable Developer Mode in Discord settings\n' >&2
-  printf '     (Settings > Advanced > Developer Mode)\n' >&2
-  printf '  2. Right-click your name and select "Copy User ID"\n' >&2
-  printf 'Only these IDs can interact with the bot.\n' >&2
-  printf 'Leave blank to allow all users.\n' >&2
-
-  local users
-  printf 'User IDs (comma-separated, or blank for all): ' >&2
-  IFS= read -r users
-
-  if ! messaging_validate_user_ids "$users"; then
-    printf 'Warning: user IDs should be numeric (e.g., 123456789). Proceeding anyway.\n' >&2
-  fi
-
-  DEPLOY_DISCORD_BOT_TOKEN="$token"
-  DEPLOY_DISCORD_ALLOWED_USERS="$users"
-  export DEPLOY_DISCORD_BOT_TOKEN DEPLOY_DISCORD_ALLOWED_USERS
 
   return 0
 }

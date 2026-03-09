@@ -31,6 +31,31 @@ if printf '%s' "$*" | grep -q "openrouter.ai/api/v1/key"; then
     exit 0
 fi
 
+# OpenRouter models list
+if printf '%s' "$*" | grep -q "openrouter.ai/api/v1/models"; then
+    if [[ "${MOCK_CURL_FAIL:-false}" == "true" ]] || [[ "${MOCK_OPENROUTER_MODELS_FAIL:-false}" == "true" ]]; then
+        echo "curl: (7) Failed to connect" >&2
+        exit 7
+    fi
+    cat <<'MODELS_JSON'
+{"data":[{"id":"anthropic/claude-sonnet-4","name":"Claude Sonnet 4"},{"id":"anthropic/claude-haiku-4.5","name":"Claude Haiku 4.5"},{"id":"openai/gpt-4o","name":"GPT-4o"},{"id":"google/gemini-2.5-flash","name":"Gemini 2.5 Flash"},{"id":"meta-llama/llama-4-maverick","name":"Llama 4 Maverick"},{"id":"mistralai/mistral-large","name":"Mistral Large"}]}
+MODELS_JSON
+    exit 0
+fi
+
+# Nous API key validation
+if printf '%s' "$*" | grep -q "nousresearch.com"; then
+    if [[ "${MOCK_NOUS_AUTH_FAIL:-false}" == "true" ]]; then
+        printf '{"error":"Unauthorized"}\n'
+        exit 0
+    fi
+    if [[ "${MOCK_NOUS_TIMEOUT:-false}" == "true" ]]; then
+        exit 28
+    fi
+    printf '{"status":"ok"}\n'
+    exit 0
+fi
+
 # logOut / deleteWebhook / Telegram generic
 if printf '%s' "$*" | grep -q "api.telegram.org"; then
     if [[ "${MOCK_CURL_FAIL:-false}" == "true" ]]; then
