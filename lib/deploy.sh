@@ -408,17 +408,23 @@ deploy_collect_region() {
     _REGION_NAMES=("${fallback_names[@]}")
   fi
 
+  # Build continent cache (one lookup per region, reused below)
+  local -a _region_continents=()
+  local code i
+  for i in "${!_REGION_CODES[@]}"; do
+    _region_continents+=("$(deploy_get_region_continent "${_REGION_CODES[$i]}")")
+  done
+
   # Build continent buckets
   local continent_order=("Americas" "Europe" "Asia-Pacific" "Oceania" "South America" "Africa" "Other")
   local -a continent_list=()
   local -a continent_counts=()
-  local continent code i
+  local continent
 
   for continent in "${continent_order[@]}"; do
     local count=0
     for i in "${!_REGION_CODES[@]}"; do
-      code="${_REGION_CODES[$i]}"
-      if [[ "$(deploy_get_region_continent "$code")" == "$continent" ]]; then
+      if [[ "${_region_continents[$i]}" == "$continent" ]]; then
         ((count++))
       fi
     done
@@ -434,7 +440,7 @@ deploy_collect_region() {
   printf '  │ # │ Region           │ Locations  │\n' >&2
   printf '  ├───┼──────────────────┼────────────┤\n' >&2
   for i in "${!continent_list[@]}"; do
-    printf '  │ %d │ %-16s │ %d locations │\n' "$((i + 1))" "${continent_list[$i]}" "${continent_counts[$i]}" >&2
+    printf '  │ %d │ %-16s │ %2d locations│\n' "$((i + 1))" "${continent_list[$i]}" "${continent_counts[$i]}" >&2
   done
   printf '  └───┴──────────────────┴────────────┘\n' >&2
 
@@ -454,9 +460,8 @@ deploy_collect_region() {
   # Step 2: city picker within selected continent
   local -a city_codes=() city_names=()
   for i in "${!_REGION_CODES[@]}"; do
-    code="${_REGION_CODES[$i]}"
-    if [[ "$(deploy_get_region_continent "$code")" == "$selected_continent" ]]; then
-      city_codes+=("$code")
+    if [[ "${_region_continents[$i]}" == "$selected_continent" ]]; then
+      city_codes+=("${_REGION_CODES[$i]}")
       city_names+=("${_REGION_NAMES[$i]}")
     fi
   done
@@ -765,7 +770,15 @@ deploy_collect_llm_config() {
 
       # Validate key via Nous API
       printf 'Verifying Nous API key...\n' >&2
+      local _nous_retries=0
       while ! deploy_validate_nous_key "$api_key"; do
+        ((_nous_retries++))
+        if ((_nous_retries >= 3)); then
+          printf 'Nous verification failed %d times.\n' "$_nous_retries" >&2
+          if ui_confirm "Continue with this key anyway?"; then
+            break
+          fi
+        fi
         printf 'Error: Nous Portal rejected this key. Check it and try again.\n' >&2
         ui_ask_secret 'Nous API key (required):' api_key
       done
@@ -817,7 +830,7 @@ deploy_collect_model() {
   if command -v jq >/dev/null 2>&1; then
     local api_response
     api_response="$(curl -sf --max-time 10 "https://openrouter.ai/api/v1/models" \
-      -H "Authorization: Bearer ${DEPLOY_API_KEY:-}" 2>/dev/null)" || true
+      2>/dev/null)" || true
 
     if [[ -n "$api_response" ]]; then
       local whitelisted='anthropic|openai|google|meta-llama|mistralai'
@@ -934,7 +947,12 @@ deploy_validate_nous_key() {
   response="$(curl -sf --max-time 10 "https://api.nousresearch.com/v1/models" \
     -H "Authorization: Bearer ${api_key}" 2>/dev/null)" || exit_code=$?
 
-  # Timeout (exit 28) or connection failure
+  # HTTP error (exit 22 from curl -f): auth failure
+  if [[ $exit_code -eq 22 ]]; then
+    return 1
+  fi
+
+  # Network/timeout error: warn and offer bypass
   if [[ $exit_code -ne 0 ]]; then
     printf 'Warning: Could not verify Nous API key (connection issue).\n' >&2
     if ui_confirm "Continue with this key anyway?"; then
@@ -943,8 +961,8 @@ deploy_validate_nous_key() {
     return 1
   fi
 
-  # Auth failure in response body
-  if printf '%s' "$response" | grep -qiE '"error"|"Unauthorized"'; then
+  # Success but response contains error structure
+  if printf '%s' "$response" | grep -qE '"error"\s*:\s*"'; then
     return 1
   fi
 

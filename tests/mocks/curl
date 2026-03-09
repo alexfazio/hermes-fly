@@ -47,7 +47,7 @@ fi
 if printf '%s' "$*" | grep -q "nousresearch.com"; then
     if [[ "${MOCK_NOUS_AUTH_FAIL:-false}" == "true" ]]; then
         printf '{"error":"Unauthorized"}\n'
-        exit 0
+        exit 22
     fi
     if [[ "${MOCK_NOUS_TIMEOUT:-false}" == "true" ]]; then
         exit 28

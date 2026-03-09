@@ -43,6 +43,13 @@ teardown() {
   [ "$(echo "$amount < 10" | bc)" -eq 1 ]
 }
 
+@test "status_estimate_cost for performance-2x returns ~24" {
+  run status_estimate_cost "performance-2x" 5
+  assert_success
+  # performance-2x = $24.00 base + 5 * $0.15 = $24.75
+  assert_output '~$24.75/mo'
+}
+
 @test "status_estimate_cost for dedicated-cpu-1x returns ~23" {
   run status_estimate_cost "dedicated-cpu-1x" 1
   assert_success

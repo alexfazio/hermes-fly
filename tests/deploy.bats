@@ -1038,6 +1038,20 @@ teardown() {
   assert_output --partial "Continue"
 }
 
+@test "deploy_validate_nous_key rejects response with error structure" {
+  # Mock curl returns 0 (success) but body has error field — function should reject
+  run bash -c 'export NO_COLOR=1; export PATH="'"${BATS_TEST_DIRNAME}/mocks:${PATH}"'";
+    source '"${PROJECT_ROOT}"'/lib/ui.sh; source '"${PROJECT_ROOT}"'/lib/fly-helpers.sh;
+    source '"${PROJECT_ROOT}"'/lib/docker-helpers.sh; source '"${PROJECT_ROOT}"'/lib/messaging.sh;
+    source '"${PROJECT_ROOT}"'/lib/config.sh; source '"${PROJECT_ROOT}"'/lib/status.sh;
+    source '"${PROJECT_ROOT}"'/lib/deploy.sh;
+    # Override curl inline to return success exit code with error body
+    curl() { printf "{\"error\": \"Invalid API key\"}\n"; return 0; }
+    export -f curl
+    deploy_validate_nous_key "bad-key-with-error-body" 2>/dev/null'
+  assert_failure
+}
+
 @test "deploy_write_summary creates YAML with all fields" {
   export DEPLOY_APP_NAME="my-agent" DEPLOY_REGION="ams" DEPLOY_VM_SIZE="shared-cpu-2x"
   export DEPLOY_VOLUME_SIZE="5" DEPLOY_MODEL="anthropic/claude-haiku-4.5"

@@ -130,6 +130,7 @@ messaging_setup_telegram() {
   local users="" access_choice
   while true; do
     printf '\nWho should be able to talk to this bot?\n' >&2
+    printf '(Options 1-2 require your Telegram user ID)\n' >&2
     printf '  1. Only me\n' >&2
     printf '  2. Specific people\n' >&2
     printf '  3. Anyone\n' >&2
