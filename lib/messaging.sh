@@ -130,13 +130,13 @@ messaging_setup_telegram() {
   local users="" access_choice
   while true; do
     printf '\nWho should be able to talk to this bot?\n\n' >&2
-    printf '  ┌───┬──────────────────┬───────────────────────────────────────────┐\n' >&2
-    printf '  │ # │ Option           │ Description                               │\n' >&2
-    printf '  ├───┼──────────────────┼───────────────────────────────────────────┤\n' >&2
-    printf '  │ 1 │ Only me          │ Just you — enter your Telegram user ID    │\n' >&2
-    printf '  │ 2 │ Specific people  │ You and others — enter comma-separated IDs│\n' >&2
-    printf '  │ 3 │ Anyone           │ No restrictions — anyone who finds the bot│\n' >&2
-    printf '  └───┴──────────────────┴───────────────────────────────────────────┘\n' >&2
+    printf '  ┌───┬──────────────────┬────────────────────────────────────────────┐\n' >&2
+    printf '  │ # │ Option           │ Description                                │\n' >&2
+    printf '  ├───┼──────────────────┼────────────────────────────────────────────┤\n' >&2
+    printf '  │ 1 │ Only me          │ Just you — enter your Telegram user ID     │\n' >&2
+    printf '  │ 2 │ Specific people  │ You and others — enter comma-separated IDs │\n' >&2
+    printf '  │ 3 │ Anyone           │ No restrictions — anyone who finds the bot │\n' >&2
+    printf '  └───┴──────────────────┴────────────────────────────────────────────┘\n' >&2
     printf 'Choose [1]: ' >&2
     IFS= read -r access_choice
     [[ -z "$access_choice" ]] && access_choice=1

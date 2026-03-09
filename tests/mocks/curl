@@ -45,12 +45,26 @@ fi
 
 # Nous API key validation
 if printf '%s' "$*" | grep -q "nousresearch.com"; then
+    if [[ "${MOCK_NOUS_TIMEOUT:-false}" == "true" ]]; then
+        exit 28
+    fi
+    # Detect -w '%{http_code}' mode (status code extraction)
+    if printf '%s' "$*" | grep -q '%{http_code}'; then
+        if [[ "${MOCK_NOUS_AUTH_FAIL:-false}" == "true" ]]; then
+            printf '401'
+            exit 0
+        fi
+        if [[ "${MOCK_NOUS_SERVER_ERROR:-false}" == "true" ]]; then
+            printf '500'
+            exit 0
+        fi
+        printf '200'
+        exit 0
+    fi
+    # Legacy mode (curl -sf)
     if [[ "${MOCK_NOUS_AUTH_FAIL:-false}" == "true" ]]; then
         printf '{"error":"Unauthorized"}\n'
         exit 22
-    fi
-    if [[ "${MOCK_NOUS_TIMEOUT:-false}" == "true" ]]; then
-        exit 28
     fi
     printf '{"status":"ok"}\n'
     exit 0

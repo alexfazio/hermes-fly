@@ -771,15 +771,7 @@ deploy_collect_llm_config() {
 
       # Validate key via Nous API
       printf 'Verifying Nous API key...\n' >&2
-      local _nous_retries=0
       while ! deploy_validate_nous_key "$api_key"; do
-        ((_nous_retries++))
-        if ((_nous_retries >= 3)); then
-          printf 'Nous verification failed %d times.\n' "$_nous_retries" >&2
-          if ui_confirm "Continue with this key anyway?"; then
-            break
-          fi
-        fi
         printf 'Error: Nous Portal rejected this key. Check it and try again.\n' >&2
         ui_ask_secret 'Nous API key (required):' api_key
       done
@@ -944,16 +936,12 @@ deploy_validate_openrouter_key() {
 # --------------------------------------------------------------------------
 deploy_validate_nous_key() {
   local api_key="$1"
-  local response exit_code=0
-  response="$(curl -sf --max-time 10 "https://api.nousresearch.com/v1/models" \
+  local http_code exit_code=0
+  http_code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 \
+    "https://api.nousresearch.com/v1/models" \
     -H "Authorization: Bearer ${api_key}" 2>/dev/null)" || exit_code=$?
 
-  # HTTP error (exit 22 from curl -f): auth failure
-  if [[ $exit_code -eq 22 ]]; then
-    return 1
-  fi
-
-  # Network/timeout error: warn and offer bypass
+  # Network/timeout error (curl failed before getting HTTP response)
   if [[ $exit_code -ne 0 ]]; then
     printf 'Warning: Could not verify Nous API key (connection issue).\n' >&2
     if ui_confirm "Continue with this key anyway?"; then
@@ -962,8 +950,17 @@ deploy_validate_nous_key() {
     return 1
   fi
 
-  # Success but response contains error structure
-  if printf '%s' "$response" | grep -qE '"error"\s*:\s*"'; then
+  # Auth failure: hard reject, no bypass
+  if [[ "$http_code" == "401" ]] || [[ "$http_code" == "403" ]]; then
+    return 1
+  fi
+
+  # Server error: transient, offer bypass
+  if [[ "$http_code" -ge 500 ]]; then
+    printf 'Warning: Nous server error (HTTP %s). This may be temporary.\n' "$http_code" >&2
+    if ui_confirm "Continue with this key anyway?"; then
+      return 0
+    fi
     return 1
   fi
 
