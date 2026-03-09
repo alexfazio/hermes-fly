@@ -495,6 +495,24 @@ teardown() {
   [[ "${_ORG_NAMES[1]}" == "ai-garden-srls" ]]
 }
 
+@test "deploy_parse_orgs handles array with spacing between objects" {
+  deploy_parse_orgs '[{"name":"Alex Fazio","slug":"personal","type":"PERSONAL"}, {"name":"AI Garden","slug":"ai-garden","type":"ORGANIZATION"}]'
+  [[ ${#_ORG_SLUGS[@]} -eq 2 ]]
+  [[ "${_ORG_SLUGS[0]}" == "personal" ]]
+  [[ "${_ORG_NAMES[0]}" == "Alex Fazio" ]]
+  [[ "${_ORG_SLUGS[1]}" == "ai-garden" ]]
+  [[ "${_ORG_NAMES[1]}" == "AI Garden" ]]
+}
+
+@test "deploy_parse_orgs handles array with newlines between objects" {
+  local json='[{"name":"Alex Fazio","slug":"personal","type":"PERSONAL"},
+  {"name":"AI Garden","slug":"ai-garden","type":"ORGANIZATION"}]'
+  deploy_parse_orgs "$json"
+  [[ ${#_ORG_SLUGS[@]} -eq 2 ]]
+  [[ "${_ORG_SLUGS[0]}" == "personal" ]]
+  [[ "${_ORG_SLUGS[1]}" == "ai-garden" ]]
+}
+
 @test "deploy_parse_orgs handles empty array" {
   deploy_parse_orgs "[]"
   [[ ${#_ORG_SLUGS[@]} -eq 0 ]]

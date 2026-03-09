@@ -214,3 +214,11 @@ teardown() {
   assert_output --partial '_current_short'
   assert_output --partial '_desired_short'
 }
+
+@test "entrypoint.sh warns on short-description update failure" {
+  run cat "${PROJECT_ROOT}/templates/entrypoint.sh"
+  assert_success
+  # The short-description branch must log a warning on curl failure, matching
+  # the pattern used by the long-description branch
+  assert_output --partial "failed to update bot short description"
+}

@@ -277,9 +277,10 @@ deploy_parse_orgs() {
     # Array-of-objects format: [{"name":"...","slug":"...","type":"..."},...]
     # Extract each object's slug and name fields
     local slug name obj
-    # Split on },{ to get individual objects
+    # Split on },{  (tolerant of whitespace around comma)
     local objects_raw
-    objects_raw="$(printf '%s' "$json" | sed 's/^\[//;s/\]$//;s/},{/}\n{/g')"
+    objects_raw="$(printf '%s' "$json" | sed 's/^\[//;s/\]$//;s/}[[:space:]]*,[[:space:]]*{/}\
+{/g')"
     while IFS= read -r obj; do
       [[ -z "$obj" ]] && continue
       slug="$(printf '%s' "$obj" | sed -n 's/.*"slug"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')"

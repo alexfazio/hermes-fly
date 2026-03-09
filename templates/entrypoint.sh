@@ -48,9 +48,11 @@ if [[ -n "${TELEGRAM_BOT_TOKEN:-}" ]]; then
     fi
     # Reconcile short description independently
     if [[ "$_current_short" != "$_desired_short" ]]; then
-      curl -sf --max-time 5 \
+      if ! curl -sf --max-time 5 \
         "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/setMyShortDescription" \
-        --data-urlencode "short_description=${_desired_short}" >/dev/null 2>&1
+        --data-urlencode "short_description=${_desired_short}" >/dev/null 2>&1; then
+        echo "[hermes] Warning: failed to update bot short description" >&2
+      fi
     fi
   ) || true
 fi
