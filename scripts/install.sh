@@ -7,6 +7,7 @@ set -euo pipefail
 REPO="alexfazio/hermes-fly"
 INSTALL_DIR="${HERMES_FLY_INSTALL_DIR:-/usr/local/bin}"
 export HERMES_HOME="${HERMES_FLY_HOME:-/usr/local/lib/hermes-fly}"
+RELEASE_API_URL="${HERMES_FLY_RELEASE_API_URL:-https://api.github.com/repos/${REPO}/releases/latest}"
 
 detect_platform() {
   local os
@@ -34,6 +35,61 @@ detect_arch() {
   esac
 }
 
+normalize_install_ref() {
+  local ref="${1:-}"
+  if [[ "$ref" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    printf 'v%s\n' "$ref"
+  else
+    printf '%s\n' "$ref"
+  fi
+}
+
+is_release_ref() {
+  [[ "${1:-}" =~ ^v?[0-9]+\.[0-9]+\.[0-9]+$ ]]
+}
+
+resolve_latest_release_tag_via_git() {
+  local tag
+  tag="$(
+    git ls-remote --refs --tags "https://github.com/${REPO}.git" 2>/dev/null \
+      | awk '{print $2}' \
+      | sed 's#refs/tags/##' \
+      | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' \
+      | sort -V \
+      | tail -1
+  )"
+  if [[ -n "$tag" ]]; then
+    printf '%s\n' "$tag"
+    return 0
+  fi
+
+  echo "Error: Could not determine the latest hermes-fly release" >&2
+  return 1
+}
+
+resolve_latest_release_tag() {
+  local response tag
+  if command -v curl >/dev/null 2>&1; then
+    response="$(curl -fsSL "$RELEASE_API_URL" 2>/dev/null || true)"
+    tag="$(printf '%s' "$response" | sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)"
+    if [[ -n "$tag" ]]; then
+      printf '%s\n' "$tag"
+      return 0
+    fi
+  fi
+
+  resolve_latest_release_tag_via_git
+}
+
+resolve_install_ref() {
+  if [[ -n "${HERMES_FLY_VERSION:-}" ]]; then
+    normalize_install_ref "$HERMES_FLY_VERSION"
+    return 0
+  fi
+
+  resolve_latest_release_tag
+}
+
 verify_checksum() {
   local file="$1" expected="$2"
   local actual
@@ -53,6 +109,32 @@ verify_checksum() {
     echo "  Actual:   $actual" >&2
     return 1
   fi
+}
+
+verify_installed_version() {
+  local binary_path="$1" install_ref="$2"
+  local version_output actual expected
+
+  if ! is_release_ref "$install_ref"; then
+    return 0
+  fi
+
+  version_output="$("$binary_path" --version 2>/dev/null || true)"
+  actual="$(printf '%s' "$version_output" | sed -n 's/.*hermes-fly[[:space:]]\([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\).*/\1/p' | head -1)"
+  expected="${install_ref#v}"
+
+  if [[ -z "$actual" ]]; then
+    echo "Error: Could not determine installed hermes-fly version" >&2
+    return 1
+  fi
+  if [[ "$actual" != "$expected" ]]; then
+    echo "Error: Installed version mismatch" >&2
+    echo "  Requested release: ${install_ref}" >&2
+    echo "  Installed version: ${actual}" >&2
+    return 1
+  fi
+
+  return 0
 }
 
 _needs_sudo() {
@@ -107,13 +189,15 @@ install_files() {
 main() {
   echo "Installing hermes-fly..."
 
-  local platform arch
+  local platform arch install_ref
   platform="$(detect_platform)" || exit 1
   arch="$(detect_arch)" || exit 1
+  install_ref="$(resolve_install_ref)" || exit 1
 
   echo "Platform: $platform/$arch"
   echo "Install to: $HERMES_HOME"
   echo "Symlink in: $INSTALL_DIR"
+  echo "Release: $install_ref"
 
   if ! command -v git >/dev/null 2>&1; then
     echo "Error: git is required for installation" >&2
@@ -125,7 +209,8 @@ main() {
   trap 'rm -rf "${tmp_dir:-}"' EXIT
 
   echo "Downloading hermes-fly..."
-  if ! git clone --depth 1 "https://github.com/${REPO}.git" "$tmp_dir/hermes-fly" 2>/dev/null; then
+  if ! git clone --depth 1 --branch "$install_ref" --single-branch \
+    "https://github.com/${REPO}.git" "$tmp_dir/hermes-fly" 2>/dev/null; then
     echo "Error: Download failed" >&2
     exit 1
   fi
@@ -134,6 +219,7 @@ main() {
 
   # Show installed version
   local version
+  verify_installed_version "$INSTALL_DIR/hermes-fly" "$install_ref" || exit 1
   version="$("$INSTALL_DIR/hermes-fly" --version 2>/dev/null || echo "hermes-fly (unknown version)")"
 
   echo ""

@@ -25,6 +25,13 @@ and manages a Hermes instance on Fly.io.
 curl -fsSL "https://raw.githubusercontent.com/alexfazio/hermes-fly/main/scripts/install.sh" | bash
 ```
 
+This installs the latest published `hermes-fly` release by default. To pin a
+specific release:
+
+```bash
+HERMES_FLY_VERSION=vX.Y.Z curl -fsSL "https://raw.githubusercontent.com/alexfazio/hermes-fly/main/scripts/install.sh" | bash
+```
+
 Or clone and run directly:
 
 ```bash

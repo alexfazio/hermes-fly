@@ -70,18 +70,101 @@ teardown() {
   assert [ -L "${bin}/hermes-fly" ]
 }
 
-# --- main() with git clone ---
+# --- release resolution ---
 
-@test "install main clones repo and installs" {
-  # Create a mock git that sets up a fake repo
+@test "resolve_install_ref uses latest GitHub release by default" {
   local mock_dir="${TEST_TEMP_DIR}/mock_bin"
   mkdir -p "$mock_dir"
+  cat > "$mock_dir/curl" <<'MOCK'
+#!/usr/bin/env bash
+printf '{"tag_name":"v0.1.12"}\n'
+MOCK
+  chmod +x "$mock_dir/curl"
+
+  run bash -c '
+    export PATH="'"$mock_dir"':${PATH}"
+    source "'"${PROJECT_ROOT}"'/scripts/install.sh"
+    resolve_install_ref
+  '
+  assert_success
+  assert_output "v0.1.12"
+}
+
+@test "resolve_install_ref normalizes HERMES_FLY_VERSION override without v prefix" {
+  run bash -c '
+    export HERMES_FLY_VERSION="0.1.12"
+    source "'"${PROJECT_ROOT}"'/scripts/install.sh"
+    resolve_install_ref
+  '
+  assert_success
+  assert_output "v0.1.12"
+}
+
+# --- main() with git clone ---
+
+@test "install main clones latest release tag and installs matching version" {
+  local mock_dir="${TEST_TEMP_DIR}/mock_bin"
+  mkdir -p "$mock_dir"
+  local git_args_file="${TEST_TEMP_DIR}/git_args"
+
+  cat > "$mock_dir/curl" <<'MOCK'
+#!/usr/bin/env bash
+printf '{"tag_name":"v0.1.12"}\n'
+MOCK
+  chmod +x "$mock_dir/curl"
+
+  cat > "$mock_dir/git" <<'MOCK'
+#!/usr/bin/env bash
+if [[ "$1" == "clone" ]]; then
+  printf '%s\n' "$*" > "${MOCK_GIT_ARGS_FILE}"
+  dest="${@: -1}"
+  mkdir -p "$dest/lib" "$dest/templates"
+  printf '#!/bin/sh\necho "hermes-fly 0.1.12"\n' > "$dest/hermes-fly"
+  echo 'ui' > "$dest/lib/ui.sh"
+  echo 'tpl' > "$dest/templates/Dockerfile.template"
+  exit 0
+fi
+exit 1
+MOCK
+  chmod +x "$mock_dir/git"
+
+  local install_home="${TEST_TEMP_DIR}/hermes_home"
+  local install_bin="${TEST_TEMP_DIR}/install_bin"
+  run bash -c '
+    export HERMES_FLY_HOME="'"$install_home"'"
+    export HERMES_FLY_INSTALL_DIR="'"$install_bin"'"
+    export MOCK_GIT_ARGS_FILE="'"$git_args_file"'"
+    export PATH="'"$mock_dir"':${PATH}"
+    source "'"${PROJECT_ROOT}"'/scripts/install.sh"
+    main
+  '
+  assert_success
+  assert_output --partial "hermes-fly installed successfully"
+  assert_output --partial "hermes-fly 0.1.12"
+  assert [ -f "${install_home}/hermes-fly" ]
+  assert [ -f "${install_home}/lib/ui.sh" ]
+  assert [ -L "${install_bin}/hermes-fly" ]
+  run cat "$git_args_file"
+  assert_success
+  assert_output --partial "--branch v0.1.12"
+}
+
+@test "install main fails when installed version does not match requested release" {
+  local mock_dir="${TEST_TEMP_DIR}/mock_bin"
+  mkdir -p "$mock_dir"
+
+  cat > "$mock_dir/curl" <<'MOCK'
+#!/usr/bin/env bash
+printf '{"tag_name":"v0.1.12"}\n'
+MOCK
+  chmod +x "$mock_dir/curl"
+
   cat > "$mock_dir/git" <<'MOCK'
 #!/usr/bin/env bash
 if [[ "$1" == "clone" ]]; then
   dest="${@: -1}"
   mkdir -p "$dest/lib" "$dest/templates"
-  printf '#!/bin/sh\necho "hermes-fly 0.1.5"\n' > "$dest/hermes-fly"
+  printf '#!/bin/sh\necho "hermes-fly 0.1.11"\n' > "$dest/hermes-fly"
   echo 'ui' > "$dest/lib/ui.sh"
   echo 'tpl' > "$dest/templates/Dockerfile.template"
   exit 0
@@ -99,10 +182,6 @@ MOCK
     source "'"${PROJECT_ROOT}"'/scripts/install.sh"
     main
   '
-  assert_success
-  assert_output --partial "hermes-fly installed successfully"
-  assert_output --partial "hermes-fly 0.1.5"
-  assert [ -f "${install_home}/hermes-fly" ]
-  assert [ -f "${install_home}/lib/ui.sh" ]
-  assert [ -L "${install_bin}/hermes-fly" ]
+  assert_failure
+  assert_output --partial "Installed version mismatch"
 }
