@@ -193,6 +193,15 @@ teardown() {
   assert_output --partial "HOME_CHANNEL=[]"
 }
 
+@test "messaging_setup_telegram access menu renders as table" {
+  run bash -c 'export NO_COLOR=1; export PATH="'"${BATS_TEST_DIRNAME}/mocks:${PATH}"'";
+    source lib/ui.sh; source lib/messaging.sh;
+    messaging_setup_telegram < <(printf "123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11\ny\n1\n12345\n") 2>&1'
+  assert_success
+  assert_output --partial "Option"
+  assert_output --partial "Description"
+}
+
 @test "messaging_setup_telegram shows userinfobot deep link" {
   run bash -c 'export NO_COLOR=1; export PATH="'"${BATS_TEST_DIRNAME}/mocks:${PATH}"'";
     source lib/ui.sh; source lib/messaging.sh;

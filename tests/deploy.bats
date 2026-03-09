@@ -278,6 +278,12 @@ teardown() {
   assert_output --partial "workspaces"
 }
 
+@test "deploy_collect_org shows dashboard link for multiple orgs" {
+  run bash -c 'export NO_COLOR=1; export MOCK_FLY_ORGS_JSON='"'"'{"personal":"Personal","my-team":"My Team"}'"'"'; export PATH="'"${BATS_TEST_DIRNAME}/mocks:${PATH}"'"; source lib/ui.sh; source lib/fly-helpers.sh; source lib/docker-helpers.sh; source lib/messaging.sh; source lib/config.sh; source lib/status.sh; source lib/deploy.sh; deploy_collect_org DEPLOY_ORG < <(printf "1\n") 2>&1'
+  assert_success
+  assert_output --partial "fly.io/dashboard"
+}
+
 @test "deploy_collect_org selects second org from table" {
   run bash -c 'export NO_COLOR=1; export MOCK_FLY_ORGS_JSON='"'"'{"personal":"Personal","my-team":"My Team"}'"'"'; export PATH="'"${BATS_TEST_DIRNAME}/mocks:${PATH}"'"; source lib/ui.sh; source lib/fly-helpers.sh; source lib/docker-helpers.sh; source lib/messaging.sh; source lib/config.sh; source lib/status.sh; source lib/deploy.sh; deploy_collect_org DEPLOY_ORG < <(printf "2\n") 2>&1; echo "ORG=$DEPLOY_ORG"'
   assert_success

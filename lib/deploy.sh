@@ -307,7 +307,8 @@ deploy_collect_org() {
   fi
 
   # Multiple orgs: show selection table
-  printf '\nYour Fly.io account has multiple workspaces. Choose where to deploy:\n\n' >&2
+  printf '\nYour Fly.io account has multiple workspaces. Choose where to deploy.\n' >&2
+  printf 'See your workspaces at https://fly.io/dashboard\n\n' >&2
   printf '  ┌───┬──────────────────────┬──────────────────┐\n' >&2
   printf '  │ # │ Workspace            │ ID               │\n' >&2
   printf '  ├───┼──────────────────────┼──────────────────┤\n' >&2
