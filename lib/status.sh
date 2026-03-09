@@ -31,7 +31,7 @@ status_estimate_cost() {
     shared-cpu-2x) base_cost=404 ;;     # $4.04 in cents
     performance-1x) base_cost=3219 ;;   # $32.19 in cents
     performance-2x) base_cost=6439 ;;   # $64.39 in cents
-    dedicated-cpu-1x) base_cost=2300 ;; # $23.00 in cents
+    dedicated-cpu-1x) base_cost=2300 ;; # $23.00 in cents (legacy tier, not in current Fly.io pricing)
     *)
       echo "Unknown VM size: $vm_size" >&2
       return 1

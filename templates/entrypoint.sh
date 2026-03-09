@@ -28,19 +28,29 @@ done
 if [[ -n "${TELEGRAM_BOT_TOKEN:-}" ]]; then
   (
     _app="${HERMES_APP_NAME:-hermes}"
-    _desired="Hermes AI Agent (${_app}) — Your AI assistant powered by Hermes on Fly.io"
-    _current="$(curl -sf --max-time 5 \
+    _desired_desc="Hermes AI Agent (${_app}) — Your AI assistant powered by Hermes on Fly.io"
+    _desired_short="${_app} — Hermes AI Agent"
+    # Fetch current long description
+    _current_desc="$(curl -sf --max-time 5 \
       "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/getMyDescription" 2>/dev/null \
       | sed -n 's/.*"description"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)"
-    if [[ "$_current" != "$_desired" ]]; then
+    # Fetch current short description independently
+    _current_short="$(curl -sf --max-time 5 \
+      "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/getMyShortDescription" 2>/dev/null \
+      | sed -n 's/.*"short_description"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)"
+    # Reconcile long description
+    if [[ "$_current_desc" != "$_desired_desc" ]]; then
       if ! curl -sf --max-time 5 \
         "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/setMyDescription" \
-        --data-urlencode "description=${_desired}" >/dev/null 2>&1; then
+        --data-urlencode "description=${_desired_desc}" >/dev/null 2>&1; then
         echo "[hermes] Warning: failed to update bot description" >&2
       fi
+    fi
+    # Reconcile short description independently
+    if [[ "$_current_short" != "$_desired_short" ]]; then
       curl -sf --max-time 5 \
         "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/setMyShortDescription" \
-        --data-urlencode "short_description=${_app} — Hermes AI Agent" >/dev/null 2>&1
+        --data-urlencode "short_description=${_desired_short}" >/dev/null 2>&1
     fi
   ) || true
 fi

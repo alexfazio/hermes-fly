@@ -117,7 +117,7 @@ case "${1:-}" in
                     echo "Error: ${MOCK_FLY_ORGS_MSG:-API unavailable}" >&2
                     exit 1
                 fi
-                echo "${MOCK_FLY_ORGS_JSON:-{\"personal\":\"Personal\"}}"
+                echo "${MOCK_FLY_ORGS_JSON:-[{\"name\":\"Personal\",\"slug\":\"personal\",\"type\":\"PERSONAL\"}]}"
                 ;;
         esac
         ;;

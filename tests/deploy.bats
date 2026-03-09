@@ -486,6 +486,20 @@ teardown() {
   [[ "${_ORG_NAMES[1]}" == "My Team" ]]
 }
 
+@test "deploy_parse_orgs handles array-of-objects format" {
+  deploy_parse_orgs '[{"name":"Alex Fazio","slug":"personal","type":"PERSONAL"},{"name":"ai-garden-srls","slug":"ai-garden-srls","type":"ORGANIZATION"}]'
+  [[ ${#_ORG_SLUGS[@]} -eq 2 ]]
+  [[ "${_ORG_SLUGS[0]}" == "personal" ]]
+  [[ "${_ORG_NAMES[0]}" == "Alex Fazio" ]]
+  [[ "${_ORG_SLUGS[1]}" == "ai-garden-srls" ]]
+  [[ "${_ORG_NAMES[1]}" == "ai-garden-srls" ]]
+}
+
+@test "deploy_parse_orgs handles empty array" {
+  deploy_parse_orgs "[]"
+  [[ ${#_ORG_SLUGS[@]} -eq 0 ]]
+}
+
 # --- deploy_parse_regions ---
 
 @test "deploy_parse_regions extracts codes and names from JSON" {
@@ -1088,29 +1102,8 @@ teardown() {
     source '"${PROJECT_ROOT}"'/lib/docker-helpers.sh; source '"${PROJECT_ROOT}"'/lib/messaging.sh;
     source '"${PROJECT_ROOT}"'/lib/config.sh; source '"${PROJECT_ROOT}"'/lib/status.sh;
     source '"${PROJECT_ROOT}"'/lib/deploy.sh;
-    MOCK_NOUS_FAIL_DIR="$(mktemp -d)"
+    export MOCK_NOUS_FAIL_DIR="$(mktemp -d)"
     touch "$MOCK_NOUS_FAIL_DIR/fail1" "$MOCK_NOUS_FAIL_DIR/fail2" "$MOCK_NOUS_FAIL_DIR/fail3"
-    # Override curl to fail 3 times then succeed (supports both -sf and -w modes)
-    curl() {
-      if printf "%s" "$*" | grep -q "nousresearch.com"; then
-        for f in "$MOCK_NOUS_FAIL_DIR"/fail*; do
-          if [[ -f "$f" ]]; then
-            rm -f "$f"
-            if printf "%s" "$*" | grep -q "%{http_code}"; then
-              printf "401"; return 0
-            fi
-            printf "{\"error\":\"Unauthorized\"}\n"; return 22
-          fi
-        done
-        if printf "%s" "$*" | grep -q "%{http_code}"; then
-          printf "200"; return 0
-        fi
-        printf "{\"status\":\"ok\"}\n"; return 0
-      fi
-      command curl "$@"
-    }
-    export -f curl
-    export MOCK_NOUS_FAIL_DIR
     deploy_collect_llm_config DEPLOY_API_KEY DEPLOY_MODEL < <(printf "2\nbad-key1\nbad-key2\nbad-key3\nn\ngood-key\n") 2>&1
     rm -rf "$MOCK_NOUS_FAIL_DIR"'
   assert_success
@@ -1134,28 +1127,8 @@ teardown() {
     source '"${PROJECT_ROOT}"'/lib/docker-helpers.sh; source '"${PROJECT_ROOT}"'/lib/messaging.sh;
     source '"${PROJECT_ROOT}"'/lib/config.sh; source '"${PROJECT_ROOT}"'/lib/status.sh;
     source '"${PROJECT_ROOT}"'/lib/deploy.sh;
-    MOCK_NOUS_FAIL_DIR="$(mktemp -d)"
+    export MOCK_NOUS_FAIL_DIR="$(mktemp -d)"
     touch "$MOCK_NOUS_FAIL_DIR/fail1" "$MOCK_NOUS_FAIL_DIR/fail2"
-    curl() {
-      if printf "%s" "$*" | grep -q "nousresearch.com"; then
-        for f in "$MOCK_NOUS_FAIL_DIR"/fail*; do
-          if [[ -f "$f" ]]; then
-            rm -f "$f"
-            if printf "%s" "$*" | grep -q "%{http_code}"; then
-              printf "401"; return 0
-            fi
-            printf "{\"error\":\"Unauthorized\"}\n"; return 22
-          fi
-        done
-        if printf "%s" "$*" | grep -q "%{http_code}"; then
-          printf "200"; return 0
-        fi
-        printf "{\"status\":\"ok\"}\n"; return 0
-      fi
-      command curl "$@"
-    }
-    export -f curl
-    export MOCK_NOUS_FAIL_DIR
     deploy_collect_llm_config DEPLOY_API_KEY DEPLOY_MODEL < <(printf "2\nbad-key1\nbad-key2\nvalid-key-123\n") 2>/dev/null
     rm -rf "$MOCK_NOUS_FAIL_DIR"
     echo "KEY=$DEPLOY_API_KEY"'

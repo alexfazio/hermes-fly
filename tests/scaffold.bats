@@ -199,3 +199,18 @@ teardown() {
   assert_output --partial "GATEWAY_ALLOW_ALL_USERS"
   assert_output --partial "TELEGRAM_HOME_CHANNEL"
 }
+
+@test "entrypoint.sh fetches getMyShortDescription independently" {
+  run cat "${PROJECT_ROOT}/templates/entrypoint.sh"
+  assert_success
+  assert_output --partial "getMyShortDescription"
+}
+
+@test "entrypoint.sh reconciles short-description independently from long description" {
+  # Short description should have its own comparison block, not nested inside long-desc check
+  run cat "${PROJECT_ROOT}/templates/entrypoint.sh"
+  assert_success
+  # Verify independent fetch + comparison for short description
+  assert_output --partial '_current_short'
+  assert_output --partial '_desired_short'
+}

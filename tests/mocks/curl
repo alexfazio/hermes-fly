@@ -48,6 +48,21 @@ if printf '%s' "$*" | grep -q "nousresearch.com"; then
     if [[ "${MOCK_NOUS_TIMEOUT:-false}" == "true" ]]; then
         exit 28
     fi
+    # Fail-N-then-succeed mode: MOCK_NOUS_FAIL_DIR contains fail* files
+    # Each call removes one fail file and returns 401. When no files remain, succeeds.
+    if [[ -n "${MOCK_NOUS_FAIL_DIR:-}" ]] && [[ -d "${MOCK_NOUS_FAIL_DIR}" ]]; then
+        for _f in "$MOCK_NOUS_FAIL_DIR"/fail*; do
+            if [[ -f "$_f" ]]; then
+                rm -f "$_f"
+                if printf '%s' "$*" | grep -q '%{http_code}'; then
+                    printf '401'
+                    exit 0
+                fi
+                printf '{"error":"Unauthorized"}\n'
+                exit 22
+            fi
+        done
+    fi
     # Detect -w '%{http_code}' mode (status code extraction)
     if printf '%s' "$*" | grep -q '%{http_code}'; then
         if [[ "${MOCK_NOUS_AUTH_FAIL:-false}" == "true" ]]; then
@@ -76,7 +91,12 @@ fi
 
 # Telegram bot description endpoints
 if printf '%s' "$*" | grep -q "api.telegram.org.*getMyDescription"; then
-    printf '{"ok":true,"result":{"description":"existing description"}}\n'
+    printf '{"ok":true,"result":{"description":"%s"}}\n' "${MOCK_TELEGRAM_DESCRIPTION:-existing description}"
+    exit 0
+fi
+
+if printf '%s' "$*" | grep -q "api.telegram.org.*getMyShortDescription"; then
+    printf '{"ok":true,"result":{"short_description":"%s"}}\n' "${MOCK_TELEGRAM_SHORT_DESCRIPTION:-existing short description}"
     exit 0
 fi
 

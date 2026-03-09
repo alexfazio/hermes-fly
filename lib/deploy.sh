@@ -259,7 +259,10 @@ deploy_collect_app_name() {
 }
 
 # --------------------------------------------------------------------------
-# deploy_parse_orgs JSON — parse fly orgs list JSON map {"slug":"name",...}
+# deploy_parse_orgs JSON — parse fly orgs list JSON
+# Supports both formats:
+#   Flat map:  {"slug":"name",...}
+#   Array:     [{"name":"...","slug":"...","type":"..."},...]
 # Sets global arrays: _ORG_SLUGS, _ORG_NAMES
 # --------------------------------------------------------------------------
 deploy_parse_orgs() {
@@ -267,19 +270,38 @@ deploy_parse_orgs() {
   _ORG_SLUGS=()
   _ORG_NAMES=()
 
-  [[ "$json" == "{}" || -z "$json" ]] && return 0
+  [[ "$json" == "{}" || "$json" == "[]" || -z "$json" ]] && return 0
 
-  local pairs_raw
-  pairs_raw="$(printf '%s' "$json" | grep -oE '"[^"]+"\s*:\s*"[^"]+"')"
+  # Detect format: array starts with [, flat map starts with {
+  if [[ "$json" == "["* ]]; then
+    # Array-of-objects format: [{"name":"...","slug":"...","type":"..."},...]
+    # Extract each object's slug and name fields
+    local slug name obj
+    # Split on },{ to get individual objects
+    local objects_raw
+    objects_raw="$(printf '%s' "$json" | sed 's/^\[//;s/\]$//;s/},{/}\n{/g')"
+    while IFS= read -r obj; do
+      [[ -z "$obj" ]] && continue
+      slug="$(printf '%s' "$obj" | sed -n 's/.*"slug"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')"
+      name="$(printf '%s' "$obj" | sed -n 's/.*"name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')"
+      [[ -z "$slug" ]] && continue
+      _ORG_SLUGS+=("$slug")
+      _ORG_NAMES+=("${name:-$slug}")
+    done <<<"$objects_raw"
+  else
+    # Flat map format: {"slug":"name",...}
+    local pairs_raw
+    pairs_raw="$(printf '%s' "$json" | grep -oE '"[^"]+"\s*:\s*"[^"]+"')"
 
-  local line slug name
-  while IFS= read -r line; do
-    [[ -z "$line" ]] && continue
-    slug="$(printf '%s' "$line" | sed 's/"\([^"]*\)"[[:space:]]*:.*/\1/')"
-    name="$(printf '%s' "$line" | sed 's/.*:[[:space:]]*"\([^"]*\)"/\1/')"
-    _ORG_SLUGS+=("$slug")
-    _ORG_NAMES+=("$name")
-  done <<<"$pairs_raw"
+    local line slug name
+    while IFS= read -r line; do
+      [[ -z "$line" ]] && continue
+      slug="$(printf '%s' "$line" | sed 's/"\([^"]*\)"[[:space:]]*:.*/\1/')"
+      name="$(printf '%s' "$line" | sed 's/.*:[[:space:]]*"\([^"]*\)"/\1/')"
+      _ORG_SLUGS+=("$slug")
+      _ORG_NAMES+=("$name")
+    done <<<"$pairs_raw"
+  fi
 }
 
 # --------------------------------------------------------------------------
