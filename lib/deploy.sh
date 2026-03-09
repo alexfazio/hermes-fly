@@ -225,7 +225,9 @@ deploy_collect_app_name() {
   suggestion="$(deploy_generate_app_name)"
 
   printf 'Each deployment needs a unique name on Fly.io.\n' >&2
-  printf 'Suggestion: %s\n\n' "$suggestion" >&2
+  printf 'This won'\''t be visible to anyone chatting with your agent.\n\n' >&2
+  printf 'Suggested: %s\n' "$suggestion" >&2
+  printf 'Press Enter to use it, or type your own.\n\n' >&2
 
   local input
   while true; do
@@ -645,7 +647,7 @@ deploy_collect_vm_size() {
     rows+=("$(printf '%d│%-10s│%-6s│$%-8s│%s' "$idx" "$tier" "$mem_label" "$price/mo" "$rec")")
   done
 
-  printf '\nChoose a VM tier:\n' >&2
+  printf '\nHow powerful should your agent'\''s server be?\n\n' >&2
   printf '  ┌───┬────────────┬────────┬───────────┬──────────────────────────┐\n' >&2
   printf '  │ # │ Tier       │ RAM    │ Cost      │ Best for                 │\n' >&2
   printf '  ├───┼────────────┼────────┼───────────┼──────────────────────────┤\n' >&2
@@ -656,7 +658,7 @@ deploy_collect_vm_size() {
     printf '  │ %s │ %-10s │ %-6s │ %-9s │ %-24s │\n' "$n" "$ti" "$rm" "$co" "$bf" >&2
   done
   printf '  └───┴────────────┴────────┴───────────┴──────────────────────────┘\n' >&2
-  printf '  Prices are estimates based on Fly.io rates.\n' >&2
+  printf '  Prices are estimates. Current rates: https://fly.io/calculator\n' >&2
 
   local choice
   while true; do
@@ -702,7 +704,7 @@ deploy_collect_volume_size() {
     printf '  │ %d │ %2d GB │ %-21s │ $%s/mo  │\n' "$((i + 1))" "${sizes[$i]}" "${labels[$i]}" "${costs[$i]}" >&2
   done
   printf '  └───┴──────┴───────────────────────┴───────────┘\n' >&2
-  printf '  Prices are estimates based on Fly.io rates.\n' >&2
+  printf '  Prices are estimates. Current rates: https://fly.io/calculator\n' >&2
 
   local choice
   while true; do
@@ -737,7 +739,7 @@ deploy_collect_llm_config() {
     return 0
   fi
 
-  printf '\nSelect LLM provider:\n' >&2
+  printf '\nWhich AI provider should power your agent?\n' >&2
   printf '  ┌───┬────────────────┬──────────────────────────────┐\n' >&2
   printf '  │ # │ Provider       │ URL                          │\n' >&2
   printf '  ├───┼────────────────┼──────────────────────────────┤\n' >&2

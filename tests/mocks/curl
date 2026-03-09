@@ -74,6 +74,22 @@ if printf '%s' "$*" | grep -q "nousresearch.com"; then
     exit 0
 fi
 
+# Telegram bot description endpoints
+if printf '%s' "$*" | grep -q "api.telegram.org.*getMyDescription"; then
+    printf '{"ok":true,"result":{"description":"existing description"}}\n'
+    exit 0
+fi
+
+if printf '%s' "$*" | grep -q "api.telegram.org.*setMyDescription"; then
+    printf '{"ok":true,"result":true}\n'
+    exit 0
+fi
+
+if printf '%s' "$*" | grep -q "api.telegram.org.*setMyShortDescription"; then
+    printf '{"ok":true,"result":true}\n'
+    exit 0
+fi
+
 # logOut / deleteWebhook / Telegram generic
 if printf '%s' "$*" | grep -q "api.telegram.org"; then
     if [[ "${MOCK_CURL_FAIL:-false}" == "true" ]]; then

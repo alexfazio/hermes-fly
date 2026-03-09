@@ -85,6 +85,13 @@ teardown() {
   assert_output --partial "unique name"
 }
 
+@test "deploy_collect_app_name shows visibility and Enter guidance" {
+  run bash -c 'export NO_COLOR=1; export PATH="'"${BATS_TEST_DIRNAME}/mocks:${PATH}"'"; source lib/ui.sh; source lib/fly-helpers.sh; source lib/docker-helpers.sh; source lib/messaging.sh; source lib/config.sh; source lib/status.sh; source lib/deploy.sh; deploy_collect_app_name RESULT <<< "" 2>&1'
+  assert_success
+  assert_output --partial "visible to anyone chatting"
+  assert_output --partial "Press Enter"
+}
+
 @test "deploy_collect_app_name uses custom input" {
   run bash -c 'export NO_COLOR=1; export PATH="'"${BATS_TEST_DIRNAME}/mocks:${PATH}"'"; source lib/ui.sh; source lib/fly-helpers.sh; source lib/docker-helpers.sh; source lib/messaging.sh; source lib/config.sh; source lib/status.sh; source lib/deploy.sh; deploy_collect_app_name RESULT <<< "my-hermes" 2>/dev/null; echo "$RESULT"'
   assert_success
@@ -186,10 +193,11 @@ teardown() {
   refute_output --partial "Power"
 }
 
-@test "deploy_collect_vm_size shows pricing disclaimer" {
+@test "deploy_collect_vm_size shows pricing disclaimer with calculator link" {
   run bash -c 'export NO_COLOR=1; export PATH="'"${BATS_TEST_DIRNAME}/mocks:${PATH}"'"; source lib/ui.sh; source lib/fly-helpers.sh; source lib/docker-helpers.sh; source lib/messaging.sh; source lib/config.sh; source lib/status.sh; source lib/deploy.sh; deploy_collect_vm_size SIZE MEM <<< "1" 2>&1'
   assert_success
   assert_output --partial "estimates"
+  assert_output --partial "fly.io/calculator"
 }
 
 # --- deploy_collect_volume_size ---
@@ -221,10 +229,11 @@ teardown() {
   assert_output --partial "Best for"
 }
 
-@test "deploy_collect_volume_size shows pricing disclaimer" {
+@test "deploy_collect_volume_size shows pricing disclaimer with calculator link" {
   run bash -c 'export NO_COLOR=1; export PATH="'"${BATS_TEST_DIRNAME}/mocks:${PATH}"'"; source lib/ui.sh; source lib/fly-helpers.sh; source lib/docker-helpers.sh; source lib/messaging.sh; source lib/config.sh; source lib/status.sh; source lib/deploy.sh; deploy_collect_volume_size VSIZE <<< "1" 2>&1'
   assert_success
   assert_output --partial "estimates"
+  assert_output --partial "fly.io/calculator"
 }
 
 # --- deploy_create_build_context ---
