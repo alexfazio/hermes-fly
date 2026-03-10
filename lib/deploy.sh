@@ -829,26 +829,29 @@ deploy_collect_llm_config() {
         ui_ask_secret 'OpenRouter API key (required):' api_key
       done
 
-      # Model selection (dynamic or static fallback)
-      deploy_collect_model model
-
+      # Assign API key before model selection (model selection needs it)
       eval "$api_key_var=\"\$api_key\""
+
+      # Model selection (dynamic or static fallback)
+      deploy_collect_model "$api_key" model
+
       eval "$model_var=\"\$model\""
       ;;
   esac
 }
 
 # --------------------------------------------------------------------------
-# deploy_collect_model RESULT_VAR — pick an OpenRouter model
+# deploy_collect_model API_KEY RESULT_VAR — pick an OpenRouter model
 # Uses provider-first dynamic selection via openrouter_setup_with_models.
 # Falls back to manual entry if fetch fails.
 # --------------------------------------------------------------------------
 deploy_collect_model() {
-  local result_var="${1:?Usage: deploy_collect_model RESULT_VAR}"
+  local api_key="${1:?Usage: deploy_collect_model API_KEY RESULT_VAR}"
+  local result_var="${2:?Usage: deploy_collect_model API_KEY RESULT_VAR}"
 
   # Use the new openrouter module for provider-first dynamic selection
   local selected_model
-  selected_model="$(openrouter_setup_with_models "$DEPLOY_API_KEY")"
+  selected_model="$(openrouter_setup_with_models "$api_key")"
 
   eval "$result_var=\"\$selected_model\""
 }

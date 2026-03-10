@@ -75,20 +75,20 @@ openrouter_fetch_models() {
 
   # Check for curl errors
   if [[ $status -ne 0 ]]; then
-    ui_spinner_stop "$status" "Model fetch failed (curl exit $status)" >/dev/null 2>&1
+    ui_spinner_stop "$status" "Model fetch failed (curl exit $status)"
     return "$status"
   fi
 
   # Check if response is valid JSON with data array
   if ! echo "$response" | grep -q '"data"'; then
-    ui_spinner_stop 1 "Model fetch returned invalid response" >/dev/null 2>&1
+    ui_spinner_stop 1 "Model fetch returned invalid response"
     return 1
   fi
 
   # Cache the response
   echo "$response" > "$cache_file"
 
-  ui_spinner_stop 0 "Models loaded" >/dev/null 2>&1
+  ui_spinner_stop 0 "Models loaded"
   return 0
 }
 
@@ -146,17 +146,17 @@ _openrouter_get_model_created_timestamp() {
 
 # ==========================================================================
 # openrouter_sort_models_by_recency — sort model IDs by created timestamp
-# Args: newline-separated model IDs
+# Args: model_ids (newline-separated), cache_file (path)
 # Returns: sorted model IDs (most recent first)
 # Behavior: extracts timestamps from cache, sorts numerically descending
-# Note: needs OPENROUTER_CACHE_FILE in environment
 # Bash 3.2 compatible (no associative arrays)
 # ==========================================================================
 openrouter_sort_models_by_recency() {
   local model_ids="$1"
+  local cache_file="${2:-}"
 
   [[ -z "$model_ids" ]] && return
-  [[ -z "${OPENROUTER_CACHE_FILE:-}" ]] && {
+  [[ -z "$cache_file" ]] && {
     echo "$model_ids"
     return
   }
@@ -166,7 +166,7 @@ openrouter_sort_models_by_recency() {
   while IFS= read -r model_id; do
     [[ -z "$model_id" ]] && continue
     local ts
-    ts="$(_openrouter_get_model_created_timestamp "$OPENROUTER_CACHE_FILE" "$model_id")"
+    ts="$(_openrouter_get_model_created_timestamp "$cache_file" "$model_id")"
     [[ -z "$ts" ]] && ts="0"
     ts_id_pairs="${ts_id_pairs}${ts} ${model_id}
 "
@@ -210,11 +210,12 @@ openrouter_build_provider_menu() {
     fi
   done <<< "$curated"
 
-  # Add "Other providers" header if there are non-curated providers
+  # Add "Other providers" if there are non-curated providers
   local other_providers
   other_providers=$(echo "$all_providers" | grep -v -f <(echo "$curated") | sort)
   if [[ -n "$other_providers" ]]; then
-    menu_items+=("--- Other providers ---")
+    # Show a UI message about other providers rather than making the separator selectable
+    ui_info "Additional providers available:"
     while IFS= read -r provider; do
       [[ -z "$provider" ]] && continue
       menu_items+=("$provider")
@@ -252,12 +253,9 @@ openrouter_build_model_menu() {
     return 1
   fi
 
-  # Export cache file for sorting function
-  export OPENROUTER_CACHE_FILE="$cache_file"
-
-  # Sort by recency
+  # Sort by recency (pass cache_file as explicit parameter)
   local sorted_models
-  sorted_models=$(openrouter_sort_models_by_recency "$model_ids")
+  sorted_models=$(openrouter_sort_models_by_recency "$model_ids" "$cache_file")
 
   # Count total models
   local total_count
@@ -287,12 +285,31 @@ openrouter_build_model_menu() {
   # Present menu
   ui_select "Select Model:" SELECTED_MODEL "${menu_items[@]}"
 
+  # Handle "Show all" selection by presenting full list
+  if [[ "$SELECTED_MODEL" == "Show all"* ]]; then
+    # Re-present with all models (no limit)
+    menu_items=()
+    while IFS= read -r model_id; do
+      [[ -z "$model_id" ]] && continue
+      # Extract display name from cache
+      local display_name
+      display_name=$(grep -A 1 '"id"[[:space:]]*:[[:space:]]*"'"$(printf '%s' "$model_id" | sed 's/[[\.*^$/]/\\&/g')"'"' "$cache_file" | \
+        grep '"name"' | sed -n 's/.*"name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
+      [[ -z "$display_name" ]] && display_name="$model_id"
+      menu_items+=("$display_name [$model_id]")
+    done <<< "$sorted_models"
+
+    # Re-present menu with all models
+    ui_select "Select Model (showing all $total_count):" SELECTED_MODEL "${menu_items[@]}"
+  fi
+
   # Extract model ID from selection
   if [[ "$SELECTED_MODEL" == *"["*"]" ]]; then
     # Format: "display name [model-id]"
     echo "$SELECTED_MODEL" | sed -n 's/.*\[\([^]]*\)\].*/\1/p'
   else
-    echo "$SELECTED_MODEL"
+    # Fallback: if nothing matched, return empty to trigger manual fallback
+    return 1
   fi
 }
 
@@ -339,11 +356,14 @@ openrouter_setup_with_models() {
   local cache_file
   cache_file="$(mktemp)" || return 1
 
-  # Register cleanup
-  trap "rm -f '$cache_file'" EXIT
+  # Note: Using explicit cleanup instead of trap to avoid overwriting caller's trap.
+  # Since this function is called via command substitution (subshell), the temp file
+  # is isolated and will be cleaned up when the subshell exits.
 
   # Fetch models
   if ! openrouter_fetch_models "$api_key" "$cache_file"; then
+    # Explicit cleanup before fallback
+    rm -f "$cache_file"
     # Fallback to manual entry
     openrouter_manual_fallback
     return 0
@@ -351,6 +371,7 @@ openrouter_setup_with_models() {
 
   # Check if we got any valid models
   if ! grep -q '"id"' "$cache_file"; then
+    rm -f "$cache_file"
     openrouter_manual_fallback
     return 0
   fi
@@ -360,6 +381,7 @@ openrouter_setup_with_models() {
   selected_provider=$(openrouter_build_provider_menu "$cache_file")
 
   if [[ "$selected_provider" == "Enter model ID manually" ]]; then
+    rm -f "$cache_file"
     openrouter_manual_fallback
     return 0
   fi
@@ -367,6 +389,9 @@ openrouter_setup_with_models() {
   # Build model menu for selected provider
   local selected_model
   selected_model=$(openrouter_build_model_menu "$cache_file" "$selected_provider")
+
+  # Explicit cleanup before returning
+  rm -f "$cache_file"
 
   echo "$selected_model"
 }

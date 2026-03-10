@@ -233,13 +233,10 @@ teardown() {
   local cache_file="$(mktemp)"
   echo "$payload" > "$cache_file"
 
-  # Set cache file for sorting function
-  export OPENROUTER_CACHE_FILE="$cache_file"
-
   local models
   models="$(openrouter_extract_models_for_provider "$cache_file" "openai")"
   local sorted
-  sorted="$(openrouter_sort_models_by_recency "$models")"
+  sorted="$(openrouter_sort_models_by_recency "$models" "$cache_file")"
 
   # Most recent first: new (2000), middle (1500), old (1000)
   local first_model=$(echo "$sorted" | head -1)
@@ -249,7 +246,6 @@ teardown() {
   [ "$last_model" = "openai/old" ]
 
   rm -f "$cache_file"
-  unset OPENROUTER_CACHE_FILE
 }
 
 # ============================================================================
@@ -363,7 +359,7 @@ teardown() {
   local api_key="test-key"
   local payload='{"data":[
     {"id":"openai/gpt-5","name":"OpenAI: GPT-5","created":1234567890},
-    {"id":"anthropic/claude","name":"Anthropic: Claude","name":"Anthropic: Claude","created":1234567891}
+    {"id":"anthropic/claude","name":"Anthropic: Claude","created":1234567891}
   ]}'
 
   # Mock curl
@@ -373,18 +369,34 @@ teardown() {
   }
   export -f curl
 
-  # Mock ui_select to return first option (openai)
+  # Mock ui_select: track calls via temp file since function scoping is complex in subshells
+  local call_count_file
+  call_count_file="$(mktemp)"
+  echo "0" > "$call_count_file"
+
   ui_select() {
-    local prompt="$1"
     local varname="$2"
     shift 2
-    eval "$varname='openai'"
+    local current_count
+    current_count=$(cat "$call_count_file")
+    ((current_count++))
+    echo "$current_count" > "$call_count_file"
+
+    if [[ $current_count -eq 1 ]]; then
+      # Provider selection: return "openai"
+      eval "$varname='openai'"
+    else
+      # Model selection: return the first menu option (OpenAI: GPT-5 [openai/gpt-5])
+      eval "$varname='OpenAI: GPT-5 [openai/gpt-5]'"
+    fi
   }
   export -f ui_select
 
-  # The module will need this capability to exist and work
-  # For now just verify the module can be sourced without errors
-  declare -f openrouter_setup_with_models >/dev/null 2>&1
+  # Actually call the function and verify it returns a model ID
+  local result
+  result=$(openrouter_setup_with_models "$api_key")
+  rm -f "$call_count_file"
+  [[ "$result" == "openai/gpt-5" ]]
 }
 
 # ============================================================================

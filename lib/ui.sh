@@ -189,13 +189,13 @@ ui_spinner_stop() {
     if ui_color_enabled && [[ -t 2 ]]; then
       printf '\r\033[K  \033[32m✓\033[0m %s\n' "$msg" >&2
     else
-      printf '✓ %s\n' "$msg"
+      printf '✓ %s\n' "$msg" >&2
     fi
   else
     if ui_color_enabled && [[ -t 2 ]]; then
       printf '\r\033[K  \033[31m✗\033[0m %s\n' "$msg" >&2
     else
-      printf '✗ %s\n' "$msg"
+      printf '✗ %s\n' "$msg" >&2
     fi
   fi
 }

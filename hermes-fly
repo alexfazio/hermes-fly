@@ -24,6 +24,7 @@ source "${SCRIPT_DIR}/lib/logs.sh"
 source "${SCRIPT_DIR}/lib/doctor.sh"
 source "${SCRIPT_DIR}/lib/destroy.sh"
 source "${SCRIPT_DIR}/lib/list.sh"
+source "${SCRIPT_DIR}/lib/openrouter.sh"
 source "${SCRIPT_DIR}/lib/deploy.sh"
 
 # --- Help text ---
