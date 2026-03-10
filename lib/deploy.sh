@@ -52,6 +52,8 @@ fi
 
 # Pinned to upstream main at hermes-fly v0.1.14 release time.
 # DUAL-UPDATE REQUIREMENT: bump this SHA when cutting a new hermes-fly release.
+# I1: intentionally not readonly — consistent with all other module-level constants in this
+#     project; integrity is enforced by the HERMES_AGENT_DEFAULT_REF test in tests/deploy.bats.
 HERMES_AGENT_DEFAULT_REF="8eefbef91cd715cfe410bba8c13cfab4eb3040df"
 
 # --------------------------------------------------------------------------

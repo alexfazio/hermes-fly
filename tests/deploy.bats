@@ -1816,16 +1816,7 @@ teardown() {
 # --- REVIEW_1: M3 — ref export before failure point ---
 
 @test "deploy_create_build_context sets DEPLOY_HERMES_AGENT_REF even on Dockerfile failure" {
-  # M3: ref must be exported before docker_generate_dockerfile for diagnostics
-  export DEPLOY_APP_NAME="test-app"
-  export DEPLOY_REGION="ord"
-  export DEPLOY_VM_SIZE="shared-cpu-1x"
-  export DEPLOY_VM_MEMORY="256mb"
-  export DEPLOY_VOLUME_SIZE="5"
-  unset HERMES_AGENT_REF
-
-  # Override template dir to force Dockerfile generation failure
-  DOCKER_HELPERS_TEMPLATE_DIR="/nonexistent"
+  # M3+L1+I2: ref exported before failure; function returns non-zero; ref is a valid SHA/ref shape
   run bash -c '
     source "'"${PROJECT_ROOT}/lib/ui.sh"'"
     source "'"${PROJECT_ROOT}/lib/docker-helpers.sh"'"
@@ -1833,12 +1824,17 @@ teardown() {
     DOCKER_HELPERS_TEMPLATE_DIR="/nonexistent"
     export DEPLOY_APP_NAME="test-app" DEPLOY_REGION="ord" DEPLOY_VM_SIZE="shared-cpu-1x"
     export DEPLOY_VM_MEMORY="256mb" DEPLOY_VOLUME_SIZE="5"
+    unset HERMES_AGENT_REF
     deploy_create_build_context 2>/dev/null
+    rc=$?
+    echo "RC=${rc}"
     echo "REF=${DEPLOY_HERMES_AGENT_REF:-EMPTY}"
   '
-  # Even though build failed, ref should still be set for diagnostics
-  assert_output --partial "REF="
+  # L1: function must have returned failure
+  assert_output --partial "RC=1"
+  # I2: ref must be populated with a hex-shaped value (not empty sentinel)
   refute_output --partial "REF=EMPTY"
+  [[ "$output" =~ REF=[0-9a-f] ]]
 }
 
 # --- REVIEW_1: L2 — summary fallback for unset ref ---
