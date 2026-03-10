@@ -548,10 +548,12 @@ teardown() {
   }
   export -f ui_ask
 
-  # Should complete quickly without spinning
-  # Timeout is set via test harness, but we verify return code
-  timeout 2 openrouter_manual_fallback >/dev/null 2>&1 || true
+  # Should complete quickly without spinning and return non-zero
+  # Timeout is 2 seconds; if the function loops on EOF, it will hit timeout (exit 124)
+  # If it exits gracefully, it will return 1
+  run timeout 2 openrouter_manual_fallback >/dev/null 2>&1
 
-  # If it times out (exit 124), that's a hard loop — test fails
-  # If it exits normally, that's success
+  # Verify it did not timeout (exit 124) and did exit with an error
+  [ $status -ne 124 ]
+  [ $status -ne 0 ]
 }

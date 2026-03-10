@@ -851,7 +851,7 @@ deploy_collect_model() {
 
   # Use the new openrouter module for provider-first dynamic selection
   local selected_model
-  selected_model="$(openrouter_setup_with_models "$api_key")"
+  selected_model="$(openrouter_setup_with_models "$api_key")" || return $?
 
   eval "$result_var=\"\$selected_model\""
 }

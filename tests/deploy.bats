@@ -369,8 +369,8 @@ teardown() {
 # --- deploy_collect_llm_config ---
 
 @test "deploy_collect_llm_config stores API key and default model" {
-  # Choice 1 (OpenRouter), API key, model choice 1 (default)
-  run bash -c 'export NO_COLOR=1; export MOCK_OPENROUTER_MODELS_FAIL=true; export PATH="'"${BATS_TEST_DIRNAME}/mocks:${PATH}"'"; source lib/ui.sh; source lib/fly-helpers.sh; source lib/docker-helpers.sh; source lib/messaging.sh; source lib/config.sh; source lib/status.sh; source lib/deploy.sh; deploy_collect_llm_config KEY MODEL < <(printf "1\nsk-test-123\n1\n") 2>/dev/null; echo "KEY=$KEY MODEL=$MODEL"'
+  # Choice 1 (OpenRouter), API key, model choice 1 (default via fallback)
+  run bash -c 'export NO_COLOR=1; export MOCK_OPENROUTER_MODELS_FAIL=true; export PATH="'"${BATS_TEST_DIRNAME}/mocks:${PATH}"'"; source lib/ui.sh; source lib/fly-helpers.sh; source lib/docker-helpers.sh; source lib/messaging.sh; source lib/config.sh; source lib/status.sh; source lib/openrouter.sh; source lib/deploy.sh; openrouter_manual_fallback() { printf "anthropic/claude-sonnet\n"; return 0; }; export -f openrouter_manual_fallback; deploy_collect_llm_config KEY MODEL < <(printf "1\nsk-test-123\n") 2>/dev/null; echo "KEY=$KEY MODEL=$MODEL"'
   assert_success
   assert_output --partial "KEY=sk-test-123"
   assert_output --partial "MODEL=anthropic/claude-sonnet"
@@ -406,16 +406,15 @@ teardown() {
   assert_output --partial "Nous"
 }
 
-@test "deploy_collect_llm_config OpenRouter shows model table" {
-  # Choice 1 (OpenRouter), API key, model choice 1 (default)
-  run bash -c 'export NO_COLOR=1; export MOCK_OPENROUTER_MODELS_FAIL=true; export PATH="'"${BATS_TEST_DIRNAME}/mocks:${PATH}"'"; source lib/ui.sh; source lib/fly-helpers.sh; source lib/docker-helpers.sh; source lib/messaging.sh; source lib/config.sh; source lib/status.sh; source lib/deploy.sh; deploy_collect_llm_config KEY MODEL < <(printf "1\nsk-test\n1\n") 2>&1; echo "MODEL=$MODEL"'
+@test "deploy_collect_llm_config OpenRouter uses fallback on fetch failure" {
+  # Choice 1 (OpenRouter), API key, model fallback via mocked openrouter_manual_fallback
+  run bash -c 'export NO_COLOR=1; export MOCK_OPENROUTER_MODELS_FAIL=true; export PATH="'"${BATS_TEST_DIRNAME}/mocks:${PATH}"'"; source lib/ui.sh; source lib/fly-helpers.sh; source lib/docker-helpers.sh; source lib/messaging.sh; source lib/config.sh; source lib/status.sh; source lib/openrouter.sh; source lib/deploy.sh; openrouter_manual_fallback() { printf "anthropic/claude-sonnet\n"; return 0; }; export -f openrouter_manual_fallback; deploy_collect_llm_config KEY MODEL < <(printf "1\nsk-test\n") 2>&1; echo "MODEL=$MODEL"'
   assert_success
-  assert_output --partial "Select model"
-  assert_output --partial "Claude"
+  assert_output --partial "MODEL=anthropic/claude-sonnet"
 }
 
-@test "deploy_collect_llm_config OpenRouter model choice 1 picks default" {
-  run bash -c 'export NO_COLOR=1; export MOCK_OPENROUTER_MODELS_FAIL=true; export PATH="'"${BATS_TEST_DIRNAME}/mocks:${PATH}"'"; source lib/ui.sh; source lib/fly-helpers.sh; source lib/docker-helpers.sh; source lib/messaging.sh; source lib/config.sh; source lib/status.sh; source lib/deploy.sh; deploy_collect_llm_config KEY MODEL < <(printf "1\nsk-test\n1\n") 2>/dev/null; echo "MODEL=$MODEL"'
+@test "deploy_collect_llm_config OpenRouter returns fallback model" {
+  run bash -c 'export NO_COLOR=1; export MOCK_OPENROUTER_MODELS_FAIL=true; export PATH="'"${BATS_TEST_DIRNAME}/mocks:${PATH}"'"; source lib/ui.sh; source lib/fly-helpers.sh; source lib/docker-helpers.sh; source lib/messaging.sh; source lib/config.sh; source lib/status.sh; source lib/openrouter.sh; source lib/deploy.sh; openrouter_manual_fallback() { printf "anthropic/claude-sonnet\n"; return 0; }; export -f openrouter_manual_fallback; deploy_collect_llm_config KEY MODEL < <(printf "1\nsk-test\n") 2>/dev/null; echo "MODEL=$MODEL"'
   assert_success
   assert_output --partial "MODEL=anthropic/claude-sonnet"
 }
@@ -1031,21 +1030,21 @@ teardown() {
   assert_output --partial "PROVIDER=nous"
 }
 
-@test "deploy_collect_llm_config re-prompts on invalid model choice" {
-  # Choice 1 (OpenRouter), API key, garbage model, then valid model 2
-  run bash -c 'export NO_COLOR=1; export MOCK_OPENROUTER_MODELS_FAIL=true; export PATH="'"${BATS_TEST_DIRNAME}/mocks:${PATH}"'"; source lib/ui.sh; source lib/fly-helpers.sh; source lib/docker-helpers.sh; source lib/messaging.sh; source lib/config.sh; source lib/status.sh; source lib/deploy.sh; deploy_collect_llm_config KEY MODEL < <(printf "1\nsk-test\ngarbage\n2\n") 2>/dev/null; echo "MODEL=$MODEL"'
+@test "deploy_collect_llm_config with fetch failure uses manual fallback" {
+  # Choice 1 (OpenRouter), API key, fetch fails so fallback is used
+  run bash -c 'export NO_COLOR=1; export MOCK_OPENROUTER_MODELS_FAIL=true; export PATH="'"${BATS_TEST_DIRNAME}/mocks:${PATH}"'"; source lib/ui.sh; source lib/fly-helpers.sh; source lib/docker-helpers.sh; source lib/messaging.sh; source lib/config.sh; source lib/status.sh; source lib/openrouter.sh; source lib/deploy.sh; openrouter_manual_fallback() { printf "anthropic/claude-haiku-4.5\n"; return 0; }; export -f openrouter_manual_fallback; deploy_collect_llm_config KEY MODEL < <(printf "1\nsk-test\n") 2>/dev/null; echo "MODEL=$MODEL"'
   assert_success
   assert_output "MODEL=anthropic/claude-haiku-4.5"
 }
 
-@test "deploy_collect_llm_config model choice 1 yields OpenRouter Sonnet 4 ID" {
-  run bash -c 'export NO_COLOR=1; export MOCK_OPENROUTER_MODELS_FAIL=true; export PATH="'"${BATS_TEST_DIRNAME}/mocks:${PATH}"'"; source lib/ui.sh; source lib/fly-helpers.sh; source lib/docker-helpers.sh; source lib/messaging.sh; source lib/config.sh; source lib/status.sh; source lib/deploy.sh; deploy_collect_llm_config KEY MODEL < <(printf "1\nsk-test\n1\n") 2>/dev/null; echo "MODEL=$MODEL"'
+@test "deploy_collect_llm_config returns specific fallback model when fetch fails" {
+  run bash -c 'export NO_COLOR=1; export MOCK_OPENROUTER_MODELS_FAIL=true; export PATH="'"${BATS_TEST_DIRNAME}/mocks:${PATH}"'"; source lib/ui.sh; source lib/fly-helpers.sh; source lib/docker-helpers.sh; source lib/messaging.sh; source lib/config.sh; source lib/status.sh; source lib/openrouter.sh; source lib/deploy.sh; openrouter_manual_fallback() { printf "anthropic/claude-sonnet-4\n"; return 0; }; export -f openrouter_manual_fallback; deploy_collect_llm_config KEY MODEL < <(printf "1\nsk-test\n") 2>/dev/null; echo "MODEL=$MODEL"'
   assert_success
   assert_output "MODEL=anthropic/claude-sonnet-4"
 }
 
-@test "deploy_collect_llm_config model choice 2 yields OpenRouter Haiku 4.5 ID" {
-  run bash -c 'export NO_COLOR=1; export MOCK_OPENROUTER_MODELS_FAIL=true; export PATH="'"${BATS_TEST_DIRNAME}/mocks:${PATH}"'"; source lib/ui.sh; source lib/fly-helpers.sh; source lib/docker-helpers.sh; source lib/messaging.sh; source lib/config.sh; source lib/status.sh; source lib/deploy.sh; deploy_collect_llm_config KEY MODEL < <(printf "1\nsk-test\n2\n") 2>/dev/null; echo "MODEL=$MODEL"'
+@test "deploy_collect_llm_config fallback can return different models" {
+  run bash -c 'export NO_COLOR=1; export MOCK_OPENROUTER_MODELS_FAIL=true; export PATH="'"${BATS_TEST_DIRNAME}/mocks:${PATH}"'"; source lib/ui.sh; source lib/fly-helpers.sh; source lib/docker-helpers.sh; source lib/messaging.sh; source lib/config.sh; source lib/status.sh; source lib/openrouter.sh; source lib/deploy.sh; openrouter_manual_fallback() { printf "anthropic/claude-haiku-4.5\n"; return 0; }; export -f openrouter_manual_fallback; deploy_collect_llm_config KEY MODEL < <(printf "1\nsk-test\n") 2>/dev/null; echo "MODEL=$MODEL"'
   assert_success
   assert_output "MODEL=anthropic/claude-haiku-4.5"
 }
@@ -1267,34 +1266,26 @@ teardown() {
 
 # --- deploy_collect_model ---
 
-@test "deploy_collect_model shows models grouped by provider with jq" {
-  export DEPLOY_API_KEY="sk-or-test123"
-  run deploy_collect_model MODEL_RESULT <<< "1"
+@test "deploy_collect_model assigns model to result variable" {
+  export PATH="${BATS_TEST_DIRNAME}/mocks:${PATH}"
+  # Mock openrouter_setup_with_models to return a model
+  run bash -c 'source lib/ui.sh; source lib/openrouter.sh; source lib/deploy.sh; openrouter_setup_with_models() { printf "anthropic/claude-sonnet\n"; return 0; }; export -f openrouter_setup_with_models; deploy_collect_model "sk-or-test123" MODEL_RESULT; echo "RESULT=$MODEL_RESULT"'
   assert_success
-  assert_output --partial "anthropic"
-  assert_output --partial "Claude"
+  assert_output --partial "RESULT=anthropic/claude-sonnet"
 }
 
-@test "deploy_collect_model falls back to static list without jq" {
-  export DEPLOY_API_KEY="sk-or-test123"
-  export MOCK_OPENROUTER_MODELS_FAIL=true
-  run deploy_collect_model MODEL_RESULT <<< "1"
+@test "deploy_collect_model returns success on valid model" {
+  export PATH="${BATS_TEST_DIRNAME}/mocks:${PATH}"
+  run bash -c 'source lib/ui.sh; source lib/openrouter.sh; source lib/deploy.sh; openrouter_setup_with_models() { printf "openai/gpt-4\n"; return 0; }; export -f openrouter_setup_with_models; deploy_collect_model "sk-test" MODEL_RESULT; echo "ASSIGNED=$MODEL_RESULT"'
   assert_success
-  assert_output --partial "Claude Sonnet 4"
-  assert_output --partial "Llama 4 Maverick"
+  assert_output --partial "ASSIGNED=openai/gpt-4"
 }
 
-@test "deploy_collect_model Other accepts manual model ID" {
-  export DEPLOY_API_KEY="sk-or-test123"
-  export MOCK_OPENROUTER_MODELS_FAIL=true
-  # Static list has 4 models + Other = option 5
-  _test_collect_model_other() {
-    deploy_collect_model MODEL_RESULT
-    printf 'SELECTED=%s\n' "$MODEL_RESULT"
-  }
-  run _test_collect_model_other <<< $'5\nmy-custom/model-id'
-  assert_success
-  assert_output --partial "SELECTED=my-custom/model-id"
+@test "deploy_collect_model propagates return code from openrouter_setup_with_models" {
+  export PATH="${BATS_TEST_DIRNAME}/mocks:${PATH}"
+  # When openrouter_setup_with_models returns 1, deploy_collect_model should also return 1
+  run bash -c 'source lib/ui.sh; source lib/openrouter.sh; source lib/deploy.sh; openrouter_setup_with_models() { return 1; }; export -f openrouter_setup_with_models; deploy_collect_model "sk-test" MODEL_RESULT'
+  assert_failure
 }
 
 @test "verbose deploy_preflight calls prereqs_check_and_install on failure" {

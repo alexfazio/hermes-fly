@@ -367,16 +367,16 @@ openrouter_setup_with_models() {
   if ! openrouter_fetch_models "$api_key" "$cache_file"; then
     # Explicit cleanup before fallback
     rm -f "$cache_file"
-    # Fallback to manual entry
+    # Fallback to manual entry: propagate return code
     openrouter_manual_fallback
-    return 0
+    return $?
   fi
 
   # Check if we got any valid models
   if ! grep -q '"id"' "$cache_file"; then
     rm -f "$cache_file"
     openrouter_manual_fallback
-    return 0
+    return $?
   fi
 
   # Build provider menu
@@ -386,7 +386,7 @@ openrouter_setup_with_models() {
   if [[ "$selected_provider" == "Enter model ID manually" ]]; then
     rm -f "$cache_file"
     openrouter_manual_fallback
-    return 0
+    return $?
   fi
 
   # Build model menu for selected provider
@@ -395,14 +395,14 @@ openrouter_setup_with_models() {
     # Model menu selection failed, fall back to manual entry
     rm -f "$cache_file"
     openrouter_manual_fallback
-    return 0
+    return $?
   fi
 
   # Verify we got a non-empty model ID
   if [[ -z "$selected_model" ]]; then
     rm -f "$cache_file"
     openrouter_manual_fallback
-    return 0
+    return $?
   fi
 
   # Explicit cleanup before returning
