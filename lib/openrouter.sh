@@ -200,7 +200,6 @@ openrouter_build_provider_menu() {
 
   # Build provider menu: curated first, then others
   local menu_items=()
-  local menu_index=1
 
   # Add curated providers (if they exist in the response)
   while IFS= read -r provider; do
@@ -388,7 +387,19 @@ openrouter_setup_with_models() {
 
   # Build model menu for selected provider
   local selected_model
-  selected_model=$(openrouter_build_model_menu "$cache_file" "$selected_provider")
+  if ! selected_model=$(openrouter_build_model_menu "$cache_file" "$selected_provider"); then
+    # Model menu selection failed, fall back to manual entry
+    rm -f "$cache_file"
+    openrouter_manual_fallback
+    return 0
+  fi
+
+  # Verify we got a non-empty model ID
+  if [[ -z "$selected_model" ]]; then
+    rm -f "$cache_file"
+    openrouter_manual_fallback
+    return 0
+  fi
 
   # Explicit cleanup before returning
   rm -f "$cache_file"

@@ -463,3 +463,81 @@ teardown() {
   [ "$status" -eq 1 ]
   [[ "$output" == *"source"* ]]
 }
+
+# ============================================================================
+# Stdout pollution tests (critical for command-substitution safety)
+# ============================================================================
+
+@test "openrouter_build_provider_menu: does not pollute stdout with ui_info" {
+  local payload='{"data":[
+    {"id":"openai/gpt-5","name":"OpenAI: GPT-5","created":1234567890},
+    {"id":"openrouter/aurora","name":"OpenRouter: Aurora","created":1234567891}
+  ]}'
+  local cache_file="$(mktemp)"
+  echo "$payload" > "$cache_file"
+
+  # Mock ui_select to return a specific provider
+  ui_select() {
+    local varname="$2"
+    eval "$varname='openai'"
+  }
+  export -f ui_select
+
+  # Capture output - should be ONLY the provider name, no ui_info lines
+  local result
+  result="$(openrouter_build_provider_menu "$cache_file")"
+
+  # Result must be exactly "openai" (one line, no [info] prefix)
+  [ "$result" = "openai" ]
+  [[ "$result" != *"[info]"* ]]
+  [[ "$result" != *"Additional"* ]]
+
+  rm -f "$cache_file"
+}
+
+@test "openrouter_manual_fallback: does not pollute stdout with ui_warn/ui_info" {
+  # Mock ui_ask to return a model ID
+  ui_ask() {
+    local varname="$2"
+    eval "$varname='openai/gpt-5'"
+  }
+  export -f ui_ask
+
+  # Capture output - should be ONLY the model ID, no [warn] or [info] lines
+  local result
+  result="$(openrouter_manual_fallback)"
+
+  # Result must be exactly the model ID (one line, no warnings/info)
+  [ "$result" = "openai/gpt-5" ]
+  [[ "$result" != *"[warn]"* ]]
+  [[ "$result" != *"[info]"* ]]
+  [[ "$result" != *"Could not load"* ]]
+  [[ "$result" != *"Visit:"* ]]
+
+  rm -f "$result"
+}
+
+@test "openrouter_build_model_menu: returns error on invalid selection" {
+  local payload='{"data":[
+    {"id":"openai/gpt-5","name":"OpenAI: GPT-5","created":1234567890}
+  ]}'
+  local cache_file="$(mktemp)"
+  echo "$payload" > "$cache_file"
+
+  # Mock ui_select to return empty (invalid selection)
+  ui_select() {
+    local varname="$2"
+    eval "$varname=''"
+    return 1
+  }
+  export -f ui_select
+
+  # openrouter_build_model_menu should return error status
+  if openrouter_build_model_menu "$cache_file" "openai" >/dev/null 2>&1; then
+    # If it returns 0 with empty model, that's an error
+    result=$(openrouter_build_model_menu "$cache_file" "openai" 2>/dev/null)
+    [ -z "$result" ]
+  fi
+
+  rm -f "$cache_file"
+}

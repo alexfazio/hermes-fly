@@ -35,9 +35,9 @@ _ui_colorize() {
 ui_info() {
   local msg="$1"
   if ui_color_enabled; then
-    printf '\033[34m[info] %s\033[0m\n' "$msg"
+    printf '\033[34m[info] %s\033[0m\n' "$msg" >&2
   else
-    printf '[info] %s\n' "$msg"
+    printf '[info] %s\n' "$msg" >&2
   fi
 }
 
@@ -53,9 +53,9 @@ ui_success() {
 ui_warn() {
   local msg="$1"
   if ui_color_enabled; then
-    printf '\033[33m[warn] %s\033[0m\n' "$msg"
+    printf '\033[33m[warn] %s\033[0m\n' "$msg" >&2
   else
-    printf '[warn] %s\n' "$msg"
+    printf '[warn] %s\n' "$msg" >&2
   fi
 }
 
