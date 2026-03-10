@@ -329,7 +329,11 @@ openrouter_manual_fallback() {
 
   local model_id=""
   while [[ -z "$model_id" ]]; do
-    ui_ask "Enter model ID:" model_id
+    # Check return code: if read fails (EOF), exit gracefully
+    if ! ui_ask "Enter model ID:" model_id; then
+      ui_error "Input ended unexpectedly. Exiting."
+      return 1
+    fi
     if [[ -z "$model_id" ]]; then
       ui_error "Model ID cannot be empty."
     elif [[ "$model_id" != *"/"* ]]; then

@@ -44,9 +44,9 @@ ui_info() {
 ui_success() {
   local msg="$1"
   if ui_color_enabled; then
-    printf '\033[32m✓ %s\033[0m\n' "$msg"
+    printf '\033[32m✓ %s\033[0m\n' "$msg" >&2
   else
-    printf '✓ %s\n' "$msg"
+    printf '✓ %s\n' "$msg" >&2
   fi
 }
 
