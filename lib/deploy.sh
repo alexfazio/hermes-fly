@@ -833,7 +833,10 @@ deploy_collect_llm_config() {
       eval "$api_key_var=\"\$api_key\""
 
       # Model selection (dynamic or static fallback)
-      deploy_collect_model "$api_key" model
+      # Check return code to propagate failures (e.g., EOF in fallback)
+      if ! deploy_collect_model "$api_key" model; then
+        return 1
+      fi
 
       eval "$model_var=\"\$model\""
       ;;
