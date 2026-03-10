@@ -655,6 +655,123 @@ JSON
   assert_output --partial "DEFAULT=medium"
 }
 
+@test "snapshot validation: empty families under set -euo pipefail does not crash (H1)" {
+  run bash -c '
+    set -euo pipefail
+    export NO_COLOR=1
+    source lib/ui.sh
+    source lib/reasoning.sh
+    tmpf="$(mktemp)"
+    printf "%s\n" "{\"schema_version\":\"1\",\"policy_version\":\"1.0.0\",\"families\":{}}" > "$tmpf"
+    _REASONING_SNAPSHOT_FILE="$tmpf"
+    _reasoning_load_snapshot
+    echo "LOADER_OK"
+    echo "RAW=${_REASONING_SNAPSHOT_RAW:-empty}"
+    echo "VER=${REASONING_SNAPSHOT_VERSION:-empty}"
+    echo "ALLOWED=$(reasoning_get_allowed_efforts gpt-5)"
+    echo "DEFAULT=$(reasoning_get_default gpt-5)"
+  ' 2>&1
+  assert_success
+  assert_output --partial "LOADER_OK"
+  assert_output --partial "RAW=empty"
+  assert_output --partial "VER=empty"
+  assert_output --partial "ALLOWED=low|medium|high"
+  assert_output --partial "DEFAULT=medium"
+}
+
+@test "snapshot validation: families with only string values yields zero families (H1 variant)" {
+  run bash -c '
+    set -euo pipefail
+    export NO_COLOR=1
+    source lib/ui.sh
+    source lib/reasoning.sh
+    tmpf="$(mktemp)"
+    cat > "$tmpf" <<JSON
+{
+  "schema_version": "1",
+  "policy_version": "1.0.0",
+  "families": {
+    "note": "this is a string, not an object"
+  }
+}
+JSON
+    _REASONING_SNAPSHOT_FILE="$tmpf"
+    _reasoning_load_snapshot
+    echo "LOADER_OK"
+    echo "RAW=${_REASONING_SNAPSHOT_RAW:-empty}"
+  ' 2>&1
+  assert_success
+  assert_output --partial "LOADER_OK"
+  assert_output --partial "RAW=empty"
+}
+
+@test "snapshot validation: non-family top-level object key is not treated as family (M1)" {
+  run bash -c '
+    export NO_COLOR=1
+    source lib/ui.sh
+    source lib/reasoning.sh
+    tmpf="$(mktemp)"
+    cat > "$tmpf" <<JSON
+{
+  "schema_version": "1",
+  "policy_version": "1.0.0",
+  "metadata": {
+    "author": "test"
+  },
+  "families": {
+    "gpt-5": {
+      "allowed_efforts": ["low", "medium", "high"],
+      "default": "medium"
+    }
+  }
+}
+JSON
+    _REASONING_SNAPSHOT_FILE="$tmpf"
+    _reasoning_load_snapshot
+    echo "RAW_SET=${_REASONING_SNAPSHOT_RAW:+yes}"
+    echo "ALLOWED=$(reasoning_get_allowed_efforts gpt-5)"
+  ' 2>&1
+  assert_success
+  refute_output --partial "missing allowed_efforts"
+  refute_output --partial "missing default"
+  assert_output --partial "RAW_SET=yes"
+  assert_output --partial "ALLOWED=low|medium|high"
+}
+
+@test "snapshot validation: one valid + one malformed family disables entire snapshot (L3)" {
+  run bash -c '
+    export NO_COLOR=1
+    source lib/ui.sh
+    source lib/reasoning.sh
+    tmpf="$(mktemp)"
+    cat > "$tmpf" <<JSON
+{
+  "schema_version": "1",
+  "policy_version": "1.0.0",
+  "families": {
+    "gpt-5": {
+      "allowed_efforts": ["low", "medium", "high"],
+      "default": "medium"
+    },
+    "gpt-5-pro": {
+      "allowed_efforts": ["high"]
+    }
+  }
+}
+JSON
+    _REASONING_SNAPSHOT_FILE="$tmpf"
+    _reasoning_load_snapshot
+    echo "RAW=${_REASONING_SNAPSHOT_RAW:-empty}"
+    echo "ALLOWED=$(reasoning_get_allowed_efforts gpt-5)"
+    echo "DEFAULT=$(reasoning_get_default gpt-5)"
+  ' 2>&1
+  assert_success
+  assert_output --partial "missing default"
+  assert_output --partial "RAW=empty"
+  assert_output --partial "ALLOWED=low|medium|high"
+  assert_output --partial "DEFAULT=medium"
+}
+
 # ==========================================================================
 # End-to-end model → effort flow (AC-01, AC-03, AC-04)
 # ==========================================================================

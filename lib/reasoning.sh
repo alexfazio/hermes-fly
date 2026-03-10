@@ -21,6 +21,18 @@ fi
 # Format: {"schema_version","policy_version","families":{...}}
 # Per-family: {"allowed_efforts":[],"default":"..."}
 #
+# Loading:
+#   - Snapshot is loaded at source time (_reasoning_load_snapshot runs when
+#     this file is sourced). Validation warnings may appear on stderr for
+#     any command that sources this module, including non-deploy commands
+#     like 'hermes-fly help' or 'hermes-fly --version'.
+#   - On validation failure, the snapshot is disabled and conservative
+#     fallback defaults are used (no hard crash).
+#
+# Validation:
+#   - All-or-nothing: a single malformed family disables the entire snapshot.
+#     This is intentional — safety over partial tolerance, deterministic fallback.
+#
 # Policy:
 #   - xhigh and none are excluded from first-run setup UX
 #   - Unknown families default to "medium"
@@ -29,6 +41,13 @@ fi
 #   - GPT-5-pro is high-only
 #   - Reasoning capability is derived from snapshot family presence,
 #     not inferred from model name alone (plan line 65)
+#
+# Exit codes (reasoning_prompt_effort):
+#   0 — success (valid selection made)
+#   1 — cancel/EOF (user closed input)
+#   2 — retry exhaustion (max invalid attempts exceeded)
+#   Callers must distinguish 1 and 2 for different control flow:
+#   deploy.sh falls back on 1 (EOF), aborts on 2 (exhaustion).
 # ==========================================================================
 
 _REASONING_SNAPSHOT_FILE="${_REASONING_SCRIPT_DIR}/../data/reasoning-snapshot.json"
@@ -39,6 +58,8 @@ REASONING_SNAPSHOT_VERSION=""
 # _reasoning_load_snapshot — load and parse the JSON snapshot file
 # Sets _REASONING_SNAPSHOT_RAW and REASONING_SNAPSHOT_VERSION.
 # Safe to call multiple times (idempotent).
+# Policy: all-or-nothing validation — a single malformed family disables
+# the entire snapshot (safety over partial tolerance).
 # --------------------------------------------------------------------------
 _reasoning_load_snapshot() {
   local file="${_REASONING_SNAPSHOT_FILE:-}"
@@ -67,13 +88,43 @@ _reasoning_load_snapshot() {
     fi
 
     # Validate each family block has required keys and flat structure.
-    # Extract family names, then check each has allowed_efforts and default.
+    # Extract family names scoped to the "families" block only, preventing
+    # non-family top-level object keys (e.g., "metadata") from being
+    # misclassified as families. Uses awk brace-matching to isolate the block.
+    # The || true guards prevent grep exit 1 from crashing under set -euo pipefail
+    # when the families block is empty or has no object-valued children.
+    local families_block
+    families_block="$(printf '%s\n' "$raw" | awk '
+      /"families"[[:space:]]*:/ { found=1; depth=0 }
+      found {
+        for (i = 1; i <= length($0); i++) {
+          c = substr($0, i, 1)
+          if (c == "{") depth++
+          if (c == "}") {
+            depth--
+            if (depth == 0) { print; found=0; next }
+          }
+        }
+        print
+      }')" || true
+
     local family_names
-    family_names="$(printf '%s\n' "$raw" | grep -oE '"[a-zA-Z0-9_-]+"[[:space:]]*:[[:space:]]*\{' \
-      | grep -v '"families"' | grep -v '"schema_version"' | grep -v '"policy_version"' \
-      | sed 's/[[:space:]]*:.*//' | tr -d '"')"
+    family_names="$(printf '%s\n' "$families_block" | grep -oE '"[a-zA-Z0-9_-]+"[[:space:]]*:[[:space:]]*\{' \
+      | grep -v '"families"' \
+      | sed 's/[[:space:]]*:.*//' | tr -d '"')" || true
+
+    # Empty families: disable snapshot with warning (not a shell crash)
+    if [[ -z "$family_names" ]]; then
+      printf 'Warning: reasoning snapshot has no family definitions, disabling.\n' >&2
+      _REASONING_SNAPSHOT_RAW=""
+      REASONING_SNAPSHOT_VERSION=""
+      return 0
+    fi
+
+    # Newline-safe iteration (avoids word-splitting pitfalls with unquoted $family_names)
     local fname
-    for fname in $family_names; do
+    while IFS= read -r fname; do
+      [[ -z "$fname" ]] && continue
       local block
       block="$(printf '%s\n' "$raw" | sed -n "/\"${fname}\"/,/}/p")"
       if ! printf '%s\n' "$block" | grep -q '"allowed_efforts"'; then
@@ -88,7 +139,7 @@ _reasoning_load_snapshot() {
         REASONING_SNAPSHOT_VERSION=""
         return
       fi
-    done
+    done <<< "$family_names"
 
     _REASONING_SNAPSHOT_RAW="$raw"
     REASONING_SNAPSHOT_VERSION="$(printf '%s\n' "$_REASONING_SNAPSHOT_RAW" \
