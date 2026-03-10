@@ -56,21 +56,24 @@ if printf '%s' "$*" | grep -q "openrouter.ai/api/v1/models"; then
     fi
 
     # Default: comprehensive fixture with representative models
+    # GPT-5 models include "reasoning" in supported_parameters (matches live API)
+    # Non-reasoning models omit it (Claude, Gemini, etc.)
     cat <<'MODELS_JSON'
 {"data":[
-{"id":"openai/gpt-5-mini","name":"OpenAI: GPT-5 Mini","created":1710086400},
-{"id":"openai/gpt-5","name":"OpenAI: GPT-5","created":1710086401},
-{"id":"openai/gpt-4o","name":"OpenAI: GPT-4o","created":1709990400},
-{"id":"anthropic/claude-sonnet-4","name":"Anthropic: Claude Sonnet 4","created":1709904000},
-{"id":"anthropic/claude-haiku-4.5","name":"Anthropic: Claude Haiku 4.5","created":1709817600},
-{"id":"google/gemini-2.5-flash","name":"Google: Gemini 2.5 Flash","created":1710172800},
-{"id":"google/gemini-2.5-flash:free","name":"Google: Gemini 2.5 Flash (Free)","created":1710172801},
-{"id":"meta-llama/llama-4-maverick","name":"Meta: Llama 4 Maverick","created":1709731200},
-{"id":"mistralai/mistral-large","name":"Mistral: Mistral Large","created":1709644800},
-{"id":"deepseek/deepseek-chat","name":"DeepSeek: DeepSeek Chat","created":1709558400},
-{"id":"openrouter/aurora-alpha","name":"OpenRouter: Aurora Alpha","created":1709472000},
-{"id":"z-ai/z-mega","name":"Z-AI: Z Mega","created":1709385600},
-{"id":"qwen/qwen-110b","name":"Qwen: Qwen 110B","created":1709299200}
+{"id":"openai/gpt-5-mini","name":"OpenAI: GPT-5 Mini","created":1710086400,"supported_parameters":["max_tokens","temperature","reasoning","include_reasoning"]},
+{"id":"openai/gpt-5","name":"OpenAI: GPT-5","created":1710086401,"supported_parameters":["max_tokens","temperature","reasoning","include_reasoning"]},
+{"id":"openai/gpt-5-pro","name":"OpenAI: GPT-5 Pro","created":1710086402,"supported_parameters":["max_tokens","reasoning","include_reasoning"]},
+{"id":"openai/gpt-4o","name":"OpenAI: GPT-4o","created":1709990400,"supported_parameters":["max_tokens","temperature"]},
+{"id":"anthropic/claude-sonnet-4","name":"Anthropic: Claude Sonnet 4","created":1709904000,"supported_parameters":["max_tokens","temperature"]},
+{"id":"anthropic/claude-haiku-4.5","name":"Anthropic: Claude Haiku 4.5","created":1709817600,"supported_parameters":["max_tokens","temperature"]},
+{"id":"google/gemini-2.5-flash","name":"Google: Gemini 2.5 Flash","created":1710172800,"supported_parameters":["max_tokens","temperature"]},
+{"id":"google/gemini-2.5-flash:free","name":"Google: Gemini 2.5 Flash (Free)","created":1710172801,"supported_parameters":["max_tokens","temperature"]},
+{"id":"meta-llama/llama-4-maverick","name":"Meta: Llama 4 Maverick","created":1709731200,"supported_parameters":["max_tokens","temperature"]},
+{"id":"mistralai/mistral-large","name":"Mistral: Mistral Large","created":1709644800,"supported_parameters":["max_tokens","temperature"]},
+{"id":"deepseek/deepseek-chat","name":"DeepSeek: DeepSeek Chat","created":1709558400,"supported_parameters":["max_tokens","temperature"]},
+{"id":"openrouter/aurora-alpha","name":"OpenRouter: Aurora Alpha","created":1709472000,"supported_parameters":["max_tokens","temperature"]},
+{"id":"z-ai/z-mega","name":"Z-AI: Z Mega","created":1709385600,"supported_parameters":["max_tokens","temperature"]},
+{"id":"qwen/qwen-110b","name":"Qwen: Qwen 110B","created":1709299200,"supported_parameters":["max_tokens","temperature"]}
 ]}
 MODELS_JSON
     exit 0

@@ -1,0 +1,15 @@
+{
+  "schema_version": "1",
+  "policy_version": "1.0.0",
+  "_constraint": "Keep family objects flat (no nested objects). The sed parser in lib/reasoning.sh terminates at the first closing brace.",
+  "families": {
+    "gpt-5": {
+      "allowed_efforts": ["low", "medium", "high"],
+      "default": "medium"
+    },
+    "gpt-5-pro": {
+      "allowed_efforts": ["high"],
+      "default": "high"
+    }
+  }
+}

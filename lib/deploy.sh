@@ -41,6 +41,10 @@ if ! declare -f openrouter_setup_with_models >/dev/null 2>&1; then
   # shellcheck source=./openrouter.sh
   source "${_DEPLOY_SCRIPT_DIR}/openrouter.sh" 2>/dev/null || true
 fi
+if ! declare -f reasoning_normalize_family >/dev/null 2>&1; then
+  # shellcheck source=./reasoning.sh
+  source "${_DEPLOY_SCRIPT_DIR}/reasoning.sh" 2>/dev/null || true
+fi
 
 # ==========================================================================
 # Step 4.1: Preflight Checks
@@ -839,6 +843,30 @@ deploy_collect_llm_config() {
       fi
 
       eval "$model_var=\"\$model\""
+
+      # Reasoning effort selection (only for reasoning-capable models)
+      # Exit codes from reasoning_prompt_effort:
+      #   0 = valid selection, 1 = EOF/cancel, 2 = retry exhaustion
+      if reasoning_model_supports_reasoning "$model"; then
+        local effort
+        local prompt_rc=0
+        effort="$(reasoning_prompt_effort "$model")" || prompt_rc=$?
+        if [[ "$prompt_rc" -eq 0 ]]; then
+          DEPLOY_REASONING_EFFORT="$effort"
+          export DEPLOY_REASONING_EFFORT
+        elif [[ "$prompt_rc" -eq 1 ]]; then
+          # EOF/cancel: fall back to default (user dismissed prompt)
+          local family
+          family="$(reasoning_normalize_family "$model")"
+          DEPLOY_REASONING_EFFORT="$(reasoning_get_default "$family")"
+          export DEPLOY_REASONING_EFFORT
+          ui_warn "Using default reasoning effort: ${DEPLOY_REASONING_EFFORT}"
+        else
+          # Retry exhaustion (exit code 2): abort config collection
+          ui_warn "Reasoning effort selection failed after too many invalid attempts."
+          return 1
+        fi
+      fi
       ;;
   esac
 }
@@ -940,6 +968,7 @@ deploy_collect_config() {
 
   export DEPLOY_ORG DEPLOY_APP_NAME DEPLOY_REGION DEPLOY_VM_SIZE DEPLOY_VM_MEMORY
   export DEPLOY_VOLUME_SIZE DEPLOY_API_KEY DEPLOY_MODEL
+  # DEPLOY_REASONING_EFFORT is set inside deploy_collect_llm_config if applicable
 
   # Messaging setup
   local msg_choice
@@ -961,6 +990,9 @@ deploy_collect_config() {
   printf '  VM size:     %s / %s\n' "$DEPLOY_VM_SIZE" "$DEPLOY_VM_MEMORY" >&2
   printf '  Volume:      %s GB\n' "$DEPLOY_VOLUME_SIZE" >&2
   printf '  Model:       %s\n' "$DEPLOY_MODEL" >&2
+  if [[ -n "${DEPLOY_REASONING_EFFORT:-}" ]]; then
+    printf '  Reasoning:   %s\n' "$DEPLOY_REASONING_EFFORT" >&2
+  fi
   if [[ -n "${DEPLOY_TELEGRAM_BOT_TOKEN:-}" ]]; then
     printf '  Messaging:   Telegram (configured)\n' >&2
   else
@@ -1054,6 +1086,11 @@ deploy_provision_resources() {
       secrets+=("OPENROUTER_API_KEY=${DEPLOY_API_KEY}" "LLM_MODEL=${DEPLOY_MODEL}")
       ;;
   esac
+
+  # Add reasoning effort if set (AC-05)
+  if [[ -n "${DEPLOY_REASONING_EFFORT:-}" ]]; then
+    secrets+=("HERMES_REASONING_EFFORT=${DEPLOY_REASONING_EFFORT}")
+  fi
 
   # Add app identity
   secrets+=("HERMES_APP_NAME=${DEPLOY_APP_NAME}")
@@ -1230,7 +1267,8 @@ deploy_write_summary() {
   local ts
   ts="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
   # Write YAML
-  cat >"${deploys_dir}/${app}.yaml" <<EOF
+  {
+    cat <<EOF
 app_name: ${app}
 region: ${DEPLOY_REGION:-}
 url: https://${app}.fly.dev
@@ -1242,6 +1280,11 @@ messaging:
 llm:
   model: ${DEPLOY_MODEL:-}
   provider: ${DEPLOY_LLM_PROVIDER:-}
+EOF
+    if [[ -n "${DEPLOY_REASONING_EFFORT:-}" ]]; then
+      printf '  reasoning_effort: %s\n' "${DEPLOY_REASONING_EFFORT}"
+    fi
+    cat <<EOF
 deployed_at: ${ts}
 hermes_fly_version: ${HERMES_FLY_VERSION:-}
 management:
@@ -1250,8 +1293,10 @@ management:
   doctor: "hermes-fly doctor -a ${app}"
   destroy: "hermes-fly destroy -a ${app}"
 EOF
+  } >"${deploys_dir}/${app}.yaml"
   # Write Markdown
-  cat >"${deploys_dir}/${app}.md" <<EOF
+  {
+    cat <<EOF
 # Hermes Agent: ${app}
 
 Deployed: ${ts}
@@ -1262,6 +1307,11 @@ Deployed: ${ts}
 - **VM size:** ${DEPLOY_VM_SIZE:-}
 - **Volume:** ${DEPLOY_VOLUME_SIZE:-} GB
 - **Model:** ${DEPLOY_MODEL:-}
+EOF
+    if [[ -n "${DEPLOY_REASONING_EFFORT:-}" ]]; then
+      printf -- '- **Reasoning effort:** %s\n' "${DEPLOY_REASONING_EFFORT}"
+    fi
+    cat <<EOF
 - **Messaging:** ${DEPLOY_MESSAGING_PLATFORM:-none}${DEPLOY_TELEGRAM_BOT_USERNAME:+ (@${DEPLOY_TELEGRAM_BOT_USERNAME})}
 
 ## Management
@@ -1278,6 +1328,7 @@ hermes-fly destroy -a ${app}
 - **Pairing prompt:** check \`fly ssh console -a ${app}\` pairing directory
 - **Telegram logOut 10-min window:** after destroy, wait 10 min before reusing same bot token
 EOF
+  } >"${deploys_dir}/${app}.md"
 }
 
 # --------------------------------------------------------------------------
