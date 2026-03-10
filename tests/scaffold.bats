@@ -222,3 +222,19 @@ teardown() {
   # the pattern used by the long-description branch
   assert_output --partial "failed to update bot short description"
 }
+
+# --- Reasoning effort env bridge (AC-06) ---
+
+@test "entrypoint.sh bridges HERMES_REASONING_EFFORT into .env (AC-06)" {
+  run cat "${PROJECT_ROOT}/templates/entrypoint.sh"
+  assert_success
+  assert_output --partial "HERMES_REASONING_EFFORT"
+}
+
+# --- lib/reasoning.sh module guard ---
+
+@test "lib/reasoning.sh exits 1 when executed directly" {
+  run bash "${PROJECT_ROOT}/lib/reasoning.sh"
+  assert_failure
+  assert_output --partial "source this file"
+}

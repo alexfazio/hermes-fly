@@ -1,0 +1,14 @@
+{
+  "schema_version": "1",
+  "policy_version": "1.0.0",
+  "families": {
+    "gpt-5": {
+      "allowed_efforts": ["low", "medium", "high"],
+      "default": "medium"
+    },
+    "gpt-5-pro": {
+      "allowed_efforts": ["high"],
+      "default": "high"
+    }
+  }
+}

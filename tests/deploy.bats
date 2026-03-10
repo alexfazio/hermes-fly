@@ -12,6 +12,7 @@ setup() {
   source "${PROJECT_ROOT}/lib/messaging.sh"
   source "${PROJECT_ROOT}/lib/config.sh"
   source "${PROJECT_ROOT}/lib/status.sh"
+  source "${PROJECT_ROOT}/lib/reasoning.sh"
   source "${PROJECT_ROOT}/lib/deploy.sh"
 }
 
@@ -1302,4 +1303,283 @@ teardown() {
     source '"${PROJECT_ROOT}"'/lib/deploy.sh;
     deploy_preflight 2>&1 || true'
   assert_output --partial "VERBOSE_PREREQS_CALLED=1"
+}
+
+# ==========================================================================
+# Reasoning effort integration tests (PR 2)
+# ==========================================================================
+
+# --- AC-01: Model-aware gating for known restricted model ---
+
+@test "deploy_collect_llm_config sets DEPLOY_REASONING_EFFORT for gpt-5-mini (AC-01)" {
+  # OpenRouter choice (1), API key, model fetch fails so manual fallback, enter model, default effort
+  run bash -c '
+    export NO_COLOR=1
+    export MOCK_OPENROUTER_MODELS_FAIL=true
+    export PATH="'"${BATS_TEST_DIRNAME}/mocks:${PATH}"'"
+    source lib/ui.sh
+    source lib/fly-helpers.sh
+    source lib/docker-helpers.sh
+    source lib/messaging.sh
+    source lib/config.sh
+    source lib/status.sh
+    source lib/reasoning.sh
+    source lib/deploy.sh
+    deploy_collect_llm_config KEY MODEL < <(printf "1\nsk-test-key\nopenai/gpt-5-mini\n\n") 2>/dev/null
+    echo "EFFORT=$DEPLOY_REASONING_EFFORT"
+  '
+  assert_success
+  assert_output --partial "EFFORT=medium"
+}
+
+# --- AC-02: Deterministic default selection ---
+
+@test "deploy_collect_llm_config default reasoning effort is medium for OpenRouter models (AC-02)" {
+  run bash -c '
+    export NO_COLOR=1
+    export MOCK_OPENROUTER_MODELS_FAIL=true
+    export PATH="'"${BATS_TEST_DIRNAME}/mocks:${PATH}"'"
+    source lib/ui.sh
+    source lib/fly-helpers.sh
+    source lib/docker-helpers.sh
+    source lib/messaging.sh
+    source lib/config.sh
+    source lib/status.sh
+    source lib/reasoning.sh
+    source lib/deploy.sh
+    deploy_collect_llm_config KEY MODEL < <(printf "1\nsk-test-key\nopenai/gpt-5\n\n") 2>/dev/null
+    echo "EFFORT=$DEPLOY_REASONING_EFFORT"
+  '
+  assert_success
+  assert_output --partial "EFFORT=medium"
+}
+
+# --- AC-03: Unknown family conservative fallback ---
+
+@test "deploy_collect_llm_config skips reasoning for non-reasoning model (AC-03, AC-09)" {
+  run bash -c '
+    export NO_COLOR=1
+    export MOCK_OPENROUTER_MODELS_FAIL=true
+    export PATH="'"${BATS_TEST_DIRNAME}/mocks:${PATH}"'"
+    source lib/ui.sh
+    source lib/fly-helpers.sh
+    source lib/docker-helpers.sh
+    source lib/messaging.sh
+    source lib/config.sh
+    source lib/status.sh
+    source lib/reasoning.sh
+    source lib/deploy.sh
+    deploy_collect_llm_config KEY MODEL < <(printf "1\nsk-test-key\nanthropic/claude-sonnet-4\n") 2>/dev/null
+    echo "EFFORT=${DEPLOY_REASONING_EFFORT:-unset}"
+  '
+  assert_success
+  assert_output --partial "EFFORT=unset"
+}
+
+# --- AC-05: Persistence through Fly secrets ---
+
+@test "deploy_provision_resources includes HERMES_REASONING_EFFORT in secrets (AC-05)" {
+  export DEPLOY_APP_NAME="test-app"
+  export DEPLOY_REGION="ord"
+  export DEPLOY_VOLUME_SIZE="5"
+  export DEPLOY_API_KEY="sk-test-key"
+  export DEPLOY_MODEL="openai/gpt-5-mini"
+  export DEPLOY_REASONING_EFFORT="medium"
+  export DEPLOY_LLM_PROVIDER="openrouter"
+
+  local captured_secrets=""
+  fly_set_secrets() {
+    shift  # skip app name
+    captured_secrets="$*"
+    return 0
+  }
+  export -f fly_set_secrets
+
+  run deploy_provision_resources
+  assert_success
+  # The secrets should have been passed to fly_set_secrets
+}
+
+@test "deploy_provision_resources secret payload contains HERMES_REASONING_EFFORT value (AC-05)" {
+  export DEPLOY_APP_NAME="test-app"
+  export DEPLOY_REGION="ord"
+  export DEPLOY_VOLUME_SIZE="5"
+  export DEPLOY_API_KEY="sk-test-key"
+  export DEPLOY_MODEL="openai/gpt-5-mini"
+  export DEPLOY_REASONING_EFFORT="high"
+  export DEPLOY_LLM_PROVIDER="openrouter"
+
+  local secrets_log="${TEST_TEMP_DIR}/secrets_log"
+
+  # Capture what fly_set_secrets receives to a file (stdout is captured by deploy_provision_resources)
+  fly_set_secrets() {
+    local app="$1"; shift
+    for arg in "$@"; do
+      printf '%s\n' "$arg" >>"${BATS_TEST_TMPDIR}/secrets_log"
+    done
+    return 0
+  }
+  export -f fly_set_secrets
+  export BATS_TEST_TMPDIR
+
+  run deploy_provision_resources
+  assert_success
+  run cat "${BATS_TEST_TMPDIR}/secrets_log"
+  assert_output --partial "HERMES_REASONING_EFFORT=high"
+}
+
+@test "deploy_provision_resources omits HERMES_REASONING_EFFORT when unset (AC-09)" {
+  export DEPLOY_APP_NAME="test-app"
+  export DEPLOY_REGION="ord"
+  export DEPLOY_VOLUME_SIZE="5"
+  export DEPLOY_API_KEY="sk-test-key"
+  export DEPLOY_MODEL="anthropic/claude-sonnet-4"
+  export DEPLOY_LLM_PROVIDER="openrouter"
+  unset DEPLOY_REASONING_EFFORT
+
+  fly_set_secrets() {
+    local app="$1"; shift
+    for arg in "$@"; do
+      echo "SECRET: $arg"
+    done
+    return 0
+  }
+  export -f fly_set_secrets
+
+  run deploy_provision_resources
+  assert_success
+  refute_output --partial "HERMES_REASONING_EFFORT"
+}
+
+# --- AC-08: Deploy summary exposes reasoning effort ---
+
+@test "deploy_write_summary YAML includes reasoning_effort field (AC-08)" {
+  export DEPLOY_APP_NAME="test-app"
+  export DEPLOY_REGION="ord"
+  export DEPLOY_VM_SIZE="shared-cpu-2x"
+  export DEPLOY_VOLUME_SIZE="5"
+  export DEPLOY_MODEL="openai/gpt-5-mini"
+  export DEPLOY_LLM_PROVIDER="openrouter"
+  export DEPLOY_REASONING_EFFORT="medium"
+  export HERMES_FLY_VERSION="0.1.14"
+
+  deploy_write_summary
+
+  run cat "${HERMES_FLY_CONFIG_DIR}/deploys/test-app.yaml"
+  assert_success
+  assert_output --partial "reasoning_effort: medium"
+}
+
+@test "deploy_write_summary Markdown includes reasoning effort field (AC-08)" {
+  export DEPLOY_APP_NAME="test-app"
+  export DEPLOY_REGION="ord"
+  export DEPLOY_VM_SIZE="shared-cpu-2x"
+  export DEPLOY_VOLUME_SIZE="5"
+  export DEPLOY_MODEL="openai/gpt-5-mini"
+  export DEPLOY_LLM_PROVIDER="openrouter"
+  export DEPLOY_REASONING_EFFORT="high"
+  export HERMES_FLY_VERSION="0.1.14"
+
+  deploy_write_summary
+
+  run cat "${HERMES_FLY_CONFIG_DIR}/deploys/test-app.md"
+  assert_success
+  assert_output --partial "Reasoning effort"
+  assert_output --partial "high"
+}
+
+# --- YAML/Markdown omits reasoning_effort when unset (REVIEW_1 edge case) ---
+
+@test "deploy_write_summary YAML omits reasoning_effort when unset" {
+  export DEPLOY_APP_NAME="test-app"
+  export DEPLOY_REGION="ord"
+  export DEPLOY_VM_SIZE="shared-cpu-2x"
+  export DEPLOY_VOLUME_SIZE="5"
+  export DEPLOY_MODEL="anthropic/claude-sonnet-4"
+  export DEPLOY_LLM_PROVIDER="openrouter"
+  unset DEPLOY_REASONING_EFFORT
+  export HERMES_FLY_VERSION="0.1.14"
+
+  deploy_write_summary
+
+  run cat "${HERMES_FLY_CONFIG_DIR}/deploys/test-app.yaml"
+  assert_success
+  refute_output --partial "reasoning_effort"
+}
+
+@test "deploy_write_summary Markdown omits reasoning effort when unset" {
+  export DEPLOY_APP_NAME="test-app"
+  export DEPLOY_REGION="ord"
+  export DEPLOY_VM_SIZE="shared-cpu-2x"
+  export DEPLOY_VOLUME_SIZE="5"
+  export DEPLOY_MODEL="anthropic/claude-sonnet-4"
+  export DEPLOY_LLM_PROVIDER="openrouter"
+  unset DEPLOY_REASONING_EFFORT
+  export HERMES_FLY_VERSION="0.1.14"
+
+  deploy_write_summary
+
+  run cat "${HERMES_FLY_CONFIG_DIR}/deploys/test-app.md"
+  assert_success
+  refute_output --partial "Reasoning effort"
+}
+
+# --- AC-07: Default flow does not patch config.yaml ---
+
+@test "entrypoint.sh does not sed-patch reasoning_effort in config.yaml (AC-07)" {
+  run cat "${PROJECT_ROOT}/templates/entrypoint.sh"
+  assert_success
+  # Ensure no sed command targets reasoning_effort in config.yaml
+  refute_output --partial "reasoning_effort"
+}
+
+# --- AC-09: Non-OpenRouter regression guard ---
+
+@test "deploy_collect_llm_config Nous path does not set DEPLOY_REASONING_EFFORT (AC-09)" {
+  run bash -c '
+    export NO_COLOR=1
+    export PATH="'"${BATS_TEST_DIRNAME}/mocks:${PATH}"'"
+    source lib/ui.sh
+    source lib/fly-helpers.sh
+    source lib/docker-helpers.sh
+    source lib/messaging.sh
+    source lib/config.sh
+    source lib/status.sh
+    source lib/reasoning.sh
+    source lib/deploy.sh
+    deploy_collect_llm_config KEY MODEL < <(printf "2\nnous-key\n") 2>/dev/null
+    echo "EFFORT=${DEPLOY_REASONING_EFFORT:-unset}"
+  '
+  assert_success
+  assert_output --partial "EFFORT=unset"
+}
+
+# --- Confirmation summary includes reasoning ---
+
+@test "deploy_collect_config summary shows reasoning effort when set" {
+  # Set up all required globals to skip actual collection
+  export DEPLOY_ORG="personal"
+  export DEPLOY_APP_NAME="test-app"
+  export DEPLOY_REGION="ord"
+  export DEPLOY_VM_SIZE="shared-cpu-2x"
+  export DEPLOY_VM_MEMORY="512"
+  export DEPLOY_VOLUME_SIZE="5"
+  export DEPLOY_API_KEY="sk-test"
+  export DEPLOY_MODEL="openai/gpt-5-mini"
+  export DEPLOY_REASONING_EFFORT="medium"
+  export DEPLOY_LLM_PROVIDER="openrouter"
+
+  # Mock all collectors to no-op (config already set)
+  deploy_collect_org() { :; }
+  deploy_collect_app_name() { :; }
+  deploy_collect_region() { :; }
+  deploy_collect_vm_size() { :; }
+  deploy_collect_volume_size() { :; }
+  deploy_collect_llm_config() { :; }
+  messaging_setup_menu() { echo "skip"; }
+  ui_confirm() { return 0; }
+
+  run deploy_collect_config
+  assert_success
+  assert_output --partial "Reasoning:   medium"
 }

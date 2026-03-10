@@ -1,0 +1,263 @@
+#!/usr/bin/env bash
+# lib/reasoning.sh — Reasoning effort compatibility gating and persistence
+# Sourced by hermes-fly; not executable directly.
+
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+  echo "Error: source this file, do not execute directly." >&2
+  exit 1
+fi
+
+# --- Source dependencies ---
+_REASONING_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+if [[ -z "${EXIT_SUCCESS+x}" ]]; then
+  source "${_REASONING_SCRIPT_DIR}/ui.sh" 2>/dev/null || true
+fi
+
+# ==========================================================================
+# Bundled compatibility snapshot (JSON)
+#
+# Source-of-truth: data/reasoning-snapshot.json
+# Format: {"schema_version","policy_version","families":{...}}
+# Per-family: {"allowed_efforts":[],"default":"..."}
+#
+# Policy:
+#   - xhigh and none are excluded from first-run setup UX
+#   - Unknown families default to "medium"
+#   - GPT-5 family uses conservative cross-provider intersection (low|medium|high)
+#     Note: "minimal" is excluded because Azure does not support it (plan §Q4)
+#   - GPT-5-pro is high-only
+#   - Reasoning capability is derived from snapshot family presence,
+#     not inferred from model name alone (plan line 65)
+# ==========================================================================
+
+_REASONING_SNAPSHOT_FILE="${_REASONING_SCRIPT_DIR}/../data/reasoning-snapshot.json"
+_REASONING_SNAPSHOT_RAW=""
+REASONING_SNAPSHOT_VERSION=""
+
+# --------------------------------------------------------------------------
+# _reasoning_load_snapshot — load and parse the JSON snapshot file
+# Sets _REASONING_SNAPSHOT_RAW and REASONING_SNAPSHOT_VERSION.
+# Safe to call multiple times (idempotent).
+# --------------------------------------------------------------------------
+_reasoning_load_snapshot() {
+  local file="${_REASONING_SNAPSHOT_FILE:-}"
+  if [[ -n "$file" ]] && [[ -f "$file" ]]; then
+    _REASONING_SNAPSHOT_RAW="$(cat "$file")"
+    REASONING_SNAPSHOT_VERSION="$(printf '%s\n' "$_REASONING_SNAPSHOT_RAW" \
+      | grep '"policy_version"' \
+      | sed 's/.*"policy_version"[[:space:]]*:[[:space:]]*"//; s/".*//')"
+  else
+    _REASONING_SNAPSHOT_RAW=""
+    REASONING_SNAPSHOT_VERSION=""
+  fi
+}
+
+# Load snapshot at source time
+_reasoning_load_snapshot
+
+# --------------------------------------------------------------------------
+# reasoning_normalize_family MODEL_ID — normalize model ID to family key
+# Args: model_id (e.g., "openai/gpt-5-mini", "anthropic/claude-sonnet-4")
+# Returns: family key to stdout (e.g., "gpt-5", "gpt-5-pro", "unknown")
+# --------------------------------------------------------------------------
+reasoning_normalize_family() {
+  local model_id="$1"
+
+  # Strip provider prefix (everything before first /)
+  local model_name
+  if [[ "$model_id" == */* ]]; then
+    model_name="${model_id#*/}"
+  else
+    model_name="$model_id"
+  fi
+
+  # Strip colon variants (:free, :nitro, etc.)
+  model_name="${model_name%%:*}"
+
+  # Match families (order matters: most specific first)
+  case "$model_name" in
+    gpt-5-pro|gpt-5-pro-*)
+      printf '%s' "gpt-5-pro"
+      ;;
+    gpt-5-mini|gpt-5-mini-*|gpt-5-nano|gpt-5-nano-*|gpt-5|gpt-5-[0-9]*|gpt-5.[0-9]*|gpt-5-codex|gpt-5-codex-*)
+      printf '%s' "gpt-5"
+      ;;
+    *)
+      printf '%s' "unknown"
+      ;;
+  esac
+}
+
+# --------------------------------------------------------------------------
+# reasoning_get_allowed_efforts FAMILY — return allowed efforts for family
+# Args: family key from reasoning_normalize_family
+# Returns: pipe-separated effort list to stdout
+# Reads from bundled JSON snapshot; falls back to conservative default.
+# --------------------------------------------------------------------------
+reasoning_get_allowed_efforts() {
+  local family="$1"
+
+  # Snapshot-derived lookup
+  if [[ -n "${_REASONING_SNAPSHOT_RAW:-}" ]]; then
+    local block
+    block="$(printf '%s\n' "$_REASONING_SNAPSHOT_RAW" | sed -n "/\"${family}\"/,/}/p")"
+    if [[ -n "$block" ]]; then
+      local efforts
+      efforts="$(printf '%s\n' "$block" | grep '"allowed_efforts"' \
+        | sed 's/.*\[//; s/\].*//; s/"//g; s/[[:space:]]//g; s/,/|/g')"
+      if [[ -n "$efforts" ]]; then
+        printf '%s' "$efforts"
+        return
+      fi
+    fi
+  fi
+
+  # Fallback for unknown/missing family: conservative default
+  printf '%s' "low|medium|high"
+}
+
+# --------------------------------------------------------------------------
+# reasoning_get_default FAMILY — return default effort for family
+# Args: family key from reasoning_normalize_family
+# Returns: default effort to stdout
+# Reads from bundled JSON snapshot; falls back to "medium".
+# --------------------------------------------------------------------------
+reasoning_get_default() {
+  local family="$1"
+
+  # Snapshot-derived lookup
+  if [[ -n "${_REASONING_SNAPSHOT_RAW:-}" ]]; then
+    local block
+    block="$(printf '%s\n' "$_REASONING_SNAPSHOT_RAW" | sed -n "/\"${family}\"/,/}/p")"
+    if [[ -n "$block" ]]; then
+      local default_val
+      default_val="$(printf '%s\n' "$block" | grep '"default"' \
+        | sed 's/.*"default"[[:space:]]*:[[:space:]]*"//; s/".*//')"
+      if [[ -n "$default_val" ]]; then
+        printf '%s' "$default_val"
+        return
+      fi
+    fi
+  fi
+
+  # Fallback: conservative default
+  printf '%s' "medium"
+}
+
+# --------------------------------------------------------------------------
+# reasoning_validate_effort FAMILY EFFORT — check if effort is valid for family
+# Args: family key, effort value
+# Returns: 0 if valid, 1 if invalid
+# --------------------------------------------------------------------------
+reasoning_validate_effort() {
+  local family="$1"
+  local effort="$2"
+
+  local allowed
+  allowed="$(reasoning_get_allowed_efforts "$family")"
+
+  # Check if effort appears in the pipe-separated allowed list
+  local IFS='|'
+  local val
+  for val in $allowed; do
+    if [[ "$val" == "$effort" ]]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+# --------------------------------------------------------------------------
+# reasoning_model_supports_reasoning MODEL_ID — check if model has reasoning
+# Derives capability from snapshot family presence (not hardcoded).
+# Returns 0 if model's family is defined in the snapshot, 1 otherwise.
+# Non-reasoning models (Anthropic, Google, etc.) skip the reasoning prompt.
+# --------------------------------------------------------------------------
+reasoning_model_supports_reasoning() {
+  local model_id="$1"
+  local family
+  family="$(reasoning_normalize_family "$model_id")"
+
+  # Family "unknown" is never in the snapshot
+  [[ "$family" == "unknown" ]] && return 1
+
+  # Check if family is defined in the loaded snapshot
+  if [[ -n "${_REASONING_SNAPSHOT_RAW:-}" ]]; then
+    if printf '%s\n' "$_REASONING_SNAPSHOT_RAW" | grep -q "\"${family}\"[[:space:]]*:"; then
+      return 0
+    fi
+    return 1
+  fi
+
+  # No snapshot loaded: conservative default — assume no reasoning support
+  return 1
+}
+
+# --------------------------------------------------------------------------
+# reasoning_prompt_effort MODEL_ID — interactive reasoning effort selection
+# Shows menu with only valid options for the model's family.
+# Returns: selected effort value to stdout
+# Returns: 0 on success, 1 on failure/cancel
+# --------------------------------------------------------------------------
+reasoning_prompt_effort() {
+  local model_id="$1"
+
+  local family
+  family="$(reasoning_normalize_family "$model_id")"
+
+  local allowed
+  allowed="$(reasoning_get_allowed_efforts "$family")"
+
+  local default_effort
+  default_effort="$(reasoning_get_default "$family")"
+
+  # Build menu from allowed efforts
+  local options=()
+  local IFS='|'
+  for val in $allowed; do
+    options+=("$val")
+  done
+  unset IFS
+
+  local num_options=${#options[@]}
+
+  # Single option: auto-select
+  if [[ "$num_options" -eq 1 ]]; then
+    printf '%s\n' "Reasoning effort for ${model_id}: ${options[0]} (only supported level)" >&2
+    printf '%s' "${options[0]}"
+    return 0
+  fi
+
+  # Multi-option menu
+  printf '\nSelect reasoning effort for %s:\n' "$model_id" >&2
+  local i=1
+  local default_idx=1
+  for val in "${options[@]}"; do
+    local marker=""
+    if [[ "$val" == "$default_effort" ]]; then
+      marker=" (recommended)"
+      default_idx=$i
+    fi
+    printf '  %d) %s%s\n' "$i" "$val" "$marker" >&2
+    ((i++))
+  done
+
+  local choice
+  printf 'Choice [%d]: ' "$default_idx" >&2
+  if ! IFS= read -r choice; then
+    # EOF
+    return 1
+  fi
+  [[ -z "$choice" ]] && choice="$default_idx"
+
+  # Validate numeric and in range
+  if ! [[ "$choice" =~ ^[0-9]+$ ]] || [[ "$choice" -lt 1 ]] || [[ "$choice" -gt "$num_options" ]]; then
+    printf 'Invalid choice.\n' >&2
+    return 1
+  fi
+
+  local selected="${options[$((choice - 1))]}"
+  printf '%s' "$selected"
+  return 0
+}
