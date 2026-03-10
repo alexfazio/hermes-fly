@@ -37,8 +37,41 @@ if printf '%s' "$*" | grep -q "openrouter.ai/api/v1/models"; then
         echo "curl: (7) Failed to connect" >&2
         exit 7
     fi
+
+    # Support timeout simulation (exit code 28 is curl timeout)
+    if [[ "${MOCK_OPENROUTER_TIMEOUT:-false}" == "true" ]]; then
+        exit 28
+    fi
+
+    # Support empty response
+    if [[ "${MOCK_OPENROUTER_EMPTY:-false}" == "true" ]]; then
+        echo '{"data":[]}'
+        exit 0
+    fi
+
+    # Support malformed response
+    if [[ "${MOCK_OPENROUTER_MALFORMED:-false}" == "true" ]]; then
+        echo 'not json at all {{'
+        exit 0
+    fi
+
+    # Default: comprehensive fixture with representative models
     cat <<'MODELS_JSON'
-{"data":[{"id":"anthropic/claude-sonnet-4","name":"Claude Sonnet 4"},{"id":"anthropic/claude-haiku-4.5","name":"Claude Haiku 4.5"},{"id":"openai/gpt-4o","name":"GPT-4o"},{"id":"google/gemini-2.5-flash","name":"Gemini 2.5 Flash"},{"id":"meta-llama/llama-4-maverick","name":"Llama 4 Maverick"},{"id":"mistralai/mistral-large","name":"Mistral Large"}]}
+{"data":[
+{"id":"openai/gpt-5-mini","name":"OpenAI: GPT-5 Mini","created":1710086400},
+{"id":"openai/gpt-5","name":"OpenAI: GPT-5","created":1710086401},
+{"id":"openai/gpt-4o","name":"OpenAI: GPT-4o","created":1709990400},
+{"id":"anthropic/claude-sonnet-4","name":"Anthropic: Claude Sonnet 4","created":1709904000},
+{"id":"anthropic/claude-haiku-4.5","name":"Anthropic: Claude Haiku 4.5","created":1709817600},
+{"id":"google/gemini-2.5-flash","name":"Google: Gemini 2.5 Flash","created":1710172800},
+{"id":"google/gemini-2.5-flash:free","name":"Google: Gemini 2.5 Flash (Free)","created":1710172801},
+{"id":"meta-llama/llama-4-maverick","name":"Meta: Llama 4 Maverick","created":1709731200},
+{"id":"mistralai/mistral-large","name":"Mistral: Mistral Large","created":1709644800},
+{"id":"deepseek/deepseek-chat","name":"DeepSeek: DeepSeek Chat","created":1709558400},
+{"id":"openrouter/aurora-alpha","name":"OpenRouter: Aurora Alpha","created":1709472000},
+{"id":"z-ai/z-mega","name":"Z-AI: Z Mega","created":1709385600},
+{"id":"qwen/qwen-110b","name":"Qwen: Qwen 110B","created":1709299200}
+]}
 MODELS_JSON
     exit 0
 fi
