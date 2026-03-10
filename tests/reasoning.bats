@@ -137,15 +137,7 @@ EOF
   _REASONING_SNAPSHOT_RAW="$old_raw"
 }
 
-# ==========================================================================
-# Module guard
-# ==========================================================================
-
-@test "lib/reasoning.sh exits 1 when executed directly" {
-  run bash "${PROJECT_ROOT}/lib/reasoning.sh"
-  assert_failure
-  assert_output --partial "source this file"
-}
+# Module guard test is in scaffold.bats (shared guard tests for all modules)
 
 # ==========================================================================
 # reasoning_normalize_family
@@ -494,14 +486,28 @@ EOF
   refute_output --partial "none"
 }
 
-@test "reasoning_prompt_effort: invalid choice returns failure" {
+@test "reasoning_prompt_effort: retries on invalid input up to 3 times then fails" {
   run bash -c '
     export NO_COLOR=1
     source lib/ui.sh
     source lib/reasoning.sh
-    reasoning_prompt_effort "openai/gpt-5" <<< "99"
+    reasoning_prompt_effort "openai/gpt-5" < <(printf "99\nabc\n0\n") 2>&1
   '
   assert_failure
+  assert_output --partial "Invalid choice"
+  assert_output --partial "Too many invalid attempts"
+}
+
+@test "reasoning_prompt_effort: valid choice after invalid input succeeds" {
+  run bash -c '
+    export NO_COLOR=1
+    source lib/ui.sh
+    source lib/reasoning.sh
+    result="$(reasoning_prompt_effort "openai/gpt-5" < <(printf "99\n1\n") 2>/dev/null)"
+    echo "$result"
+  '
+  assert_success
+  assert_output "low"
 }
 
 @test "reasoning_prompt_effort: EOF returns failure" {

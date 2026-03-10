@@ -54,10 +54,11 @@ teardown() {
 @test "install_files copies project files and creates symlink" {
   # Create a fake project layout
   local src="${TEST_TEMP_DIR}/src"
-  mkdir -p "$src/lib" "$src/templates"
+  mkdir -p "$src/lib" "$src/templates" "$src/data"
   echo '#!/bin/sh' > "$src/hermes-fly"
   echo 'ui code' > "$src/lib/ui.sh"
   echo 'template' > "$src/templates/Dockerfile.template"
+  echo '{"schema_version":"1"}' > "$src/data/reasoning-snapshot.json"
 
   local dest="${TEST_TEMP_DIR}/hermes-home"
   local bin="${TEST_TEMP_DIR}/bin"
@@ -67,6 +68,7 @@ teardown() {
   assert [ -x "${dest}/hermes-fly" ]
   assert [ -f "${dest}/lib/ui.sh" ]
   assert [ -f "${dest}/templates/Dockerfile.template" ]
+  assert [ -f "${dest}/data/reasoning-snapshot.json" ]
   assert [ -L "${bin}/hermes-fly" ]
 }
 
@@ -118,10 +120,11 @@ MOCK
 if [[ "$1" == "clone" ]]; then
   printf '%s\n' "$*" > "${MOCK_GIT_ARGS_FILE}"
   dest="${@: -1}"
-  mkdir -p "$dest/lib" "$dest/templates"
+  mkdir -p "$dest/lib" "$dest/templates" "$dest/data"
   printf '#!/bin/sh\necho "hermes-fly 0.1.12"\n' > "$dest/hermes-fly"
   echo 'ui' > "$dest/lib/ui.sh"
   echo 'tpl' > "$dest/templates/Dockerfile.template"
+  echo '{}' > "$dest/data/reasoning-snapshot.json"
   exit 0
 fi
 exit 1
@@ -163,10 +166,11 @@ MOCK
 #!/usr/bin/env bash
 if [[ "$1" == "clone" ]]; then
   dest="${@: -1}"
-  mkdir -p "$dest/lib" "$dest/templates"
+  mkdir -p "$dest/lib" "$dest/templates" "$dest/data"
   printf '#!/bin/sh\necho "hermes-fly 0.1.11"\n' > "$dest/hermes-fly"
   echo 'ui' > "$dest/lib/ui.sh"
   echo 'tpl' > "$dest/templates/Dockerfile.template"
+  echo '{}' > "$dest/data/reasoning-snapshot.json"
   exit 0
 fi
 exit 1

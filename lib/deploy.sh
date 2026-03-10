@@ -851,11 +851,12 @@ deploy_collect_llm_config() {
           DEPLOY_REASONING_EFFORT="$effort"
           export DEPLOY_REASONING_EFFORT
         else
-          # Fallback to default on cancel/EOF
+          # Fallback to default on cancel/EOF/retry exhaustion
           local family
           family="$(reasoning_normalize_family "$model")"
           DEPLOY_REASONING_EFFORT="$(reasoning_get_default "$family")"
           export DEPLOY_REASONING_EFFORT
+          ui_warn "Using default reasoning effort: ${DEPLOY_REASONING_EFFORT}" >&2
         fi
       fi
       ;;

@@ -1354,6 +1354,48 @@ teardown() {
   assert_output --partial "EFFORT=medium"
 }
 
+@test "deploy_collect_llm_config propagates non-default effort selection (AC-02)" {
+  # Select "1" (low) instead of default (medium)
+  run bash -c '
+    export NO_COLOR=1
+    export MOCK_OPENROUTER_MODELS_FAIL=true
+    export PATH="'"${BATS_TEST_DIRNAME}/mocks:${PATH}"'"
+    source lib/ui.sh
+    source lib/fly-helpers.sh
+    source lib/docker-helpers.sh
+    source lib/messaging.sh
+    source lib/config.sh
+    source lib/status.sh
+    source lib/reasoning.sh
+    source lib/deploy.sh
+    deploy_collect_llm_config KEY MODEL < <(printf "1\nsk-test-key\nopenai/gpt-5\n1\n") 2>/dev/null
+    echo "EFFORT=$DEPLOY_REASONING_EFFORT"
+  '
+  assert_success
+  assert_output --partial "EFFORT=low"
+}
+
+@test "deploy_collect_llm_config propagates high effort selection (AC-02)" {
+  # Select "3" (high)
+  run bash -c '
+    export NO_COLOR=1
+    export MOCK_OPENROUTER_MODELS_FAIL=true
+    export PATH="'"${BATS_TEST_DIRNAME}/mocks:${PATH}"'"
+    source lib/ui.sh
+    source lib/fly-helpers.sh
+    source lib/docker-helpers.sh
+    source lib/messaging.sh
+    source lib/config.sh
+    source lib/status.sh
+    source lib/reasoning.sh
+    source lib/deploy.sh
+    deploy_collect_llm_config KEY MODEL < <(printf "1\nsk-test-key\nopenai/gpt-5\n3\n") 2>/dev/null
+    echo "EFFORT=$DEPLOY_REASONING_EFFORT"
+  '
+  assert_success
+  assert_output --partial "EFFORT=high"
+}
+
 # --- AC-03: Unknown family conservative fallback ---
 
 @test "deploy_collect_llm_config skips reasoning for non-reasoning model (AC-03, AC-09)" {
@@ -1387,17 +1429,22 @@ teardown() {
   export DEPLOY_REASONING_EFFORT="medium"
   export DEPLOY_LLM_PROVIDER="openrouter"
 
-  local captured_secrets=""
+  local secrets_log="${TEST_TEMP_DIR}/secrets_log_ac05"
+
   fly_set_secrets() {
-    shift  # skip app name
-    captured_secrets="$*"
+    local app="$1"; shift
+    for arg in "$@"; do
+      printf '%s\n' "$arg" >>"${HERMES_SECRETS_LOG}"
+    done
     return 0
   }
   export -f fly_set_secrets
+  export HERMES_SECRETS_LOG="$secrets_log"
 
   run deploy_provision_resources
   assert_success
-  # The secrets should have been passed to fly_set_secrets
+  run cat "$secrets_log"
+  assert_output --partial "HERMES_REASONING_EFFORT=medium"
 }
 
 @test "deploy_provision_resources secret payload contains HERMES_REASONING_EFFORT value (AC-05)" {

@@ -177,6 +177,9 @@ install_files() {
   _run chmod +x "$dest_dir/hermes-fly"
   _run cp -r "$src_dir/lib" "$dest_dir/"
   _run cp -r "$src_dir/templates" "$dest_dir/"
+  if [[ -d "$src_dir/data" ]]; then
+    _run cp -r "$src_dir/data" "$dest_dir/"
+  fi
 
   # Symlink into PATH
   _run mkdir -p "$bin_dir"

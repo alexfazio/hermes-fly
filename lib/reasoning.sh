@@ -60,6 +60,11 @@ _reasoning_load_snapshot
 # reasoning_normalize_family MODEL_ID — normalize model ID to family key
 # Args: model_id (e.g., "openai/gpt-5-mini", "anthropic/claude-sonnet-4")
 # Returns: family key to stdout (e.g., "gpt-5", "gpt-5-pro", "unknown")
+#
+# DUAL-UPDATE REQUIREMENT: When adding a new family, update BOTH:
+#   1. The case patterns below (maps model names → family key)
+#   2. data/reasoning-snapshot.json (defines allowed efforts and default)
+# Families handled: gpt-5, gpt-5-pro
 # --------------------------------------------------------------------------
 reasoning_normalize_family() {
   local model_id="$1"
@@ -99,6 +104,9 @@ reasoning_get_allowed_efforts() {
   local family="$1"
 
   # Snapshot-derived lookup
+  # NOTE: The sed parser assumes a flat JSON structure per family (no nested objects).
+  # It terminates at the first '}' after the family key. If the snapshot gains nested
+  # objects, this parser must be updated. See data/reasoning-snapshot.json.
   if [[ -n "${_REASONING_SNAPSHOT_RAW:-}" ]]; then
     local block
     block="$(printf '%s\n' "$_REASONING_SNAPSHOT_RAW" | sed -n "/\"${family}\"/,/}/p")"
@@ -229,35 +237,52 @@ reasoning_prompt_effort() {
     return 0
   fi
 
-  # Multi-option menu
-  printf '\nSelect reasoning effort for %s:\n' "$model_id" >&2
-  local i=1
+  # Multi-option menu with retry (max 3 attempts, consistent with openrouter_manual_fallback)
   local default_idx=1
+  local i=1
   for val in "${options[@]}"; do
-    local marker=""
     if [[ "$val" == "$default_effort" ]]; then
-      marker=" (recommended)"
       default_idx=$i
     fi
-    printf '  %d) %s%s\n' "$i" "$val" "$marker" >&2
     ((i++))
   done
 
-  local choice
-  printf 'Choice [%d]: ' "$default_idx" >&2
-  if ! IFS= read -r choice; then
-    # EOF
-    return 1
-  fi
-  [[ -z "$choice" ]] && choice="$default_idx"
+  local max_attempts=3
+  local attempt=0
+  while [[ "$attempt" -lt "$max_attempts" ]]; do
+    printf '\nSelect reasoning effort for %s:\n' "$model_id" >&2
+    i=1
+    for val in "${options[@]}"; do
+      local marker=""
+      if [[ "$val" == "$default_effort" ]]; then
+        marker=" (recommended)"
+      fi
+      printf '  %d) %s%s\n' "$i" "$val" "$marker" >&2
+      ((i++))
+    done
 
-  # Validate numeric and in range
-  if ! [[ "$choice" =~ ^[0-9]+$ ]] || [[ "$choice" -lt 1 ]] || [[ "$choice" -gt "$num_options" ]]; then
-    printf 'Invalid choice.\n' >&2
-    return 1
-  fi
+    local choice
+    printf 'Choice [%d]: ' "$default_idx" >&2
+    if ! IFS= read -r choice; then
+      # EOF
+      return 1
+    fi
+    [[ -z "$choice" ]] && choice="$default_idx"
 
-  local selected="${options[$((choice - 1))]}"
-  printf '%s' "$selected"
-  return 0
+    # Validate numeric and in range
+    if [[ "$choice" =~ ^[0-9]+$ ]] && [[ "$choice" -ge 1 ]] && [[ "$choice" -le "$num_options" ]]; then
+      local selected="${options[$((choice - 1))]}"
+      printf '%s' "$selected"
+      return 0
+    fi
+
+    ((attempt++))
+    if [[ "$attempt" -lt "$max_attempts" ]]; then
+      printf 'Invalid choice. Please enter a number between 1 and %d.\n' "$num_options" >&2
+    else
+      printf 'Too many invalid attempts.\n' >&2
+    fi
+  done
+
+  return 1
 }
