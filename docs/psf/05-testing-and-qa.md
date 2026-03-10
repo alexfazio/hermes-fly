@@ -11,7 +11,7 @@ Comprehensive coverage of hermes-fly's testing infrastructure:
 | Path | Contents |
 |------|----------|
 | `tests/` | Root test directory with all test files and helpers |
-| `tests/*.bats` | 16 test files (one per module + integration/scaffold/prereqs/install) |
+| `tests/*.bats` | 17 test files (one per module + integration/scaffold/prereqs/install) |
 | `tests/bats/` | BATS framework (vendored, self-contained) |
 | `tests/mocks/` | Mock executables for `fly` CLI and dependencies |
 | `tests/test_helper/` | Shared test utilities and setup functions |
@@ -83,7 +83,7 @@ Each module has a dedicated test file. Tests are isolated and can source the mod
 
 | File | Module tested | Tests | Focus |
 |------|---------------|-------|-------|
-| `ui.bats` | `lib/ui.sh` | 12 | Colors, prompts, spinners, exit codes, logging |
+| `ui.bats` | `lib/ui.sh` | 14 | Colors, prompts, spinners, exit codes, logging |
 | `config.bats` | `lib/config.sh` | 18 | Save/load/remove apps, config YAML parsing, validation |
 | `fly-helpers.bats` | `lib/fly-helpers.sh` | 31 | CLI wrappers, version checks, retry logic |
 | `docker-helpers.bats` | `lib/docker-helpers.sh` | 18 | Template generation, file writes, validation |
@@ -94,6 +94,7 @@ Each module has a dedicated test file. Tests are isolated and can source the mod
 | `destroy.bats` | `lib/destroy.sh` | 11 | Confirmation, volume cleanup, app teardown |
 | `prereqs.bats` | `lib/prereqs.sh` | 76 | Platform detection, tool checks, auto-install flows |
 | `prereqs_edge_cases.bats` | `lib/prereqs.sh` | 57 | Edge cases: sudo, CI/CD bypass, signal handling, fallback chains |
+| `openrouter.bats` | `lib/openrouter.sh` | 27 | Provider extraction, model fetching, menu building, fallback flows |
 | `install.bats` | `scripts/install.sh` | 9 | Installer script validation and behavior |
 
 ### 3.2 Integration Test Files
@@ -121,7 +122,6 @@ tests/mocks/
 ├── brew                 # Mock for Homebrew package manager (prereqs testing)
 ├── curl                 # Mock for curl (prereqs testing)
 ├── fly                  # Default mock: echoes args or returns JSON
-├── fly-fail             # Failure variant: returns non-zero exit codes
 ├── git                  # Mock for git (prereqs testing)
 ├── mock-fail-gracefully # Generic failure mock for graceful error handling
 ├── sudo                 # Mock for sudo (permission escalation testing)
@@ -349,6 +349,7 @@ graph LR
         T_DEST["destroy.bats"] --> M_DEST["lib/destroy.sh"]
         T_PREREQS["prereqs.bats"] --> M_PREREQS["lib/prereqs.sh"]
         T_PREREQS_EDGE["prereqs_edge_cases.bats"] --> M_PREREQS
+        T_OPENROUTER["openrouter.bats"] --> M_OPENROUTER["lib/openrouter.sh"]
     end
     subgraph "Integration Tests (integration.bats)"
         T_INT["integration.bats"] --> ENTRY["hermes-fly entry point"]

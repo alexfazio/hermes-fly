@@ -104,6 +104,7 @@ Each module has a single responsibility:
 | `docker-helpers.sh` | Template I/O — no network, no UI |
 | `messaging.sh` | Messaging platform configuration — UI prompts + validation |
 | `prereqs.sh` | Platform detection, tool auto-install — no network except install commands |
+| `openrouter.sh` | OpenRouter model discovery — provider-first UI, model fetching, caching; depends on ui.sh |
 | `deploy.sh` | Orchestration — combines all other modules |
 | `status.sh`, `logs.sh`, `doctor.sh`, `destroy.sh` | Single-command modules |
 
@@ -114,10 +115,10 @@ Dependencies flow one way: higher-level modules depend on lower-level ones. No c
 ```text
 Level 0 (standalone):  config.sh, docker-helpers.sh
 Level 1 (UI only):     ui.sh (defines constants used by all)
-Level 2 (UI + fly):    fly-helpers.sh → ui.sh
+Level 2 (UI only):     fly-helpers.sh → ui.sh, openrouter.sh → ui.sh
 Level 3 (commands):    status.sh, logs.sh, doctor.sh, destroy.sh → fly-helpers.sh + ui.sh
 Level 4 (messaging):   messaging.sh → ui.sh
-Level 5 (orchestrator): deploy.sh → everything
+Level 5 (orchestrator): deploy.sh → everything (including openrouter.sh)
 ```
 
 ### 3.3 State Management

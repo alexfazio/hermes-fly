@@ -12,7 +12,7 @@ This document covers the infrastructure abstraction layer and all post-deploy ma
 |------|-------|------|
 | `lib/fly-helpers.sh` | ~293 | Fly.io CLI wrappers + retry |
 | `lib/status.sh` | ~91 | Status display + cost estimation |
-| `lib/logs.sh` | ~20 | Log streaming wrapper |
+| `lib/logs.sh` | ~33 | Log streaming wrapper |
 | `lib/doctor.sh` | ~254 | Diagnostic health checks |
 | `lib/destroy.sh` | ~163 | Teardown + cleanup |
 

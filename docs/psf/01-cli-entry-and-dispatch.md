@@ -10,7 +10,7 @@ This document covers the main `hermes-fly` executable — the single entry point
 
 - Shell configuration (`set -euo pipefail`)
 - Symlink resolution to find `lib/` relative to the real script location
-- Sourcing all 12 library modules
+- Sourcing all 13 library modules
 - Help text rendering
 - Command dispatch via `case` statement
 - App name resolution (`-a APP` flag or `current_app` from config)
@@ -25,7 +25,7 @@ This document covers the main `hermes-fly` executable — the single entry point
 
 ```text
 1. set -euo pipefail
-2. HERMES_FLY_VERSION="0.1.11"
+2. HERMES_FLY_VERSION="0.1.14"
 3. Resolve symlinks to find real script location → SCRIPT_DIR
 4. Source lib/ui.sh
 5. Source lib/prereqs.sh
@@ -38,8 +38,9 @@ This document covers the main `hermes-fly` executable — the single entry point
 12. Source lib/doctor.sh
 13. Source lib/destroy.sh
 14. Source lib/list.sh
-15. Source lib/deploy.sh
-16. Call main() with all arguments
+15. Source lib/openrouter.sh
+16. Source lib/deploy.sh
+17. Call main() with all arguments
 ```
 
 Symlink resolution loop (lines 6-12) ensures `hermes-fly` works when invoked via a symlink (e.g., after `ln -s` installation):

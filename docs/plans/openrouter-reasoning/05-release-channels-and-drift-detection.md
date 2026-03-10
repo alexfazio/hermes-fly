@@ -194,9 +194,10 @@ Required controls:
 - User-facing policy should be `stable` default plus opt-in `preview`/`edge`.
 - Minimum smoke-test matrix must include restricted, allowlisted, unknown, non-OpenRouter, and provenance/drift coverage.
 
-## Remaining open question (still unresolved)
+## Resolved: CLI Surface for Channel Selection
 
 1. Exact advanced CLI surface for channel selection and advanced reasoning options: flags, env vars, or both.
+   - **Finding** [HIGH]: Industry best practices (CLI Guidelines, 12-Factor App) recommend using BOTH flags and environment variables for configuration that varies between invocations. The CLI Guidelines specify precedence: flags > shell env vars > project config. Fly.io's flyctl demonstrates this pattern with flags like `--strategy` and env vars like `NO_COLOR`. **Recommendation**: Implement `--channel stable|preview|edge` flag plus `HERMES_FLY_CHANNEL` environment variable, with flags taking precedence over env vars. This enables interactive use (flags) and CI/automation (env vars) while following established patterns from the deployment target platform. ([clig.dev](https://clig.dev/#configuration), [12factor.net](https://12factor.net/config))
 
 ## Acceptance criteria
 
@@ -208,6 +209,9 @@ Required controls:
 ## References
 
 - `openrouter-gpt5-mini-reasoning-triage-20260309.md`
+- [CLI Guidelines - Configuration](https://clig.dev/#configuration)
+- [12-Factor App - Config](https://12factor.net/config)
+- [Fly.io flyctl deploy docs](https://fly.io/docs/flyctl/deploy/)
 - https://docs.docker.com/build/metadata/attestations/slsa-provenance/
 - https://helm.sh/docs/chart_best_practices/dependencies/
 - https://docs.redhat.com/en/documentation/red_hat_enterprise_linux/10/html/building_running_and_managing_containers/introduction-to-reproducible-container-builds

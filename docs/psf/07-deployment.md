@@ -159,8 +159,11 @@ deploy_collect_volume_size()
 deploy_collect_llm_config() → 3-choice provider menu
   ├─ 1: OpenRouter (default)
   │   ├─ Prompt: API key (required)
-  │   ├─ Prompt: Model selection (4 preset + custom option)
-  │   └─ Static fallback models: Claude Sonnet 4, Claude Haiku 4.5, Gemini 2.5 Flash, Llama 4 Maverick
+  │   └─ Model selection: provider-first dynamic picker via openrouter_setup_with_models()
+  │       ├─ Fetches /api/v1/models from OpenRouter API
+  │       ├─ Shows curated provider list (9 providers) + alphabetical "Other" tier
+  │       ├─ Shows top 15 most-recent models per provider with display names
+  │       └─ Falls back to manual model ID entry on API failure
   │
   ├─ 2: Nous Portal
   │   ├─ Prompt: API key (required)
@@ -232,7 +235,7 @@ The collection phase relies on several parsing and lookup helpers:
 | `_deploy_fallback_mem(NAME)` | Static fallback memory (MB) when API unavailable |
 | `_deploy_fallback_price(NAME)` | Static fallback monthly price when API unavailable |
 | `_deploy_lookup_vm(NAME, FIELD)` | Looks up `mem` or `price` from parsed `_VM_*` arrays |
-| `deploy_collect_model(RESULT_VAR)` | Interactive model picker; tries dynamic fetch from OpenRouter API (requires jq), falls back to static list of 4 models |
+| `deploy_collect_model(RESULT_VAR)` | Delegates to `openrouter_setup_with_models()` for provider-first dynamic selection; falls back to manual entry on API failure |
 | `deploy_validate_openrouter_key(KEY)` | Validates key via OpenRouter `/api/v1/key` endpoint; warns on free tier with no usage |
 | `deploy_validate_nous_key(KEY)` | Validates key via Nous API; hard-rejects 401/403, offers bypass on network/server errors |
 | `deploy_write_summary()` | Writes YAML + Markdown deploy summary files to `~/.hermes-fly/deploys/` |
@@ -578,7 +581,7 @@ Deployment state flows through exported globals (ephemeral, scoped to one deploy
 
 ## 12. Testing the Deployment Pipeline
 
-The `tests/deploy.bats` file contains 25+ tests covering:
+The `tests/deploy.bats` file contains 134 tests covering:
 
 - Preflight checks (platform, prerequisites, auth)
 - Configuration collectors (validation, defaults, menus)

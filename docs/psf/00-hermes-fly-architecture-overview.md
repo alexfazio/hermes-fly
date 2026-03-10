@@ -31,6 +31,7 @@ graph TD
     CMD_DEPLOY --> MSG["messaging.sh"]
     CMD_DEPLOY --> CONFIG["config.sh"]
     CMD_DEPLOY --> STATUS_LIB["status.sh<br/>(cost estimation)"]
+    CMD_DEPLOY --> OPENROUTER["openrouter.sh<br/>(model discovery)"]
 
     DOCKER --> TEMPLATES["templates/<br/>Dockerfile.template<br/>fly.toml.template<br/>entrypoint.sh"]
 
@@ -50,13 +51,14 @@ graph TD
 ```text
 hermes-fly/
 ├── hermes-fly                  # Entry point: arg parsing + command dispatch
-├── lib/                        # Core library modules (12 files)
+├── lib/                        # Core library modules (13 files)
 │   ├── ui.sh                   # Colors, prompts, spinners, logging, exit codes
 │   ├── prereqs.sh              # Prerequisite detection + auto-install with fallbacks
 │   ├── config.sh               # App tracking (~/.hermes-fly/config.yaml)
 │   ├── fly-helpers.sh          # Fly.io CLI wrappers + retry logic
 │   ├── docker-helpers.sh       # Template-based Dockerfile/fly.toml generation
-│   ├── messaging.sh            # Telegram/Discord setup wizards
+│   ├── messaging.sh            # Telegram setup wizard
+│   ├── openrouter.sh           # OpenRouter model discovery + provider-first picker
 │   ├── deploy.sh               # Interactive deployment wizard (orchestrator)
 │   ├── status.sh               # Status display + cost estimation
 │   ├── logs.sh                 # Log streaming wrapper
@@ -69,7 +71,7 @@ hermes-fly/
 │   └── entrypoint.sh           # Container startup: symlinks, secrets bridge, gateway
 ├── scripts/
 │   └── install.sh              # curl | bash installer
-├── tests/                      # BATS test suite (16 test files + mocks)
+├── tests/                      # BATS test suite (17 test files + mocks)
 │   ├── *.bats                  # Test files per module
 │   ├── bats/                   # BATS framework
 │   ├── mocks/                  # Mock executables (apt-get, brew, curl, fly, git, mock-fail-gracefully, sudo, xcode-select)
@@ -107,12 +109,14 @@ graph BT
     DESTROY["destroy.sh"] --> UI
     DESTROY --> FLY
     DESTROY --> CONFIG
+    OPENROUTER["openrouter.sh<br/>(model discovery)"] --> UI
     DEPLOY["deploy.sh<br/>(orchestrator)"] --> UI
     DEPLOY --> FLY
     DEPLOY --> DOCKER
     DEPLOY --> MSG
     DEPLOY --> CONFIG
     DEPLOY --> STATUS
+    DEPLOY --> OPENROUTER
 ```
 
 All modules are sourced by the entry point `hermes-fly` at startup. Dependencies between modules use guard clauses to prevent re-sourcing (checking whether key functions or variables are already defined).
