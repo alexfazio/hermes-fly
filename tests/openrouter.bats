@@ -551,25 +551,28 @@ teardown() {
 
   # Use bash-native timeout pattern for portability (avoids timeout command dependency)
   # Run function in subshell and monitor with a watchdog
-  run bash -c '
+  run bash -c "
+    # Source necessary modules in the subshell
+    source lib/ui.sh
+    source lib/openrouter.sh
+
     # Start the function in background
     openrouter_manual_fallback >/dev/null 2>&1 &
-    local pid=$!
-    local waited=0
+    pid=\$!
 
     # Wait up to 2 seconds for function to complete
     for i in {1..20}; do
-      if ! kill -0 "$pid" 2>/dev/null; then
-        wait "$pid"
+      if ! kill -0 \"\$pid\" 2>/dev/null; then
+        wait \"\$pid\"
         exit 0  # Function completed cleanly
       fi
       sleep 0.1
     done
 
     # If we got here, function is still running (hard loop)
-    kill "$pid" 2>/dev/null
+    kill \"\$pid\" 2>/dev/null
     exit 1  # Function hung
-  '
+  "
 
   # Test passes if function completed (exit 0) or exited quickly with error (exit 1)
   # Test fails only if timeout was needed (would exit non-zero from kill)
