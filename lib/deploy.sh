@@ -37,6 +37,10 @@ if ! declare -f status_estimate_cost >/dev/null 2>&1; then
   # shellcheck source=./status.sh
   source "${_DEPLOY_SCRIPT_DIR}/status.sh" 2>/dev/null || true
 fi
+if ! declare -f openrouter_setup_with_models >/dev/null 2>&1; then
+  # shellcheck source=./openrouter.sh
+  source "${_DEPLOY_SCRIPT_DIR}/openrouter.sh" 2>/dev/null || true
+fi
 
 # ==========================================================================
 # Step 4.1: Preflight Checks
@@ -825,113 +829,34 @@ deploy_collect_llm_config() {
         ui_ask_secret 'OpenRouter API key (required):' api_key
       done
 
-      # Model selection (dynamic or static fallback)
-      deploy_collect_model model
-
+      # Assign API key before model selection (model selection needs it)
       eval "$api_key_var=\"\$api_key\""
+
+      # Model selection (dynamic or static fallback)
+      # Check return code to propagate failures (e.g., EOF in fallback)
+      if ! deploy_collect_model "$api_key" model; then
+        return 1
+      fi
+
       eval "$model_var=\"\$model\""
       ;;
   esac
 }
 
 # --------------------------------------------------------------------------
-# deploy_collect_model RESULT_VAR — pick an OpenRouter model
-# Tries dynamic fetch from API (requires jq); falls back to static list.
+# deploy_collect_model API_KEY RESULT_VAR — pick an OpenRouter model
+# Uses provider-first dynamic selection via openrouter_setup_with_models.
+# Falls back to manual entry if fetch fails.
 # --------------------------------------------------------------------------
 deploy_collect_model() {
-  local result_var="${1:?Usage: deploy_collect_model RESULT_VAR}"
-  local _dcm_selected=""
-  local model_ids=()
-  local model_labels=()
-  local model_notes=()
-  local dynamic=false
+  local api_key="${1:?Usage: deploy_collect_model API_KEY RESULT_VAR}"
+  local result_var="${2:?Usage: deploy_collect_model API_KEY RESULT_VAR}"
 
-  # Try dynamic model list from OpenRouter API (requires jq)
-  if command -v jq >/dev/null 2>&1; then
-    local api_response
-    api_response="$(curl -sf --max-time 10 "https://openrouter.ai/api/v1/models" \
-      2>/dev/null)" || true
+  # Use the new openrouter module for provider-first dynamic selection
+  local selected_model
+  selected_model="$(openrouter_setup_with_models "$api_key")" || return $?
 
-    if [[ -n "$api_response" ]]; then
-      local whitelisted='anthropic|openai|google|meta-llama|mistralai'
-      local filtered
-      filtered="$(printf '%s' "$api_response" | jq -r --arg wl "$whitelisted" \
-        '[.data[] | select(.id | test($wl)) | {id, name}] | sort_by(.id)' 2>/dev/null)" || true
-
-      if [[ -n "$filtered" ]] && [[ "$filtered" != "[]" ]] && [[ "$filtered" != "null" ]]; then
-        local count
-        count="$(printf '%s' "$filtered" | jq 'length')"
-        if [[ "$count" -gt 0 ]] 2>/dev/null; then
-          dynamic=true
-          local i
-          for ((i = 0; i < count; i++)); do
-            local mid mname provider
-            mid="$(printf '%s' "$filtered" | jq -r ".[$i].id")"
-            mname="$(printf '%s' "$filtered" | jq -r ".[$i].name")"
-            provider="$(printf '%s' "$mid" | cut -d/ -f1)"
-            model_ids+=("$mid")
-            model_labels+=("$mname")
-            model_notes+=("$provider")
-          done
-        fi
-      fi
-    fi
-  fi
-
-  # Fall back to static list
-  if [[ "$dynamic" == "false" ]]; then
-    model_ids=(
-      "anthropic/claude-sonnet-4"
-      "anthropic/claude-haiku-4.5"
-      "google/gemini-2.5-flash"
-      "meta-llama/llama-4-maverick"
-    )
-    model_labels=(
-      "Claude Sonnet 4"
-      "Claude Haiku 4.5"
-      "Gemini 2.5 Flash"
-      "Llama 4 Maverick"
-    )
-    model_notes=(
-      "balanced, recommended"
-      "fast & affordable"
-      "fast alternative"
-      "open source"
-    )
-  fi
-
-  local num_models=${#model_ids[@]}
-  local other_num=$((num_models + 1))
-
-  printf '\nSelect model:\n' >&2
-  printf '  ┌───┬────────────────────────────────┬─────────────────────┐\n' >&2
-  printf '  │ # │ Model                          │ Notes               │\n' >&2
-  printf '  ├───┼────────────────────────────────┼─────────────────────┤\n' >&2
-  local mi
-  for mi in "${!model_labels[@]}"; do
-    printf '  │ %d │ %-30s │ %-19s │\n' "$((mi + 1))" "${model_labels[$mi]}" "${model_notes[$mi]}" >&2
-  done
-  printf '  │ %d │ %-30s │ %-19s │\n' "$other_num" "Custom model ID" "enter manually" >&2
-  printf '  └───┴────────────────────────────────┴─────────────────────┘\n' >&2
-
-  local model_choice
-  while true; do
-    printf 'Choice [1]: ' >&2
-    IFS= read -r model_choice
-    [[ -z "$model_choice" ]] && model_choice=1
-    if [[ "$model_choice" =~ ^[0-9]+$ ]] && ((model_choice >= 1 && model_choice <= num_models)); then
-      _dcm_selected="${model_ids[$((model_choice - 1))]}"
-      break
-    elif [[ "$model_choice" == "$other_num" ]]; then
-      printf 'Model ID (e.g. anthropic/claude-sonnet-4-20250514): ' >&2
-      IFS= read -r _dcm_selected
-      [[ -z "$_dcm_selected" ]] && _dcm_selected="${model_ids[0]}"
-      break
-    fi
-    printf 'Invalid choice. Please enter a number between 1 and %d.\n' "$other_num" >&2
-  done
-
-  eval "$result_var=\"\$_dcm_selected\""
+  eval "$result_var=\"\$selected_model\""
 }
 
 # --------------------------------------------------------------------------

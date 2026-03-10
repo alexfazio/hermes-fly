@@ -14,10 +14,38 @@ teardown() {
 
 # --- ui_info ---
 
-@test "ui_info prints to stdout" {
-  run ui_info "hello"
+@test "ui_info prints to stderr" {
+  run bash -c 'export NO_COLOR=1; source lib/ui.sh; ui_info "hello" 2>&1'
   assert_success
   assert_output --partial "hello"
+  # Verify it goes to stderr, not stdout: run with stderr redirected away
+  run bash -c 'export NO_COLOR=1; source lib/ui.sh; ui_info "hello" 2>/dev/null'
+  assert_success
+  assert_output ""
+}
+
+# --- ui_success ---
+
+@test "ui_success prints to stderr" {
+  run bash -c 'export NO_COLOR=1; source lib/ui.sh; ui_success "done" 2>&1'
+  assert_success
+  assert_output --partial "done"
+  # Verify it goes to stderr, not stdout: run with stderr redirected away
+  run bash -c 'export NO_COLOR=1; source lib/ui.sh; ui_success "done" 2>/dev/null'
+  assert_success
+  assert_output ""
+}
+
+# --- ui_warn ---
+
+@test "ui_warn prints to stderr" {
+  run bash -c 'export NO_COLOR=1; source lib/ui.sh; ui_warn "caution" 2>&1'
+  assert_success
+  assert_output --partial "caution"
+  # Verify it goes to stderr, not stdout: run with stderr redirected away
+  run bash -c 'export NO_COLOR=1; source lib/ui.sh; ui_warn "caution" 2>/dev/null'
+  assert_success
+  assert_output ""
 }
 
 # --- ui_error ---

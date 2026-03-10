@@ -35,27 +35,27 @@ _ui_colorize() {
 ui_info() {
   local msg="$1"
   if ui_color_enabled; then
-    printf '\033[34m[info] %s\033[0m\n' "$msg"
+    printf '\033[34m[info] %s\033[0m\n' "$msg" >&2
   else
-    printf '[info] %s\n' "$msg"
+    printf '[info] %s\n' "$msg" >&2
   fi
 }
 
 ui_success() {
   local msg="$1"
   if ui_color_enabled; then
-    printf '\033[32m✓ %s\033[0m\n' "$msg"
+    printf '\033[32m✓ %s\033[0m\n' "$msg" >&2
   else
-    printf '✓ %s\n' "$msg"
+    printf '✓ %s\n' "$msg" >&2
   fi
 }
 
 ui_warn() {
   local msg="$1"
   if ui_color_enabled; then
-    printf '\033[33m[warn] %s\033[0m\n' "$msg"
+    printf '\033[33m[warn] %s\033[0m\n' "$msg" >&2
   else
-    printf '[warn] %s\n' "$msg"
+    printf '[warn] %s\n' "$msg" >&2
   fi
 }
 
@@ -189,13 +189,13 @@ ui_spinner_stop() {
     if ui_color_enabled && [[ -t 2 ]]; then
       printf '\r\033[K  \033[32m✓\033[0m %s\n' "$msg" >&2
     else
-      printf '✓ %s\n' "$msg"
+      printf '✓ %s\n' "$msg" >&2
     fi
   else
     if ui_color_enabled && [[ -t 2 ]]; then
       printf '\r\033[K  \033[31m✗\033[0m %s\n' "$msg" >&2
     else
-      printf '✗ %s\n' "$msg"
+      printf '✗ %s\n' "$msg" >&2
     fi
   fi
 }
