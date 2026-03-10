@@ -486,14 +486,16 @@ EOF
   refute_output --partial "none"
 }
 
-@test "reasoning_prompt_effort: retries on invalid input up to 3 times then fails" {
+@test "reasoning_prompt_effort: retries on invalid input up to REASONING_MAX_PROMPT_ATTEMPTS then fails with exit 2" {
+  # Feed exactly REASONING_MAX_PROMPT_ATTEMPTS (3) invalid inputs to exhaust retries.
+  # Count must match REASONING_MAX_PROMPT_ATTEMPTS in lib/reasoning.sh.
   run bash -c '
     export NO_COLOR=1
     source lib/ui.sh
     source lib/reasoning.sh
     reasoning_prompt_effort "openai/gpt-5" < <(printf "99\nabc\n0\n") 2>&1
   '
-  assert_failure
+  [[ "$status" -eq 2 ]]
   assert_output --partial "Invalid choice"
   assert_output --partial "Too many invalid attempts"
 }
@@ -510,14 +512,14 @@ EOF
   assert_output "low"
 }
 
-@test "reasoning_prompt_effort: EOF returns failure" {
+@test "reasoning_prompt_effort: EOF returns exit code 1 (not 2)" {
   run bash -c '
     export NO_COLOR=1
     source lib/ui.sh
     source lib/reasoning.sh
     reasoning_prompt_effort "openai/gpt-5" < /dev/null
   '
-  assert_failure
+  [[ "$status" -eq 1 ]]
 }
 
 # ==========================================================================
@@ -526,6 +528,131 @@ EOF
 
 @test "REASONING_SNAPSHOT_VERSION is set" {
   [[ -n "$REASONING_SNAPSHOT_VERSION" ]]
+}
+
+@test "REASONING_MAX_PROMPT_ATTEMPTS is set to 3" {
+  [[ "$REASONING_MAX_PROMPT_ATTEMPTS" -eq 3 ]]
+}
+
+# ==========================================================================
+# Snapshot validation (_reasoning_load_snapshot)
+# ==========================================================================
+
+@test "snapshot validation: missing schema_version disables snapshot" {
+  run bash -c '
+    export NO_COLOR=1
+    source lib/ui.sh
+    source lib/reasoning.sh
+    tmpf="$(mktemp)"
+    echo "{\"policy_version\":\"1.0.0\",\"families\":{}}" > "$tmpf"
+    _REASONING_SNAPSHOT_FILE="$tmpf"
+    _reasoning_load_snapshot
+    echo "RAW=${_REASONING_SNAPSHOT_RAW:-empty}"
+  ' 2>&1
+  assert_success
+  assert_output --partial "missing schema_version"
+  assert_output --partial "RAW=empty"
+}
+
+@test "snapshot validation: missing policy_version disables snapshot" {
+  run bash -c '
+    export NO_COLOR=1
+    source lib/ui.sh
+    source lib/reasoning.sh
+    tmpf="$(mktemp)"
+    echo "{\"schema_version\":\"1\",\"families\":{}}" > "$tmpf"
+    _REASONING_SNAPSHOT_FILE="$tmpf"
+    _reasoning_load_snapshot
+    echo "RAW=${_REASONING_SNAPSHOT_RAW:-empty}"
+  ' 2>&1
+  assert_success
+  assert_output --partial "missing policy_version"
+  assert_output --partial "RAW=empty"
+}
+
+@test "snapshot validation: missing families key disables snapshot" {
+  run bash -c '
+    export NO_COLOR=1
+    source lib/ui.sh
+    source lib/reasoning.sh
+    tmpf="$(mktemp)"
+    echo "{\"schema_version\":\"1\",\"policy_version\":\"1.0.0\"}" > "$tmpf"
+    _REASONING_SNAPSHOT_FILE="$tmpf"
+    _reasoning_load_snapshot
+    echo "RAW=${_REASONING_SNAPSHOT_RAW:-empty}"
+  ' 2>&1
+  assert_success
+  assert_output --partial "missing families"
+  assert_output --partial "RAW=empty"
+}
+
+@test "snapshot validation: family missing allowed_efforts disables snapshot" {
+  run bash -c '
+    export NO_COLOR=1
+    source lib/ui.sh
+    source lib/reasoning.sh
+    tmpf="$(mktemp)"
+    cat > "$tmpf" <<JSON
+{
+  "schema_version": "1",
+  "policy_version": "1.0.0",
+  "families": {
+    "gpt-5": {
+      "default": "medium"
+    }
+  }
+}
+JSON
+    _REASONING_SNAPSHOT_FILE="$tmpf"
+    _reasoning_load_snapshot
+    echo "RAW=${_REASONING_SNAPSHOT_RAW:-empty}"
+  ' 2>&1
+  assert_success
+  assert_output --partial "missing allowed_efforts"
+  assert_output --partial "RAW=empty"
+}
+
+@test "snapshot validation: family missing default disables snapshot" {
+  run bash -c '
+    export NO_COLOR=1
+    source lib/ui.sh
+    source lib/reasoning.sh
+    tmpf="$(mktemp)"
+    cat > "$tmpf" <<JSON
+{
+  "schema_version": "1",
+  "policy_version": "1.0.0",
+  "families": {
+    "gpt-5": {
+      "allowed_efforts": ["low", "medium", "high"]
+    }
+  }
+}
+JSON
+    _REASONING_SNAPSHOT_FILE="$tmpf"
+    _reasoning_load_snapshot
+    echo "RAW=${_REASONING_SNAPSHOT_RAW:-empty}"
+  ' 2>&1
+  assert_success
+  assert_output --partial "missing default"
+  assert_output --partial "RAW=empty"
+}
+
+@test "snapshot validation: malformed snapshot falls back to conservative defaults" {
+  run bash -c '
+    export NO_COLOR=1
+    source lib/ui.sh
+    source lib/reasoning.sh
+    tmpf="$(mktemp)"
+    echo "not json at all {{" > "$tmpf"
+    _REASONING_SNAPSHOT_FILE="$tmpf"
+    _reasoning_load_snapshot
+    echo "ALLOWED=$(reasoning_get_allowed_efforts "gpt-5")"
+    echo "DEFAULT=$(reasoning_get_default "gpt-5")"
+  ' 2>&1
+  assert_success
+  assert_output --partial "ALLOWED=low|medium|high"
+  assert_output --partial "DEFAULT=medium"
 }
 
 # ==========================================================================

@@ -43,7 +43,54 @@ REASONING_SNAPSHOT_VERSION=""
 _reasoning_load_snapshot() {
   local file="${_REASONING_SNAPSHOT_FILE:-}"
   if [[ -n "$file" ]] && [[ -f "$file" ]]; then
-    _REASONING_SNAPSHOT_RAW="$(cat "$file")"
+    local raw
+    raw="$(cat "$file")"
+
+    # Validate required top-level keys
+    if ! printf '%s\n' "$raw" | grep -q '"schema_version"'; then
+      printf 'Warning: reasoning snapshot missing schema_version, disabling.\n' >&2
+      _REASONING_SNAPSHOT_RAW=""
+      REASONING_SNAPSHOT_VERSION=""
+      return
+    fi
+    if ! printf '%s\n' "$raw" | grep -q '"policy_version"'; then
+      printf 'Warning: reasoning snapshot missing policy_version, disabling.\n' >&2
+      _REASONING_SNAPSHOT_RAW=""
+      REASONING_SNAPSHOT_VERSION=""
+      return
+    fi
+    if ! printf '%s\n' "$raw" | grep -q '"families"'; then
+      printf 'Warning: reasoning snapshot missing families, disabling.\n' >&2
+      _REASONING_SNAPSHOT_RAW=""
+      REASONING_SNAPSHOT_VERSION=""
+      return
+    fi
+
+    # Validate each family block has required keys and flat structure.
+    # Extract family names, then check each has allowed_efforts and default.
+    local family_names
+    family_names="$(printf '%s\n' "$raw" | grep -oE '"[a-zA-Z0-9_-]+"[[:space:]]*:[[:space:]]*\{' \
+      | grep -v '"families"' | grep -v '"schema_version"' | grep -v '"policy_version"' \
+      | sed 's/[[:space:]]*:.*//' | tr -d '"')"
+    local fname
+    for fname in $family_names; do
+      local block
+      block="$(printf '%s\n' "$raw" | sed -n "/\"${fname}\"/,/}/p")"
+      if ! printf '%s\n' "$block" | grep -q '"allowed_efforts"'; then
+        printf 'Warning: reasoning snapshot family "%s" missing allowed_efforts, disabling.\n' "$fname" >&2
+        _REASONING_SNAPSHOT_RAW=""
+        REASONING_SNAPSHOT_VERSION=""
+        return
+      fi
+      if ! printf '%s\n' "$block" | grep -q '"default"'; then
+        printf 'Warning: reasoning snapshot family "%s" missing default, disabling.\n' "$fname" >&2
+        _REASONING_SNAPSHOT_RAW=""
+        REASONING_SNAPSHOT_VERSION=""
+        return
+      fi
+    done
+
+    _REASONING_SNAPSHOT_RAW="$raw"
     REASONING_SNAPSHOT_VERSION="$(printf '%s\n' "$_REASONING_SNAPSHOT_RAW" \
       | grep '"policy_version"' \
       | sed 's/.*"policy_version"[[:space:]]*:[[:space:]]*"//; s/".*//')"
@@ -202,11 +249,18 @@ reasoning_model_supports_reasoning() {
   return 1
 }
 
+# Maximum retry attempts for interactive reasoning effort prompt.
+# Referenced by tests to avoid hardcoding attempt counts.
+REASONING_MAX_PROMPT_ATTEMPTS=3
+
 # --------------------------------------------------------------------------
 # reasoning_prompt_effort MODEL_ID — interactive reasoning effort selection
 # Shows menu with only valid options for the model's family.
 # Returns: selected effort value to stdout
-# Returns: 0 on success, 1 on failure/cancel
+# Exit codes:
+#   0 — success (valid selection made)
+#   1 — cancel/EOF (user closed input)
+#   2 — retry exhaustion (max invalid attempts exceeded)
 # --------------------------------------------------------------------------
 reasoning_prompt_effort() {
   local model_id="$1"
@@ -237,52 +291,45 @@ reasoning_prompt_effort() {
     return 0
   fi
 
-  # Multi-option menu with retry (max 3 attempts, consistent with openrouter_manual_fallback)
+  # Multi-option menu with retry loop
   local default_idx=1
-  local i=1
-  for val in "${options[@]}"; do
-    if [[ "$val" == "$default_effort" ]]; then
-      default_idx=$i
-    fi
-    ((i++))
-  done
-
-  local max_attempts=3
+  local i marker choice
   local attempt=0
-  while [[ "$attempt" -lt "$max_attempts" ]]; do
+  while [[ "$attempt" -lt "$REASONING_MAX_PROMPT_ATTEMPTS" ]]; do
+    # Render menu (compute default_idx inline during display)
     printf '\nSelect reasoning effort for %s:\n' "$model_id" >&2
     i=1
     for val in "${options[@]}"; do
-      local marker=""
+      marker=""
       if [[ "$val" == "$default_effort" ]]; then
         marker=" (recommended)"
+        default_idx=$i
       fi
       printf '  %d) %s%s\n' "$i" "$val" "$marker" >&2
       ((i++))
     done
 
-    local choice
     printf 'Choice [%d]: ' "$default_idx" >&2
     if ! IFS= read -r choice; then
-      # EOF
+      # EOF — user closed input
       return 1
     fi
     [[ -z "$choice" ]] && choice="$default_idx"
 
     # Validate numeric and in range
     if [[ "$choice" =~ ^[0-9]+$ ]] && [[ "$choice" -ge 1 ]] && [[ "$choice" -le "$num_options" ]]; then
-      local selected="${options[$((choice - 1))]}"
-      printf '%s' "$selected"
+      printf '%s' "${options[$((choice - 1))]}"
       return 0
     fi
 
     ((attempt++))
-    if [[ "$attempt" -lt "$max_attempts" ]]; then
+    if [[ "$attempt" -lt "$REASONING_MAX_PROMPT_ATTEMPTS" ]]; then
       printf 'Invalid choice. Please enter a number between 1 and %d.\n' "$num_options" >&2
     else
       printf 'Too many invalid attempts.\n' >&2
     fi
   done
 
-  return 1
+  # Retry exhaustion — distinct from EOF/cancel (exit code 1)
+  return 2
 }

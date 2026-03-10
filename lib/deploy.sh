@@ -845,18 +845,26 @@ deploy_collect_llm_config() {
       eval "$model_var=\"\$model\""
 
       # Reasoning effort selection (only for reasoning-capable models)
+      # Exit codes from reasoning_prompt_effort:
+      #   0 = valid selection, 1 = EOF/cancel, 2 = retry exhaustion
       if reasoning_model_supports_reasoning "$model"; then
         local effort
-        if effort="$(reasoning_prompt_effort "$model")"; then
+        local prompt_rc=0
+        effort="$(reasoning_prompt_effort "$model")" || prompt_rc=$?
+        if [[ "$prompt_rc" -eq 0 ]]; then
           DEPLOY_REASONING_EFFORT="$effort"
           export DEPLOY_REASONING_EFFORT
-        else
-          # Fallback to default on cancel/EOF/retry exhaustion
+        elif [[ "$prompt_rc" -eq 1 ]]; then
+          # EOF/cancel: fall back to default (user dismissed prompt)
           local family
           family="$(reasoning_normalize_family "$model")"
           DEPLOY_REASONING_EFFORT="$(reasoning_get_default "$family")"
           export DEPLOY_REASONING_EFFORT
-          ui_warn "Using default reasoning effort: ${DEPLOY_REASONING_EFFORT}" >&2
+          ui_warn "Using default reasoning effort: ${DEPLOY_REASONING_EFFORT}"
+        else
+          # Retry exhaustion (exit code 2): abort config collection
+          ui_warn "Reasoning effort selection failed after too many invalid attempts."
+          return 1
         fi
       fi
       ;;
