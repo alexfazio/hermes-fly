@@ -2051,3 +2051,72 @@ teardown() {
   run cat "$secrets_log"
   refute_output --partial "HERMES_COMPAT_POLICY="
 }
+
+# ==========================================================================
+# PR-05: Channel resolution
+# ==========================================================================
+
+@test "deploy_resolve_channel defaults to stable when HERMES_FLY_CHANNEL unset (PR-05)" {
+  unset HERMES_FLY_CHANNEL
+  run deploy_resolve_channel
+  assert_success
+  assert_output "stable"
+}
+
+@test "deploy_resolve_channel returns stable when HERMES_FLY_CHANNEL=stable (PR-05)" {
+  export HERMES_FLY_CHANNEL="stable"
+  run deploy_resolve_channel
+  assert_success
+  assert_output "stable"
+}
+
+@test "deploy_resolve_channel returns preview when HERMES_FLY_CHANNEL=preview (PR-05)" {
+  export HERMES_FLY_CHANNEL="preview"
+  run deploy_resolve_channel
+  assert_success
+  assert_output "preview"
+}
+
+@test "deploy_resolve_channel returns edge when HERMES_FLY_CHANNEL=edge (PR-05)" {
+  export HERMES_FLY_CHANNEL="edge"
+  run deploy_resolve_channel
+  assert_output --partial "edge"
+}
+
+@test "deploy_resolve_channel warns on edge channel (PR-05)" {
+  export HERMES_FLY_CHANNEL="edge"
+  run bash -c 'export NO_COLOR=1; export HERMES_FLY_CHANNEL=edge; export PATH="'"${BATS_TEST_DIRNAME}/mocks:${PATH}"'"; source '"${PROJECT_ROOT}"'/lib/ui.sh; source '"${PROJECT_ROOT}"'/lib/fly-helpers.sh; source '"${PROJECT_ROOT}"'/lib/docker-helpers.sh; source '"${PROJECT_ROOT}"'/lib/messaging.sh; source '"${PROJECT_ROOT}"'/lib/config.sh; source '"${PROJECT_ROOT}"'/lib/status.sh; source '"${PROJECT_ROOT}"'/lib/reasoning.sh; source '"${PROJECT_ROOT}"'/lib/deploy.sh; deploy_resolve_channel 2>&1'
+  assert_output --partial "edge"
+  assert_output --partial "non-reproducible"
+}
+
+@test "deploy_resolve_channel falls back to stable and warns for unknown channel (PR-05)" {
+  export HERMES_FLY_CHANNEL="nightly"
+  run bash -c 'export NO_COLOR=1; export HERMES_FLY_CHANNEL=nightly; export PATH="'"${BATS_TEST_DIRNAME}/mocks:${PATH}"'"; source '"${PROJECT_ROOT}"'/lib/ui.sh; source '"${PROJECT_ROOT}"'/lib/fly-helpers.sh; source '"${PROJECT_ROOT}"'/lib/docker-helpers.sh; source '"${PROJECT_ROOT}"'/lib/messaging.sh; source '"${PROJECT_ROOT}"'/lib/config.sh; source '"${PROJECT_ROOT}"'/lib/status.sh; source '"${PROJECT_ROOT}"'/lib/reasoning.sh; source '"${PROJECT_ROOT}"'/lib/deploy.sh; deploy_resolve_channel 2>&1'
+  # Fallback value must be stable
+  run bash -c 'export NO_COLOR=1; export HERMES_FLY_CHANNEL=nightly; source '"${PROJECT_ROOT}"'/lib/ui.sh; source '"${PROJECT_ROOT}"'/lib/fly-helpers.sh; source '"${PROJECT_ROOT}"'/lib/docker-helpers.sh; source '"${PROJECT_ROOT}"'/lib/messaging.sh; source '"${PROJECT_ROOT}"'/lib/config.sh; source '"${PROJECT_ROOT}"'/lib/status.sh; source '"${PROJECT_ROOT}"'/lib/reasoning.sh; source '"${PROJECT_ROOT}"'/lib/deploy.sh; deploy_resolve_channel 2>/dev/null'
+  assert_output "stable"
+}
+
+@test "deploy_resolve_channel stable channel does not emit warning (PR-05)" {
+  export HERMES_FLY_CHANNEL="stable"
+  run bash -c 'export NO_COLOR=1; export HERMES_FLY_CHANNEL=stable; export PATH="'"${BATS_TEST_DIRNAME}/mocks:${PATH}"'"; source '"${PROJECT_ROOT}"'/lib/ui.sh; source '"${PROJECT_ROOT}"'/lib/fly-helpers.sh; source '"${PROJECT_ROOT}"'/lib/docker-helpers.sh; source '"${PROJECT_ROOT}"'/lib/messaging.sh; source '"${PROJECT_ROOT}"'/lib/config.sh; source '"${PROJECT_ROOT}"'/lib/status.sh; source '"${PROJECT_ROOT}"'/lib/reasoning.sh; source '"${PROJECT_ROOT}"'/lib/deploy.sh; deploy_resolve_channel 2>&1'
+  assert_output "stable"
+  refute_output --partial "non-reproducible"
+  refute_output --partial "Warning"
+  refute_output --partial "warning"
+}
+
+@test "deploy_resolve_channel preview channel does not emit warning (PR-05)" {
+  export HERMES_FLY_CHANNEL="preview"
+  run bash -c 'export NO_COLOR=1; export HERMES_FLY_CHANNEL=preview; export PATH="'"${BATS_TEST_DIRNAME}/mocks:${PATH}"'"; source '"${PROJECT_ROOT}"'/lib/ui.sh; source '"${PROJECT_ROOT}"'/lib/fly-helpers.sh; source '"${PROJECT_ROOT}"'/lib/docker-helpers.sh; source '"${PROJECT_ROOT}"'/lib/messaging.sh; source '"${PROJECT_ROOT}"'/lib/config.sh; source '"${PROJECT_ROOT}"'/lib/status.sh; source '"${PROJECT_ROOT}"'/lib/reasoning.sh; source '"${PROJECT_ROOT}"'/lib/deploy.sh; deploy_resolve_channel 2>&1'
+  assert_output "preview"
+  refute_output --partial "non-reproducible"
+}
+
+@test "deploy_resolve_channel empty HERMES_FLY_CHANNEL defaults to stable (PR-05)" {
+  export HERMES_FLY_CHANNEL=""
+  run deploy_resolve_channel
+  assert_success
+  assert_output "stable"
+}

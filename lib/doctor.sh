@@ -161,6 +161,77 @@ doctor_check_api_connectivity() {
 }
 
 # --------------------------------------------------------------------------
+# doctor_load_deploy_summary "app_name"
+# Read the local deploy summary YAML for app_name from the deploys directory.
+# Returns: file content to stdout, empty string if not found.
+# --------------------------------------------------------------------------
+doctor_load_deploy_summary() {
+  local app_name="$1"
+  local deploys_dir="${HERMES_FLY_CONFIG_DIR:-$HOME/.hermes-fly}/deploys"
+  local summary_file="${deploys_dir}/${app_name}.yaml"
+  if [[ -f "$summary_file" ]]; then
+    cat "$summary_file"
+  else
+    printf ''
+  fi
+  return 0
+}
+
+# --------------------------------------------------------------------------
+# doctor_check_drift "app_name" "secrets_json"
+# Detect deployment provenance drift:
+#   1. Verifies HERMES_AGENT_REF and HERMES_DEPLOY_CHANNEL are present in
+#      Fly secrets (provenance tracking enabled).
+#   2. If local deploy summary exists, validates deploy_channel is a
+#      recognized value (stable, preview, or edge).
+# Returns: 0 if no drift detected, 1 if provenance missing or drift found.
+# --------------------------------------------------------------------------
+doctor_check_drift() {
+  local app_name="$1"
+  local secrets_json="${2:-}"
+
+  # Check 1: provenance secrets must be present in fly secrets list
+  local has_agent_ref=false has_deploy_channel=false
+  if printf '%s' "$secrets_json" | grep -q 'HERMES_AGENT_REF'; then
+    has_agent_ref=true
+  fi
+  if printf '%s' "$secrets_json" | grep -q 'HERMES_DEPLOY_CHANNEL'; then
+    has_deploy_channel=true
+  fi
+
+  if [[ "$has_agent_ref" == "false" ]] || [[ "$has_deploy_channel" == "false" ]]; then
+    printf 'Provenance secrets not found (deploy may predate provenance tracking)\n' >&2
+    return 1
+  fi
+
+  # Check 2: validate channel in local deploy summary
+  local summary
+  summary="$(doctor_load_deploy_summary "$app_name")"
+
+  if [[ -z "$summary" ]]; then
+    # No local summary — provenance secrets are present, cannot check further
+    return 0
+  fi
+
+  local local_channel
+  local_channel="$(printf '%s' "$summary" | grep -E '^deploy_channel:' | sed 's/^deploy_channel:[[:space:]]*//' | head -1)"
+
+  if [[ -n "$local_channel" ]]; then
+    case "$local_channel" in
+      stable | preview | edge)
+        # Recognized channel — no drift
+        ;;
+      *)
+        printf 'Unexpected deploy channel in local summary: %s\n' "$local_channel" >&2
+        return 1
+        ;;
+    esac
+  fi
+
+  return 0
+}
+
+# --------------------------------------------------------------------------
 # cmd_doctor "app_name"
 # Run all checks in order. Track pass/fail count. Print summary.
 # Return 0 if all pass, 1 if any fail.
@@ -240,6 +311,15 @@ cmd_doctor() {
     ((pass_count++))
   else
     doctor_report "api" "fail" "LLM API unreachable at https://openrouter.ai"
+    ((fail_count++))
+  fi
+
+  # Check 8: Drift detection (PR-05)
+  if doctor_check_drift "$app_name" "$secrets_json"; then
+    doctor_report "drift" "pass" "Deploy provenance consistent"
+    ((pass_count++))
+  else
+    doctor_report "drift" "fail" "Deploy drift detected — run 'hermes-fly deploy' to refresh"
     ((fail_count++))
   fi
 

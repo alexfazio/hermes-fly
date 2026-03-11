@@ -75,6 +75,42 @@ deploy_resolve_hermes_ref() {
 }
 
 # ==========================================================================
+# Release channel resolution (PR-05)
+# ==========================================================================
+
+# --------------------------------------------------------------------------
+# deploy_resolve_channel — resolve deployment release channel
+# Reads HERMES_FLY_CHANNEL env var. Valid: stable, preview, edge.
+# Unknown values → warn and fall back to stable.
+# Edge channel → warn about non-reproducibility.
+# Exit codes: 0 always
+# --------------------------------------------------------------------------
+deploy_resolve_channel() {
+  local channel="${HERMES_FLY_CHANNEL:-stable}"
+  # Treat empty string same as unset → default stable
+  if [[ -z "$channel" ]]; then
+    channel="stable"
+  fi
+  case "$channel" in
+    stable)
+      printf '%s' "stable"
+      ;;
+    preview)
+      printf '%s' "preview"
+      ;;
+    edge)
+      ui_warn "Using edge channel: build may track moving upstream refs (non-reproducible)"
+      printf '%s' "edge"
+      ;;
+    *)
+      ui_warn "Unknown channel '${channel}': falling back to 'stable'"
+      printf '%s' "stable"
+      ;;
+  esac
+  return 0
+}
+
+# ==========================================================================
 # Step 4.1: Preflight Checks
 # ==========================================================================
 
@@ -1404,6 +1440,11 @@ deploy_cleanup_on_failure() {
 # Orchestrates preflight, config, build, provision, deploy, verify.
 # --------------------------------------------------------------------------
 cmd_deploy() {
+  # Resolve and export deploy channel early (PR-05)
+  # HERMES_FLY_CHANNEL env var or --channel flag (set by entry point) controls this.
+  DEPLOY_CHANNEL="$(deploy_resolve_channel)"
+  export DEPLOY_CHANNEL
+
   local app_created=false
 
   # Preflight

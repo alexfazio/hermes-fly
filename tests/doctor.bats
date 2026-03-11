@@ -53,10 +53,10 @@ teardown() {
   assert_failure
 }
 
-@test "cmd_doctor runs all 7 checks when app exists" {
+@test "cmd_doctor runs all 8 checks when app exists" {
   run cmd_doctor "test-app"
   assert_success
-  assert_output --partial "7 passed, 0 failed"
+  assert_output --partial "8 passed, 0 failed"
 }
 
 # --- doctor_check_volume_mounted ---
@@ -221,4 +221,118 @@ teardown() {
   local json='{"machines":[{"id":"machine123","state":"stopped","region":"ord"}]}'
   PATH="$nojq_bin" run doctor_check_machine_running "$json"
   assert_failure
+}
+
+# ==========================================================================
+# PR-05: Drift detection
+# ==========================================================================
+
+# --- doctor_load_deploy_summary ---
+
+@test "doctor_load_deploy_summary returns content for existing app (PR-05)" {
+  mkdir -p "${HERMES_FLY_CONFIG_DIR}/deploys"
+  cat > "${HERMES_FLY_CONFIG_DIR}/deploys/test-app.yaml" <<'EOF'
+app_name: test-app
+hermes_agent_ref: abc123def456abc123def456abc123def456abc123
+deploy_channel: stable
+compatibility_policy_version: v1
+EOF
+  run doctor_load_deploy_summary "test-app"
+  assert_success
+  assert_output --partial "hermes_agent_ref"
+  assert_output --partial "deploy_channel"
+}
+
+@test "doctor_load_deploy_summary returns empty for missing app (PR-05)" {
+  run doctor_load_deploy_summary "no-such-app-xyz"
+  assert_success
+  assert_output ""
+}
+
+# --- doctor_check_drift ---
+
+@test "doctor_check_drift returns 0 when provenance secrets present (PR-05)" {
+  local secrets_json='[{"Name":"HERMES_AGENT_REF","Digest":"abc123"},{"Name":"HERMES_DEPLOY_CHANNEL","Digest":"stable_hash"},{"Name":"HERMES_FLY_VERSION","Digest":"ver_hash"}]'
+  run doctor_check_drift "test-app" "$secrets_json"
+  assert_success
+}
+
+@test "doctor_check_drift returns 1 when HERMES_AGENT_REF missing (PR-05)" {
+  local secrets_json='[{"Name":"HERMES_DEPLOY_CHANNEL","Digest":"stable_hash"},{"Name":"HERMES_FLY_VERSION","Digest":"ver_hash"}]'
+  run doctor_check_drift "test-app" "$secrets_json"
+  assert_failure
+}
+
+@test "doctor_check_drift returns 1 when HERMES_DEPLOY_CHANNEL missing (PR-05)" {
+  local secrets_json='[{"Name":"HERMES_AGENT_REF","Digest":"abc123"},{"Name":"HERMES_FLY_VERSION","Digest":"ver_hash"}]'
+  run doctor_check_drift "test-app" "$secrets_json"
+  assert_failure
+}
+
+@test "doctor_check_drift includes informative message when provenance missing (PR-05)" {
+  local secrets_json='[{"Name":"OPENROUTER_API_KEY","Digest":"abc123"}]'
+  run doctor_check_drift "test-app" "$secrets_json" 2>&1
+  assert_failure
+  assert_output --partial "provenance"
+}
+
+@test "doctor_check_drift returns 0 when no local summary exists but provenance present (PR-05)" {
+  # No deploy summary on disk for this app — skip channel/ref drift cleanly
+  local secrets_json='[{"Name":"HERMES_AGENT_REF","Digest":"abc123"},{"Name":"HERMES_DEPLOY_CHANNEL","Digest":"stable_hash"}]'
+  run doctor_check_drift "no-summary-app-xyz" "$secrets_json"
+  assert_success
+}
+
+@test "doctor_check_drift detects unknown channel in local summary (PR-05)" {
+  mkdir -p "${HERMES_FLY_CONFIG_DIR}/deploys"
+  cat > "${HERMES_FLY_CONFIG_DIR}/deploys/drift-channel-app.yaml" <<'EOF'
+app_name: drift-channel-app
+deploy_channel: nightlycanary
+hermes_agent_ref: abc123
+EOF
+  local secrets_json='[{"Name":"HERMES_AGENT_REF","Digest":"abc123"},{"Name":"HERMES_DEPLOY_CHANNEL","Digest":"stable_hash"}]'
+  run doctor_check_drift "drift-channel-app" "$secrets_json" 2>&1
+  assert_failure
+  assert_output --partial "channel"
+}
+
+@test "doctor_check_drift passes for stable channel in local summary (PR-05)" {
+  mkdir -p "${HERMES_FLY_CONFIG_DIR}/deploys"
+  cat > "${HERMES_FLY_CONFIG_DIR}/deploys/stable-app.yaml" <<'EOF'
+app_name: stable-app
+deploy_channel: stable
+hermes_agent_ref: abc123def456
+EOF
+  local secrets_json='[{"Name":"HERMES_AGENT_REF","Digest":"abc123"},{"Name":"HERMES_DEPLOY_CHANNEL","Digest":"stable_hash"}]'
+  run doctor_check_drift "stable-app" "$secrets_json"
+  assert_success
+}
+
+@test "doctor_check_drift passes for preview channel in local summary (PR-05)" {
+  mkdir -p "${HERMES_FLY_CONFIG_DIR}/deploys"
+  cat > "${HERMES_FLY_CONFIG_DIR}/deploys/preview-app.yaml" <<'EOF'
+app_name: preview-app
+deploy_channel: preview
+hermes_agent_ref: abc123def456
+EOF
+  local secrets_json='[{"Name":"HERMES_AGENT_REF","Digest":"abc123"},{"Name":"HERMES_DEPLOY_CHANNEL","Digest":"preview_hash"}]'
+  run doctor_check_drift "preview-app" "$secrets_json"
+  assert_success
+}
+
+@test "doctor_check_drift passes for edge channel in local summary (PR-05)" {
+  mkdir -p "${HERMES_FLY_CONFIG_DIR}/deploys"
+  cat > "${HERMES_FLY_CONFIG_DIR}/deploys/edge-app.yaml" <<'EOF'
+app_name: edge-app
+deploy_channel: edge
+hermes_agent_ref: abc123def456
+EOF
+  local secrets_json='[{"Name":"HERMES_AGENT_REF","Digest":"abc123"},{"Name":"HERMES_DEPLOY_CHANNEL","Digest":"edge_hash"}]'
+  run doctor_check_drift "edge-app" "$secrets_json"
+  assert_success
+}
+
+@test "cmd_doctor includes drift check in output (PR-05)" {
+  run cmd_doctor "test-app"
+  assert_output --partial "drift"
 }
