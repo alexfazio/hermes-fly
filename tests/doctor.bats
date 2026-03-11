@@ -669,3 +669,36 @@ EOF
   assert_output --partial "Unknown compat policy version"
   unset MOCK_FLY_RUNTIME_MANIFEST
 }
+
+@test "doctor_check_drift flags valid-semver but unsupported compat version when both agree (REVIEW_6)" {
+  mkdir -p "${HERMES_FLY_CONFIG_DIR}/deploys"
+  cat > "${HERMES_FLY_CONFIG_DIR}/deploys/badcompat-semver.yaml" <<'EOF'
+app_name: badcompat-semver
+deploy_channel: stable
+hermes_agent_ref: 8eefbef91cd715cfe410bba8c13cfab4eb3040df
+compatibility_policy_version: 9.9.9
+EOF
+  # Both agree on valid-semver but unsupported version — must still be surfaced
+  export MOCK_FLY_RUNTIME_MANIFEST='{"deploy_channel":"stable","hermes_agent_ref":"8eefbef91cd715cfe410bba8c13cfab4eb3040df","compatibility_policy_version":"9.9.9","hermes_fly_version":"0.1.14"}'
+  local secrets_json='[{"Name":"HERMES_AGENT_REF","Digest":"abc123"},{"Name":"HERMES_DEPLOY_CHANNEL","Digest":"chan_hash"}]'
+  run doctor_check_drift "badcompat-semver" "$secrets_json"
+  assert_failure
+  assert_output --partial "Unknown compat policy version: 9.9.9"
+  unset MOCK_FLY_RUNTIME_MANIFEST
+}
+
+@test "doctor_check_drift passes for supported compat version 1.0.0 (REVIEW_6)" {
+  mkdir -p "${HERMES_FLY_CONFIG_DIR}/deploys"
+  cat > "${HERMES_FLY_CONFIG_DIR}/deploys/goodcompat.yaml" <<'EOF'
+app_name: goodcompat
+deploy_channel: stable
+hermes_agent_ref: 8eefbef91cd715cfe410bba8c13cfab4eb3040df
+compatibility_policy_version: 1.0.0
+EOF
+  export MOCK_FLY_RUNTIME_MANIFEST='{"deploy_channel":"stable","hermes_agent_ref":"8eefbef91cd715cfe410bba8c13cfab4eb3040df","compatibility_policy_version":"1.0.0","hermes_fly_version":"0.1.14"}'
+  local secrets_json='[{"Name":"HERMES_AGENT_REF","Digest":"abc123"},{"Name":"HERMES_DEPLOY_CHANNEL","Digest":"chan_hash"}]'
+  run doctor_check_drift "goodcompat" "$secrets_json"
+  assert_success
+  refute_output --partial "Unknown compat policy version"
+  unset MOCK_FLY_RUNTIME_MANIFEST
+}

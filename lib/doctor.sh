@@ -25,6 +25,18 @@ fi
 _DOCTOR_HERMES_AGENT_STABLE_REF="8eefbef91cd715cfe410bba8c13cfab4eb3040df"
 _DOCTOR_HERMES_AGENT_PREVIEW_REF="${_DOCTOR_HERMES_AGENT_STABLE_REF}"
 
+# Resolve supported compatibility policy versions from the bundled snapshot.
+# Returns newline-separated list of supported versions (e.g. "1.0.0").
+# Sources data/reasoning-snapshot.json relative to the lib/ directory.
+_doctor_supported_compat_versions() {
+  local _snapshot="${_DOCTOR_SCRIPT_DIR}/../data/reasoning-snapshot.json"
+  if [[ -f "$_snapshot" ]]; then
+    grep -oE '"policy_version"[[:space:]]*:[[:space:]]*"[^"]*"' "$_snapshot" \
+      | sed 's/.*"policy_version"[[:space:]]*:[[:space:]]*"//;s/"//' \
+      | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$'
+  fi
+}
+
 # --------------------------------------------------------------------------
 # doctor_report "check_name" "pass|fail" "message"
 # Format and print a single check result.
@@ -366,10 +378,15 @@ doctor_check_drift() {
         "${local_compat:-<none>}" "${runtime_compat:-<none>}" >&2
       return 1
     fi
-    # Validate compat policy version is a recognized semver format (X.Y.Z)
+    # Validate compat policy version against supported versions from snapshot.
     if [[ -n "$local_compat" ]]; then
-      if ! printf '%s' "$local_compat" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$'; then
-        printf 'Unknown compat policy version: %s\n' "$local_compat" >&2
+      local _supported
+      _supported="$(_doctor_supported_compat_versions)"
+      if ! printf '%s\n' "$_supported" | grep -qxF "$local_compat"; then
+        local _supported_list
+        _supported_list="$(printf '%s\n' "$_supported" | tr '\n' ',' | sed 's/,$//')"
+        printf 'Unknown compat policy version: %s (supported: %s)\n' \
+          "$local_compat" "${_supported_list:-<none>}" >&2
         return 1
       fi
     fi
