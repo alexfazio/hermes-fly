@@ -216,6 +216,12 @@ case "${1:-}" in
         for _i in $(seq 1 $#); do
             if [[ "${!_i}" == "-C" ]]; then
                 _next=$((_i + 1))
+                # Intercept deploy-manifest.json reads for test control
+                if printf '%s' "${!_next}" | grep -q "deploy-manifest.json" \
+                    && [[ -n "${MOCK_FLY_RUNTIME_MANIFEST:-}" ]]; then
+                    printf '%s' "$MOCK_FLY_RUNTIME_MANIFEST"
+                    exit 0
+                fi
                 eval "${!_next}" 2>/dev/null || true
                 exit 0
             fi

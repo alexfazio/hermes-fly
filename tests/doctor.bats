@@ -34,6 +34,12 @@ teardown() {
 # --- cmd_doctor ---
 
 @test "cmd_doctor with all checks passing exits 0" {
+  mkdir -p "${HERMES_FLY_CONFIG_DIR}/deploys"
+  cat > "${HERMES_FLY_CONFIG_DIR}/deploys/test-app.yaml" <<'EOF'
+app_name: test-app
+deploy_channel: stable
+hermes_agent_ref: 8eefbef91cd715cfe410bba8c13cfab4eb3040df
+EOF
   run cmd_doctor "test-app"
   assert_success
   assert_output --partial "PASS"
@@ -54,6 +60,12 @@ teardown() {
 }
 
 @test "cmd_doctor runs all 8 checks when app exists" {
+  mkdir -p "${HERMES_FLY_CONFIG_DIR}/deploys"
+  cat > "${HERMES_FLY_CONFIG_DIR}/deploys/test-app.yaml" <<'EOF'
+app_name: test-app
+deploy_channel: stable
+hermes_agent_ref: 8eefbef91cd715cfe410bba8c13cfab4eb3040df
+EOF
   run cmd_doctor "test-app"
   assert_success
   assert_output --partial "8 passed, 0 failed"
@@ -251,7 +263,13 @@ EOF
 
 # --- doctor_check_drift ---
 
-@test "doctor_check_drift returns 0 when provenance secrets present (PR-05)" {
+@test "doctor_check_drift returns 0 when provenance secrets and local summary present (PR-05)" {
+  mkdir -p "${HERMES_FLY_CONFIG_DIR}/deploys"
+  cat > "${HERMES_FLY_CONFIG_DIR}/deploys/test-app.yaml" <<'EOF'
+app_name: test-app
+deploy_channel: stable
+hermes_agent_ref: abc123def456abc123def456abc123def456abc1
+EOF
   local secrets_json='[{"Name":"HERMES_AGENT_REF","Digest":"abc123"},{"Name":"HERMES_DEPLOY_CHANNEL","Digest":"stable_hash"},{"Name":"HERMES_FLY_VERSION","Digest":"ver_hash"}]'
   run doctor_check_drift "test-app" "$secrets_json"
   assert_success
@@ -276,11 +294,12 @@ EOF
   assert_output --partial "provenance"
 }
 
-@test "doctor_check_drift returns 0 when no local summary exists but provenance present (PR-05)" {
-  # No deploy summary on disk for this app — skip channel/ref drift cleanly
+@test "doctor_check_drift fails when no local summary exists (REVIEW_3)" {
+  # Absence of local summary is a provenance gap — must fail, not silently pass
   local secrets_json='[{"Name":"HERMES_AGENT_REF","Digest":"abc123"},{"Name":"HERMES_DEPLOY_CHANNEL","Digest":"stable_hash"}]'
   run doctor_check_drift "no-summary-app-xyz" "$secrets_json"
-  assert_success
+  assert_failure
+  assert_output --partial "local deploy summary"
 }
 
 @test "doctor_check_drift detects unknown channel in local summary (PR-05)" {
@@ -369,4 +388,70 @@ EOF
   run doctor_check_drift "no-channel-app" "$secrets_json"
   assert_failure
   assert_output --partial "deploy_channel"
+}
+
+# ==========================================================================
+# REVIEW_3: runtime manifest value comparison
+# ==========================================================================
+
+@test "doctor_check_drift detects channel mismatch between local summary and runtime (REVIEW_3)" {
+  mkdir -p "${HERMES_FLY_CONFIG_DIR}/deploys"
+  cat > "${HERMES_FLY_CONFIG_DIR}/deploys/chan-drift-app.yaml" <<'EOF'
+app_name: chan-drift-app
+deploy_channel: stable
+hermes_agent_ref: abc123def456abc123def456abc123def456abc1
+EOF
+  export MOCK_FLY_RUNTIME_MANIFEST='{"deploy_channel":"preview","hermes_agent_ref":"abc123def456abc123def456abc123def456abc1","hermes_fly_version":"0.1.14"}'
+  local secrets_json='[{"Name":"HERMES_AGENT_REF","Digest":"abc123"},{"Name":"HERMES_DEPLOY_CHANNEL","Digest":"chan_hash"}]'
+  run doctor_check_drift "chan-drift-app" "$secrets_json"
+  assert_failure
+  assert_output --partial "Channel drift"
+  unset MOCK_FLY_RUNTIME_MANIFEST
+}
+
+@test "doctor_check_drift detects ref mismatch between local summary and runtime (REVIEW_3)" {
+  mkdir -p "${HERMES_FLY_CONFIG_DIR}/deploys"
+  cat > "${HERMES_FLY_CONFIG_DIR}/deploys/ref-drift-app.yaml" <<'EOF'
+app_name: ref-drift-app
+deploy_channel: stable
+hermes_agent_ref: abc123def456abc123def456abc123def456abc1
+EOF
+  export MOCK_FLY_RUNTIME_MANIFEST='{"deploy_channel":"stable","hermes_agent_ref":"different000000000000000000000000000000000","hermes_fly_version":"0.1.14"}'
+  local secrets_json='[{"Name":"HERMES_AGENT_REF","Digest":"abc123"},{"Name":"HERMES_DEPLOY_CHANNEL","Digest":"chan_hash"}]'
+  run doctor_check_drift "ref-drift-app" "$secrets_json"
+  assert_failure
+  assert_output --partial "Ref drift"
+  unset MOCK_FLY_RUNTIME_MANIFEST
+}
+
+@test "doctor_check_drift passes when local summary and runtime manifest agree (REVIEW_3)" {
+  mkdir -p "${HERMES_FLY_CONFIG_DIR}/deploys"
+  cat > "${HERMES_FLY_CONFIG_DIR}/deploys/agree-app.yaml" <<'EOF'
+app_name: agree-app
+deploy_channel: stable
+hermes_agent_ref: abc123def456abc123def456abc123def456abc1
+EOF
+  export MOCK_FLY_RUNTIME_MANIFEST='{"deploy_channel":"stable","hermes_agent_ref":"abc123def456abc123def456abc123def456abc1","hermes_fly_version":"0.1.14"}'
+  local secrets_json='[{"Name":"HERMES_AGENT_REF","Digest":"abc123"},{"Name":"HERMES_DEPLOY_CHANNEL","Digest":"chan_hash"}]'
+  run doctor_check_drift "agree-app" "$secrets_json"
+  assert_success
+  unset MOCK_FLY_RUNTIME_MANIFEST
+}
+
+@test "doctor_check_drift passes when runtime manifest unavailable (REVIEW_3)" {
+  # SSH unavailable or container stopped — gracefully skip runtime comparison
+  mkdir -p "${HERMES_FLY_CONFIG_DIR}/deploys"
+  cat > "${HERMES_FLY_CONFIG_DIR}/deploys/noruntime-app.yaml" <<'EOF'
+app_name: noruntime-app
+deploy_channel: stable
+hermes_agent_ref: abc123def456abc123def456abc123def456abc1
+EOF
+  # MOCK_FLY_RUNTIME_MANIFEST not set → SSH returns empty
+  local secrets_json='[{"Name":"HERMES_AGENT_REF","Digest":"abc123"},{"Name":"HERMES_DEPLOY_CHANNEL","Digest":"chan_hash"}]'
+  run doctor_check_drift "noruntime-app" "$secrets_json"
+  assert_success
+}
+
+@test "doctor_read_runtime_manifest function exists in lib/doctor.sh (REVIEW_3)" {
+  declare -f doctor_read_runtime_manifest >/dev/null 2>&1
 }

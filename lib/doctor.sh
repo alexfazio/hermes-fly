@@ -178,12 +178,25 @@ doctor_load_deploy_summary() {
 }
 
 # --------------------------------------------------------------------------
+# doctor_read_runtime_manifest "app_name"
+# Read /root/.hermes/deploy-manifest.json from the running container via SSH.
+# Returns JSON to stdout; empty string if unavailable (SSH down, etc.).
+# --------------------------------------------------------------------------
+doctor_read_runtime_manifest() {
+  local app_name="$1"
+  fly ssh console --app "$app_name" \
+    -C "cat /root/.hermes/deploy-manifest.json 2>/dev/null" 2>/dev/null || true
+}
+
+# --------------------------------------------------------------------------
 # doctor_check_drift "app_name" "secrets_json"
 # Detect deployment provenance drift:
 #   1. Verifies HERMES_AGENT_REF and HERMES_DEPLOY_CHANNEL are present in
 #      Fly secrets (provenance tracking enabled).
-#   2. If local deploy summary exists, validates deploy_channel is a
-#      recognized value (stable, preview, or edge).
+#   2. Local deploy summary must exist — absence is a provenance gap.
+#   3. Validates deploy_channel shape in local summary.
+#   4. If runtime manifest is readable via SSH, compares deploy_channel and
+#      hermes_agent_ref values against the local summary.
 # Returns: 0 if no drift detected, 1 if provenance missing or drift found.
 # --------------------------------------------------------------------------
 doctor_check_drift() {
@@ -206,19 +219,19 @@ doctor_check_drift() {
     return 1
   fi
 
-  # Check 2: validate channel in local deploy summary
+  # Check 2: local deploy summary must exist — absence is a provenance gap.
   local summary
   summary="$(doctor_load_deploy_summary "$app_name")"
 
   if [[ -z "$summary" ]]; then
-    # No local summary — provenance secrets are present, cannot check further
-    return 0
+    printf 'No local deploy summary found: run hermes-fly deploy to establish provenance baseline\n' >&2
+    return 1
   fi
 
+  # Check 3: validate deploy_channel shape in local summary.
   local local_channel
   local_channel="$(printf '%s' "$summary" | grep -E '^deploy_channel:' | sed 's/^deploy_channel:[[:space:]]*//' | head -1)"
 
-  # Missing deploy_channel is itself a provenance gap — fail rather than silently pass.
   if [[ -z "$local_channel" ]]; then
     printf 'Missing deploy_channel in local summary: cannot verify provenance\n' >&2
     return 1
@@ -226,13 +239,52 @@ doctor_check_drift() {
 
   case "$local_channel" in
     stable | preview | edge)
-      # Recognized channel — no drift
+      # Recognized channel — shape is valid
       ;;
     *)
       printf 'Unexpected deploy channel in local summary: %s\n' "$local_channel" >&2
       return 1
       ;;
   esac
+
+  # Check 4: compare local summary values against runtime manifest (if readable).
+  local runtime_manifest
+  runtime_manifest="$(doctor_read_runtime_manifest "$app_name")"
+
+  if [[ -n "$runtime_manifest" ]]; then
+    # Extract deploy_channel from runtime manifest JSON
+    local runtime_channel
+    runtime_channel="$(printf '%s' "$runtime_manifest" \
+      | grep -oE '"deploy_channel"[[:space:]]*:[[:space:]]*"[^"]*"' \
+      | sed 's/.*"deploy_channel"[[:space:]]*:[[:space:]]*"//;s/"//' \
+      | head -1)"
+
+    # Extract hermes_agent_ref from runtime manifest JSON
+    local runtime_ref
+    runtime_ref="$(printf '%s' "$runtime_manifest" \
+      | grep -oE '"hermes_agent_ref"[[:space:]]*:[[:space:]]*"[^"]*"' \
+      | sed 's/.*"hermes_agent_ref"[[:space:]]*:[[:space:]]*"//;s/"//' \
+      | head -1)"
+
+    # Extract local hermes_agent_ref from summary YAML
+    local local_ref
+    local_ref="$(printf '%s' "$summary" | grep -E '^hermes_agent_ref:' \
+      | sed 's/^hermes_agent_ref:[[:space:]]*//' | head -1)"
+
+    # Compare channel values
+    if [[ -n "$runtime_channel" && "$runtime_channel" != "$local_channel" ]]; then
+      printf 'Channel drift: local summary=%s runtime=%s\n' \
+        "$local_channel" "$runtime_channel" >&2
+      return 1
+    fi
+
+    # Compare ref values (only when both are present and non-empty)
+    if [[ -n "$runtime_ref" && -n "$local_ref" && "$runtime_ref" != "$local_ref" ]]; then
+      printf 'Ref drift: local summary=%s runtime=%s\n' \
+        "$local_ref" "$runtime_ref" >&2
+      return 1
+    fi
+  fi
 
   return 0
 }
