@@ -1144,6 +1144,15 @@ deploy_provision_resources() {
     fi
   fi
 
+  # Add provenance metadata so runtime manifest can be written on boot (PR-04)
+  secrets+=("HERMES_FLY_VERSION=${HERMES_FLY_VERSION:-}")
+  secrets+=("HERMES_AGENT_REF=${DEPLOY_HERMES_AGENT_REF:-}")
+  secrets+=("HERMES_DEPLOY_CHANNEL=${DEPLOY_CHANNEL:-stable}")
+  secrets+=("HERMES_LLM_PROVIDER=${DEPLOY_LLM_PROVIDER:-}")
+  if [[ -n "${REASONING_SNAPSHOT_VERSION:-}" ]]; then
+    secrets+=("HERMES_COMPAT_POLICY=${REASONING_SNAPSHOT_VERSION}")
+  fi
+
   local secrets_output
   if ! secrets_output="$(fly_retry 3 fly_set_secrets "$DEPLOY_APP_NAME" "${secrets[@]}" 2>&1)"; then
     ui_error "Failed to set secrets"
@@ -1322,6 +1331,8 @@ EOF
     fi
     cat <<EOF
 hermes_agent_ref: ${DEPLOY_HERMES_AGENT_REF:-unknown}
+deploy_channel: ${DEPLOY_CHANNEL:-stable}
+compatibility_policy_version: ${REASONING_SNAPSHOT_VERSION:-}
 deployed_at: ${ts}
 hermes_fly_version: ${HERMES_FLY_VERSION:-}
 management:
@@ -1345,6 +1356,7 @@ Deployed: ${ts}
 - **Volume:** ${DEPLOY_VOLUME_SIZE:-} GB
 - **Model:** ${DEPLOY_MODEL:-}
 - **Hermes ref:** ${DEPLOY_HERMES_AGENT_REF:-unknown}
+- **Channel:** ${DEPLOY_CHANNEL:-stable}
 EOF
     if [[ -n "${DEPLOY_REASONING_EFFORT:-}" ]]; then
       printf -- '- **Reasoning effort:** %s\n' "${DEPLOY_REASONING_EFFORT}"

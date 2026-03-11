@@ -1615,10 +1615,12 @@ teardown() {
 # --- AC-07: Default flow does not patch config.yaml ---
 
 @test "entrypoint.sh does not sed-patch reasoning_effort in config.yaml (AC-07)" {
-  run cat "${PROJECT_ROOT}/templates/entrypoint.sh"
-  assert_success
-  # Ensure no sed command targets reasoning_effort in config.yaml
-  refute_output --partial "reasoning_effort"
+  # Ensure no sed command targets reasoning_effort in config.yaml.
+  # Uses grep for the forbidden pattern rather than cat+refute to stay precise:
+  # legitimate uses of "reasoning_effort" as a JSON manifest key must not be blocked.
+  run grep -E "sed.*reasoning_effort|reasoning_effort.*config\.yaml" \
+    "${PROJECT_ROOT}/templates/entrypoint.sh"
+  assert_failure
 }
 
 # --- AC-09: Non-OpenRouter regression guard ---
@@ -1867,4 +1869,185 @@ teardown() {
   # L3: regression guard — pinned constant must never revert to moving branch
   [[ "$HERMES_AGENT_DEFAULT_REF" =~ ^[0-9a-f]{40}$ ]]
   [[ "$HERMES_AGENT_DEFAULT_REF" != "main" ]]
+}
+
+# --- PR-04: Deployment provenance capture ---
+
+@test "deploy_write_summary YAML includes deploy_channel field (PR-04)" {
+  export DEPLOY_APP_NAME="pr04-test" DEPLOY_REGION="iad" DEPLOY_VM_SIZE="shared-cpu-2x"
+  export DEPLOY_VOLUME_SIZE="5" DEPLOY_MODEL="openai/gpt-5-mini"
+  export DEPLOY_LLM_PROVIDER="openrouter" HERMES_FLY_VERSION="0.1.14"
+  export DEPLOY_CHANNEL="stable"
+
+  deploy_write_summary
+
+  run cat "${HERMES_FLY_CONFIG_DIR}/deploys/pr04-test.yaml"
+  assert_success
+  assert_output --partial "deploy_channel: stable"
+}
+
+@test "deploy_write_summary YAML defaults deploy_channel to stable when DEPLOY_CHANNEL unset (PR-04)" {
+  export DEPLOY_APP_NAME="pr04-default" DEPLOY_REGION="iad" DEPLOY_VM_SIZE="shared-cpu-2x"
+  export DEPLOY_VOLUME_SIZE="5" DEPLOY_MODEL="openai/gpt-5-mini"
+  export DEPLOY_LLM_PROVIDER="openrouter" HERMES_FLY_VERSION="0.1.14"
+  unset DEPLOY_CHANNEL
+
+  deploy_write_summary
+
+  run cat "${HERMES_FLY_CONFIG_DIR}/deploys/pr04-default.yaml"
+  assert_success
+  assert_output --partial "deploy_channel: stable"
+}
+
+@test "deploy_write_summary YAML uses DEPLOY_CHANNEL when explicitly set to preview (PR-04)" {
+  export DEPLOY_APP_NAME="pr04-channel" DEPLOY_REGION="iad" DEPLOY_VM_SIZE="shared-cpu-2x"
+  export DEPLOY_VOLUME_SIZE="5" DEPLOY_MODEL="openai/gpt-5-mini"
+  export DEPLOY_LLM_PROVIDER="openrouter" HERMES_FLY_VERSION="0.1.14"
+  export DEPLOY_CHANNEL="preview"
+
+  deploy_write_summary
+
+  run cat "${HERMES_FLY_CONFIG_DIR}/deploys/pr04-channel.yaml"
+  assert_success
+  assert_output --partial "deploy_channel: preview"
+}
+
+@test "deploy_write_summary YAML includes compatibility_policy_version field (PR-04)" {
+  export DEPLOY_APP_NAME="pr04-compat" DEPLOY_REGION="iad" DEPLOY_VM_SIZE="shared-cpu-2x"
+  export DEPLOY_VOLUME_SIZE="5" DEPLOY_MODEL="openai/gpt-5-mini"
+  export DEPLOY_LLM_PROVIDER="openrouter" HERMES_FLY_VERSION="0.1.14"
+  export REASONING_SNAPSHOT_VERSION="1.0"
+
+  deploy_write_summary
+
+  run cat "${HERMES_FLY_CONFIG_DIR}/deploys/pr04-compat.yaml"
+  assert_success
+  assert_output --partial "compatibility_policy_version: 1.0"
+}
+
+@test "deploy_write_summary Markdown includes deploy_channel field (PR-04)" {
+  export DEPLOY_APP_NAME="pr04-md" DEPLOY_REGION="iad" DEPLOY_VM_SIZE="shared-cpu-2x"
+  export DEPLOY_VOLUME_SIZE="5" DEPLOY_MODEL="openai/gpt-5-mini"
+  export DEPLOY_LLM_PROVIDER="openrouter" HERMES_FLY_VERSION="0.1.14"
+  export DEPLOY_CHANNEL="stable"
+
+  deploy_write_summary
+
+  run cat "${HERMES_FLY_CONFIG_DIR}/deploys/pr04-md.md"
+  assert_success
+  assert_output --partial "stable"
+}
+
+@test "deploy_provision_resources secrets payload contains all provenance keys (REVIEW_1)" {
+  # Behavior test: execute deploy_provision_resources and inspect actual secrets passed
+  export DEPLOY_APP_NAME="test-r1-app"
+  export DEPLOY_REGION="ord"
+  export DEPLOY_VOLUME_SIZE="5"
+  export DEPLOY_API_KEY="sk-test-key"
+  export DEPLOY_MODEL="openai/gpt-5-mini"
+  export DEPLOY_REASONING_EFFORT="medium"
+  export DEPLOY_LLM_PROVIDER="openrouter"
+  export HERMES_FLY_VERSION="0.1.14"
+  export DEPLOY_HERMES_AGENT_REF="abc123def456abc123"
+  export DEPLOY_CHANNEL="stable"
+
+  local secrets_log="${TEST_TEMP_DIR}/secrets_log_r1_all"
+  fly_set_secrets() {
+    local app="$1"; shift
+    for arg in "$@"; do
+      printf '%s\n' "$arg" >>"${HERMES_SECRETS_LOG}"
+    done
+    return 0
+  }
+  export -f fly_set_secrets
+  export HERMES_SECRETS_LOG="$secrets_log"
+
+  run deploy_provision_resources
+  assert_success
+  run cat "$secrets_log"
+  assert_output --partial "HERMES_FLY_VERSION=0.1.14"
+  assert_output --partial "HERMES_AGENT_REF=abc123def456abc123"
+  assert_output --partial "HERMES_DEPLOY_CHANNEL=stable"
+  assert_output --partial "HERMES_LLM_PROVIDER=openrouter"
+}
+
+@test "deploy_provision_resources HERMES_DEPLOY_CHANNEL defaults to stable when DEPLOY_CHANNEL unset (REVIEW_1)" {
+  export DEPLOY_APP_NAME="test-r1-channel"
+  export DEPLOY_REGION="ord"
+  export DEPLOY_VOLUME_SIZE="5"
+  export DEPLOY_API_KEY="sk-test-key"
+  export DEPLOY_MODEL="openai/gpt-5-mini"
+  export DEPLOY_REASONING_EFFORT="medium"
+  export DEPLOY_LLM_PROVIDER="openrouter"
+  unset DEPLOY_CHANNEL
+
+  local secrets_log="${TEST_TEMP_DIR}/secrets_log_r1_channel"
+  fly_set_secrets() {
+    local app="$1"; shift
+    for arg in "$@"; do
+      printf '%s\n' "$arg" >>"${HERMES_SECRETS_LOG}"
+    done
+    return 0
+  }
+  export -f fly_set_secrets
+  export HERMES_SECRETS_LOG="$secrets_log"
+
+  run deploy_provision_resources
+  assert_success
+  run cat "$secrets_log"
+  assert_output --partial "HERMES_DEPLOY_CHANNEL=stable"
+}
+
+@test "deploy_provision_resources includes HERMES_COMPAT_POLICY when REASONING_SNAPSHOT_VERSION set (REVIEW_1)" {
+  export DEPLOY_APP_NAME="test-r1-compat"
+  export DEPLOY_REGION="ord"
+  export DEPLOY_VOLUME_SIZE="5"
+  export DEPLOY_API_KEY="sk-test-key"
+  export DEPLOY_MODEL="openai/gpt-5-mini"
+  export DEPLOY_REASONING_EFFORT="medium"
+  export DEPLOY_LLM_PROVIDER="openrouter"
+  export REASONING_SNAPSHOT_VERSION="2025-01"
+
+  local secrets_log="${TEST_TEMP_DIR}/secrets_log_r1_compat"
+  fly_set_secrets() {
+    local app="$1"; shift
+    for arg in "$@"; do
+      printf '%s\n' "$arg" >>"${HERMES_SECRETS_LOG}"
+    done
+    return 0
+  }
+  export -f fly_set_secrets
+  export HERMES_SECRETS_LOG="$secrets_log"
+
+  run deploy_provision_resources
+  assert_success
+  run cat "$secrets_log"
+  assert_output --partial "HERMES_COMPAT_POLICY=2025-01"
+}
+
+@test "deploy_provision_resources omits HERMES_COMPAT_POLICY when REASONING_SNAPSHOT_VERSION unset (REVIEW_1)" {
+  export DEPLOY_APP_NAME="test-r1-nocompat"
+  export DEPLOY_REGION="ord"
+  export DEPLOY_VOLUME_SIZE="5"
+  export DEPLOY_API_KEY="sk-test-key"
+  export DEPLOY_MODEL="openai/gpt-5-mini"
+  export DEPLOY_REASONING_EFFORT="medium"
+  export DEPLOY_LLM_PROVIDER="openrouter"
+  unset REASONING_SNAPSHOT_VERSION
+
+  local secrets_log="${TEST_TEMP_DIR}/secrets_log_r1_nocompat"
+  fly_set_secrets() {
+    local app="$1"; shift
+    for arg in "$@"; do
+      printf '%s\n' "$arg" >>"${HERMES_SECRETS_LOG}"
+    done
+    return 0
+  }
+  export -f fly_set_secrets
+  export HERMES_SECRETS_LOG="$secrets_log"
+
+  run deploy_provision_resources
+  assert_success
+  run cat "$secrets_log"
+  refute_output --partial "HERMES_COMPAT_POLICY="
 }
