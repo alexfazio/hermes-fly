@@ -702,3 +702,80 @@ EOF
   refute_output --partial "Unknown compat policy version"
   unset MOCK_FLY_RUNTIME_MANIFEST
 }
+
+# REVIEW_7: Finding 1 — snapshot robustness (_doctor_supported_compat_versions non-fatal)
+#           Finding 2 — tri-state drift semantics (unverified vs consistent vs fail)
+
+@test "doctor_check_drift fails with explicit message when snapshot file is missing (REVIEW_7)" {
+  local _tmplib
+  _tmplib="$(mktemp -d)/lib"
+  mkdir -p "$_tmplib"
+  local _saved_dir="$_DOCTOR_SCRIPT_DIR"
+  _DOCTOR_SCRIPT_DIR="$_tmplib"  # no data/ sibling → snapshot missing
+  mkdir -p "${HERMES_FLY_CONFIG_DIR}/deploys"
+  cat > "${HERMES_FLY_CONFIG_DIR}/deploys/snapmissing.yaml" <<'EOF'
+app_name: snapmissing
+deploy_channel: stable
+hermes_agent_ref: 8eefbef91cd715cfe410bba8c13cfab4eb3040df
+compatibility_policy_version: 1.0.0
+EOF
+  export MOCK_FLY_RUNTIME_MANIFEST='{"deploy_channel":"stable","hermes_agent_ref":"8eefbef91cd715cfe410bba8c13cfab4eb3040df","compatibility_policy_version":"1.0.0","hermes_fly_version":"0.1.14"}'
+  local secrets_json='[{"Name":"HERMES_AGENT_REF","Digest":"abc123"},{"Name":"HERMES_DEPLOY_CHANNEL","Digest":"chan_hash"}]'
+  run doctor_check_drift "snapmissing" "$secrets_json"
+  _DOCTOR_SCRIPT_DIR="$_saved_dir"
+  unset MOCK_FLY_RUNTIME_MANIFEST
+  assert_failure
+  assert_output --partial "supported versions unavailable"
+}
+
+@test "doctor_check_drift fails with explicit message when snapshot has no valid policy_version (REVIEW_7)" {
+  local _tmplib
+  _tmplib="$(mktemp -d)"
+  mkdir -p "${_tmplib}/lib" "${_tmplib}/data"
+  printf '{"schema_version":"1","policy_version":"not-a-version"}\n' \
+    > "${_tmplib}/data/reasoning-snapshot.json"
+  local _saved_dir="$_DOCTOR_SCRIPT_DIR"
+  _DOCTOR_SCRIPT_DIR="${_tmplib}/lib"
+  mkdir -p "${HERMES_FLY_CONFIG_DIR}/deploys"
+  cat > "${HERMES_FLY_CONFIG_DIR}/deploys/snapmalformed.yaml" <<'EOF'
+app_name: snapmalformed
+deploy_channel: stable
+hermes_agent_ref: 8eefbef91cd715cfe410bba8c13cfab4eb3040df
+compatibility_policy_version: 1.0.0
+EOF
+  export MOCK_FLY_RUNTIME_MANIFEST='{"deploy_channel":"stable","hermes_agent_ref":"8eefbef91cd715cfe410bba8c13cfab4eb3040df","compatibility_policy_version":"1.0.0","hermes_fly_version":"0.1.14"}'
+  local secrets_json='[{"Name":"HERMES_AGENT_REF","Digest":"abc123"},{"Name":"HERMES_DEPLOY_CHANNEL","Digest":"chan_hash"}]'
+  run doctor_check_drift "snapmalformed" "$secrets_json"
+  _DOCTOR_SCRIPT_DIR="$_saved_dir"
+  unset MOCK_FLY_RUNTIME_MANIFEST
+  assert_failure
+  assert_output --partial "supported versions unavailable"
+}
+
+@test "cmd_doctor reports unverified provenance for preview channel with no runtime manifest (REVIEW_7)" {
+  mkdir -p "${HERMES_FLY_CONFIG_DIR}/deploys"
+  cat > "${HERMES_FLY_CONFIG_DIR}/deploys/preview-unver.yaml" <<'EOF'
+app_name: preview-unver
+deploy_channel: preview
+hermes_agent_ref: 8eefbef91cd715cfe410bba8c13cfab4eb3040df
+EOF
+  # No MOCK_FLY_RUNTIME_MANIFEST → SSH returns empty → preview warns+passes
+  run cmd_doctor "preview-unver"
+  assert_success
+  assert_output --partial "unverified"
+  refute_output --partial "provenance consistent"
+}
+
+@test "cmd_doctor reports unverified provenance for edge channel with no runtime manifest (REVIEW_7)" {
+  mkdir -p "${HERMES_FLY_CONFIG_DIR}/deploys"
+  cat > "${HERMES_FLY_CONFIG_DIR}/deploys/edge-unver.yaml" <<'EOF'
+app_name: edge-unver
+deploy_channel: edge
+hermes_agent_ref: main
+EOF
+  # No MOCK_FLY_RUNTIME_MANIFEST → SSH returns empty → edge warns+passes
+  run cmd_doctor "edge-unver"
+  assert_success
+  assert_output --partial "unverified"
+  refute_output --partial "provenance consistent"
+}
