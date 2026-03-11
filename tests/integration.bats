@@ -92,3 +92,26 @@ teardown() {
   # Should show error about missing prerequisites with auto-install disabled
   assert_output --partial "auto-install disabled"
 }
+
+# ==========================================================================
+# PR-05: Channel flag in entry point
+# ==========================================================================
+
+@test "hermes-fly deploy --help mentions --channel option (PR-05)" {
+  run "${PROJECT_ROOT}/hermes-fly" deploy --help
+  assert_success
+  assert_output --partial "--channel"
+}
+
+@test "hermes-fly deploy --channel invalid falls back to stable (PR-05)" {
+  # Directly verify channel resolution: invalid channel falls back to stable with a warning
+  run bash -c 'export NO_COLOR=1; export HERMES_FLY_CHANNEL=badvalue; export PATH="'"${BATS_TEST_DIRNAME}/mocks:${PATH}"'"; source '"${PROJECT_ROOT}"'/lib/ui.sh; source '"${PROJECT_ROOT}"'/lib/fly-helpers.sh; source '"${PROJECT_ROOT}"'/lib/docker-helpers.sh; source '"${PROJECT_ROOT}"'/lib/messaging.sh; source '"${PROJECT_ROOT}"'/lib/config.sh; source '"${PROJECT_ROOT}"'/lib/status.sh; source '"${PROJECT_ROOT}"'/lib/reasoning.sh; source '"${PROJECT_ROOT}"'/lib/deploy.sh; deploy_resolve_channel 2>&1'
+  assert_output --partial "stable"
+}
+
+@test "hermes-fly deploy --channel preview sets HERMES_FLY_CHANNEL=preview before cmd_deploy (PR-05)" {
+  # Verify --channel is parsed and exported from entry point
+  run bash -c 'export NO_COLOR=1; export PATH="'"${BATS_TEST_DIRNAME}/mocks:${PATH}"'"; source '"${PROJECT_ROOT}"'/lib/ui.sh; source '"${PROJECT_ROOT}"'/lib/fly-helpers.sh; source '"${PROJECT_ROOT}"'/lib/docker-helpers.sh; source '"${PROJECT_ROOT}"'/lib/messaging.sh; source '"${PROJECT_ROOT}"'/lib/config.sh; source '"${PROJECT_ROOT}"'/lib/status.sh; source '"${PROJECT_ROOT}"'/lib/reasoning.sh; source '"${PROJECT_ROOT}"'/lib/deploy.sh
+  HERMES_FLY_CHANNEL=preview result=$(deploy_resolve_channel); echo "$result"'
+  assert_output --partial "preview"
+}

@@ -307,3 +307,39 @@ teardown() {
   assert_success
   assert_output --partial "python3"
 }
+
+# ==========================================================================
+# PR-05: Function existence checks
+# ==========================================================================
+
+@test "deploy_resolve_channel function exists in lib/deploy.sh (PR-05)" {
+  source "${PROJECT_ROOT}/lib/ui.sh"
+  source "${PROJECT_ROOT}/lib/fly-helpers.sh"
+  source "${PROJECT_ROOT}/lib/docker-helpers.sh"
+  source "${PROJECT_ROOT}/lib/messaging.sh"
+  source "${PROJECT_ROOT}/lib/config.sh"
+  source "${PROJECT_ROOT}/lib/status.sh"
+  source "${PROJECT_ROOT}/lib/reasoning.sh"
+  source "${PROJECT_ROOT}/lib/deploy.sh"
+  declare -f deploy_resolve_channel >/dev/null 2>&1
+}
+
+@test "doctor_load_deploy_summary function exists in lib/doctor.sh (PR-05)" {
+  source "${PROJECT_ROOT}/lib/ui.sh"
+  source "${PROJECT_ROOT}/lib/fly-helpers.sh"
+  source "${PROJECT_ROOT}/lib/doctor.sh"
+  declare -f doctor_load_deploy_summary >/dev/null 2>&1
+}
+
+@test "doctor_check_drift function exists in lib/doctor.sh (PR-05)" {
+  source "${PROJECT_ROOT}/lib/ui.sh"
+  source "${PROJECT_ROOT}/lib/fly-helpers.sh"
+  source "${PROJECT_ROOT}/lib/doctor.sh"
+  declare -f doctor_check_drift >/dev/null 2>&1
+}
+
+@test "hermes-fly deploy --help mentions --channel (PR-05)" {
+  run bash "${PROJECT_ROOT}/hermes-fly" deploy --help
+  assert_success
+  assert_output --partial "--channel"
+}

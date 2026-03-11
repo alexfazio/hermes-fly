@@ -19,6 +19,56 @@ if ! command -v fly_status &>/dev/null; then
   source "${_DOCTOR_SCRIPT_DIR}/fly-helpers.sh" 2>/dev/null || true
 fi
 
+# Canonical hermes agent refs for drift validation.
+# MUST stay in sync with HERMES_AGENT_DEFAULT_REF / HERMES_AGENT_PREVIEW_REF in deploy.sh.
+# I1: intentionally not readonly — consistent with other module-level constants in this project.
+_DOCTOR_HERMES_AGENT_STABLE_REF="8eefbef91cd715cfe410bba8c13cfab4eb3040df"
+_DOCTOR_HERMES_AGENT_PREVIEW_REF="${_DOCTOR_HERMES_AGENT_STABLE_REF}"
+
+# Extract a scalar value from YAML "field: value" text.
+# CONTRACT: always returns 0; emits empty string on no-match.
+# Using || true ensures pipelines are safe under set -euo pipefail.
+_doctor_extract_yaml_field() {
+  local _field="$1" _text="$2"
+  printf '%s' "$_text" \
+    | grep -E "^${_field}:[[:space:]]*" \
+    | sed "s/^${_field}:[[:space:]]*//" \
+    | head -1 \
+    || true
+  return 0
+}
+
+# Extract a quoted string value from JSON {"field": "value"} text.
+# CONTRACT: always returns 0; emits empty string on no-match.
+# Using || true ensures pipelines are safe under set -euo pipefail.
+_doctor_extract_json_field() {
+  local _field="$1" _text="$2"
+  printf '%s' "$_text" \
+    | grep -oE "\"${_field}\"[[:space:]]*:[[:space:]]*\"[^\"]*\"" \
+    | sed "s/.*\"${_field}\"[[:space:]]*:[[:space:]]*\"//;s/\"//" \
+    | head -1 \
+    || true
+  return 0
+}
+
+# Resolve supported compatibility policy versions from the bundled snapshot.
+# Returns newline-separated list of supported versions (e.g. "1.0.0").
+# Sources data/reasoning-snapshot.json relative to the lib/ directory.
+# CONTRACT: always returns 0; emits empty output when unavailable/unparseable.
+_doctor_supported_compat_versions() {
+  local _snapshot="${_DOCTOR_SCRIPT_DIR}/../data/reasoning-snapshot.json"
+  if [[ ! -f "$_snapshot" ]]; then
+    return 0  # empty output — missing snapshot handled explicitly by caller
+  fi
+  # Each pipeline step uses || true so no step can cause a non-zero exit
+  # under set -euo pipefail when there are no matches.
+  grep -oE '"policy_version"[[:space:]]*:[[:space:]]*"[^"]*"' "$_snapshot" 2>/dev/null \
+    | sed 's/.*"policy_version"[[:space:]]*:[[:space:]]*"//;s/"//' 2>/dev/null \
+    | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' 2>/dev/null \
+    || true
+  return 0
+}
+
 # --------------------------------------------------------------------------
 # doctor_report "check_name" "pass|fail" "message"
 # Format and print a single check result.
@@ -161,6 +211,231 @@ doctor_check_api_connectivity() {
 }
 
 # --------------------------------------------------------------------------
+# doctor_load_deploy_summary "app_name"
+# Read the local deploy summary YAML for app_name from the deploys directory.
+# Returns: file content to stdout, empty string if not found.
+# --------------------------------------------------------------------------
+doctor_load_deploy_summary() {
+  local app_name="$1"
+  local deploys_dir="${HERMES_FLY_CONFIG_DIR:-$HOME/.hermes-fly}/deploys"
+  local summary_file="${deploys_dir}/${app_name}.yaml"
+  if [[ -f "$summary_file" ]]; then
+    cat "$summary_file"
+  else
+    printf ''
+  fi
+  return 0
+}
+
+# --------------------------------------------------------------------------
+# doctor_read_runtime_manifest "app_name"
+# Read /root/.hermes/deploy-manifest.json from the running container via SSH.
+# Returns JSON to stdout; empty string if unavailable (SSH down, etc.).
+# --------------------------------------------------------------------------
+doctor_read_runtime_manifest() {
+  local app_name="$1"
+  fly ssh console --app "$app_name" \
+    -C "cat /root/.hermes/deploy-manifest.json 2>/dev/null" 2>/dev/null || true
+}
+
+# --------------------------------------------------------------------------
+# doctor_check_drift "app_name" "secrets_json"
+# Detect deployment provenance drift:
+#   1. Verifies HERMES_AGENT_REF and HERMES_DEPLOY_CHANNEL are present in
+#      Fly secrets (provenance tracking enabled).
+#   2. Local deploy summary must exist — absence is a provenance gap.
+#   3. Validates deploy_channel shape in local summary.
+#   4. If runtime manifest is readable via SSH, compares deploy_channel and
+#      hermes_agent_ref values against the local summary.
+# Returns: 0 if no drift detected, 1 if provenance missing or drift found.
+# --------------------------------------------------------------------------
+doctor_check_drift() {
+  local app_name="$1"
+  local secrets_json="${2:-}"
+  # Reset tri-state side-channel. Set to 1 when provenance is unverified
+  # (preview/edge with unavailable runtime). Checked by cmd_doctor for
+  # the appropriate pass-message ("unverified" vs "consistent").
+  DOCTOR_DRIFT_UNVERIFIED=0
+
+  # Check 1: provenance secrets must be present in fly secrets list.
+  # Use quote-anchored patterns to prevent substring false-positives (e.g.
+  # NOT_HERMES_AGENT_REF must not satisfy the HERMES_AGENT_REF check).
+  local has_agent_ref=false has_deploy_channel=false
+  if printf '%s' "$secrets_json" | grep -q '"HERMES_AGENT_REF"'; then
+    has_agent_ref=true
+  fi
+  if printf '%s' "$secrets_json" | grep -q '"HERMES_DEPLOY_CHANNEL"'; then
+    has_deploy_channel=true
+  fi
+
+  if [[ "$has_agent_ref" == "false" ]] || [[ "$has_deploy_channel" == "false" ]]; then
+    printf 'Provenance secrets not found (deploy may predate provenance tracking)\n' >&2
+    return 1
+  fi
+
+  # Check 2: local deploy summary must exist — absence is a provenance gap.
+  local summary
+  summary="$(doctor_load_deploy_summary "$app_name")"
+
+  if [[ -z "$summary" ]]; then
+    printf 'No local deploy summary found: run hermes-fly deploy to establish provenance baseline\n' >&2
+    return 1
+  fi
+
+  # Check 3: validate deploy_channel shape in local summary.
+  local local_channel
+  local_channel="$(_doctor_extract_yaml_field 'deploy_channel' "$summary")"
+
+  if [[ -z "$local_channel" ]]; then
+    printf 'Missing deploy_channel in local summary: cannot verify provenance\n' >&2
+    return 1
+  fi
+
+  case "$local_channel" in
+    stable | preview | edge)
+      # Recognized channel — shape is valid
+      ;;
+    *)
+      printf 'Unexpected deploy channel in local summary: %s\n' "$local_channel" >&2
+      return 1
+      ;;
+  esac
+
+  # Check 4a: for stable/preview channels, verify local summary ref matches the canonical
+  # intended ref. This catches coordinated drift where both local summary and runtime
+  # manifest agree on a non-canonical ref (bypassing the local-vs-runtime comparison).
+  local local_ref
+  local_ref="$(_doctor_extract_yaml_field 'hermes_agent_ref' "$summary")"
+
+  case "$local_channel" in
+    stable | preview)
+      # Prefer deploy.sh constants when available (hermes-fly sources both modules).
+      # Falls back to local doctor constants so doctor.sh can still be sourced alone
+      # (e.g. in unit tests). This means a release that bumps only deploy.sh is caught
+      # immediately in production; the regression test (REVIEW_8) catches a stale
+      # doctor constant before it reaches users.
+      local _intended_ref="${HERMES_AGENT_DEFAULT_REF:-$_DOCTOR_HERMES_AGENT_STABLE_REF}"
+      if [[ "$local_channel" == "preview" ]]; then
+        _intended_ref="${HERMES_AGENT_PREVIEW_REF:-$_DOCTOR_HERMES_AGENT_PREVIEW_REF}"
+      fi
+      if [[ -z "$local_ref" ]]; then
+        printf 'local summary missing hermes_agent_ref — cannot verify ref for %s channel\n' \
+          "$local_channel" >&2
+        return 1
+      fi
+      if [[ "$local_ref" != "$_intended_ref" ]]; then
+        printf 'Unexpected ref: local summary=%s expected=%s for %s channel\n' \
+          "$local_ref" "$_intended_ref" "$local_channel" >&2
+        return 1
+      fi
+      ;;
+    edge)
+      # Edge tracks moving upstream — any ref value is expected; skip canonical check.
+      # Still require field presence: an edge summary without hermes_agent_ref is incomplete.
+      if [[ -z "$local_ref" ]]; then
+        printf 'local summary missing hermes_agent_ref — cannot verify ref for edge channel\n' >&2
+        return 1
+      fi
+      ;;
+  esac
+
+  # Check 4b: compare local summary values against runtime manifest.
+  # Availability policy: fail-closed for stable (runtime verification required);
+  # warn-only for preview/edge (machine may be stopped during review cycles).
+  local runtime_manifest
+  runtime_manifest="$(doctor_read_runtime_manifest "$app_name")"
+
+  if [[ -z "$runtime_manifest" ]]; then
+    if [[ "$local_channel" == "stable" ]]; then
+      printf 'runtime manifest unavailable — stable channel requires runtime verification\n' >&2
+      return 1
+    else
+      printf 'Warning: runtime manifest unavailable for %s channel — provenance unverified\n' \
+        "$local_channel" >&2
+      DOCTOR_DRIFT_UNVERIFIED=1
+      return 0
+    fi
+  fi
+
+  # Runtime manifest is readable — proceed with field comparisons.
+
+  # Extract deploy_channel from runtime manifest JSON
+  local runtime_channel
+  runtime_channel="$(_doctor_extract_json_field 'deploy_channel' "$runtime_manifest")"
+
+  # Fail-closed: readable manifest must contain deploy_channel
+  if [[ -z "$runtime_channel" ]]; then
+    printf 'runtime manifest missing deploy_channel — deploy may predate provenance tracking\n' >&2
+    return 1
+  fi
+
+  # Extract hermes_agent_ref from runtime manifest JSON
+  local runtime_ref
+  runtime_ref="$(_doctor_extract_json_field 'hermes_agent_ref' "$runtime_manifest")"
+
+  # Fail-closed: readable manifest must contain hermes_agent_ref
+  if [[ -z "$runtime_ref" ]]; then
+    printf 'runtime manifest missing hermes_agent_ref — deploy may predate provenance tracking\n' >&2
+    return 1
+  fi
+
+  # Fail-closed: local summary must contain hermes_agent_ref when runtime is readable
+  if [[ -z "$local_ref" ]]; then
+    printf 'local summary missing hermes_agent_ref — cannot verify ref provenance\n' >&2
+    return 1
+  fi
+
+  # Compare channel values
+  if [[ "$runtime_channel" != "$local_channel" ]]; then
+    printf 'Channel drift: local summary=%s runtime=%s\n' \
+      "$local_channel" "$runtime_channel" >&2
+    return 1
+  fi
+
+  # Compare ref values
+  if [[ "$runtime_ref" != "$local_ref" ]]; then
+    printf 'Ref drift: local summary=%s runtime=%s\n' \
+      "$local_ref" "$runtime_ref" >&2
+    return 1
+  fi
+
+  # Extract compatibility_policy_version from runtime manifest JSON
+  local runtime_compat
+  runtime_compat="$(_doctor_extract_json_field 'compatibility_policy_version' "$runtime_manifest")"
+
+  # Extract compatibility_policy_version from local summary YAML
+  local local_compat
+  local_compat="$(_doctor_extract_yaml_field 'compatibility_policy_version' "$summary")"
+
+  # Compare compat policy versions (skip when both absent; fail when one or both set and differ)
+  if [[ -n "$local_compat" || -n "$runtime_compat" ]]; then
+    if [[ "$local_compat" != "$runtime_compat" ]]; then
+      printf 'Compat policy drift: local summary=%s runtime=%s\n' \
+        "${local_compat:-<none>}" "${runtime_compat:-<none>}" >&2
+      return 1
+    fi
+    # Validate compat policy version against supported versions from snapshot.
+    if [[ -n "$local_compat" ]]; then
+      local _supported
+      _supported="$(_doctor_supported_compat_versions)" || true
+      if [[ -z "$_supported" ]]; then
+        printf 'Cannot validate compat policy version: supported versions unavailable (snapshot missing or unreadable)\n' >&2
+        return 1
+      fi
+      if ! printf '%s\n' "$_supported" | grep -qxF "$local_compat" 2>/dev/null; then
+        local _supported_list
+        _supported_list="$(printf '%s\n' "$_supported" | tr '\n' ',' | sed 's/,$//')"
+        printf 'Unknown compat policy version: %s (supported: %s)\n' \
+          "$local_compat" "${_supported_list:-<none>}" >&2
+        return 1
+      fi
+    fi
+  fi
+
+  return 0
+}
+
+# --------------------------------------------------------------------------
 # cmd_doctor "app_name"
 # Run all checks in order. Track pass/fail count. Print summary.
 # Return 0 if all pass, 1 if any fail.
@@ -240,6 +515,20 @@ cmd_doctor() {
     ((pass_count++))
   else
     doctor_report "api" "fail" "LLM API unreachable at https://openrouter.ai"
+    ((fail_count++))
+  fi
+
+  # Check 8: Drift detection (PR-05)
+  # DOCTOR_DRIFT_UNVERIFIED is reset inside doctor_check_drift; check it after.
+  if doctor_check_drift "$app_name" "$secrets_json"; then
+    if [[ "${DOCTOR_DRIFT_UNVERIFIED:-0}" == "1" ]]; then
+      doctor_report "drift" "pass" "Deploy provenance unverified (runtime manifest unavailable)"
+    else
+      doctor_report "drift" "pass" "Deploy provenance consistent"
+    fi
+    ((pass_count++))
+  else
+    doctor_report "drift" "fail" "Deploy drift detected — run 'hermes-fly deploy' to refresh"
     ((fail_count++))
   fi
 

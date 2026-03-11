@@ -79,11 +79,13 @@ Guides you through deploying Hermes Agent to Fly.io:
   7. Verifies deployment health
 
 Usage:
-  hermes-fly deploy [--help] [--no-auto-install]
+  hermes-fly deploy [--help] [--no-auto-install] [--channel CHANNEL]
 
 Options:
   --no-auto-install   Skip automatic installation of missing prerequisites
                       (also honoured when CI=true is set)
+  --channel CHANNEL   Release channel: stable (default), preview, or edge
+                      Also set via HERMES_FLY_CHANNEL env var
 
 The wizard will prompt for all required information interactively.
 EOF
@@ -100,8 +102,25 @@ main() {
                 show_deploy_help
                 return 0
             fi
-            for arg in "$@"; do
-                [[ "$arg" == "--no-auto-install" ]] && export HERMES_FLY_NO_AUTO_INSTALL=1
+            # Parse deploy-specific flags before delegating to cmd_deploy
+            local _deploy_args=("$@")
+            local _i=0
+            while [[ $_i -lt ${#_deploy_args[@]} ]]; do
+                case "${_deploy_args[$_i]}" in
+                    --no-auto-install)
+                        export HERMES_FLY_NO_AUTO_INSTALL=1
+                        ;;
+                    --channel)
+                        _i=$((_i + 1))
+                        if [[ $_i -lt ${#_deploy_args[@]} ]]; then
+                            export HERMES_FLY_CHANNEL="${_deploy_args[$_i]}"
+                        else
+                            ui_error "--channel requires a value: stable, preview, or edge"
+                            return 1
+                        fi
+                        ;;
+                esac
+                _i=$((_i + 1))
             done
             cmd_deploy "$@"
             ;;
