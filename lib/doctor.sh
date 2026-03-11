@@ -284,9 +284,14 @@ doctor_check_drift() {
 
   case "$local_channel" in
     stable | preview)
-      local _intended_ref="$_DOCTOR_HERMES_AGENT_STABLE_REF"
+      # Prefer deploy.sh constants when available (hermes-fly sources both modules).
+      # Falls back to local doctor constants so doctor.sh can still be sourced alone
+      # (e.g. in unit tests). This means a release that bumps only deploy.sh is caught
+      # immediately in production; the regression test (REVIEW_8) catches a stale
+      # doctor constant before it reaches users.
+      local _intended_ref="${HERMES_AGENT_DEFAULT_REF:-$_DOCTOR_HERMES_AGENT_STABLE_REF}"
       if [[ "$local_channel" == "preview" ]]; then
-        _intended_ref="$_DOCTOR_HERMES_AGENT_PREVIEW_REF"
+        _intended_ref="${HERMES_AGENT_PREVIEW_REF:-$_DOCTOR_HERMES_AGENT_PREVIEW_REF}"
       fi
       if [[ -z "$local_ref" ]]; then
         printf 'local summary missing hermes_agent_ref — cannot verify ref for %s channel\n' \

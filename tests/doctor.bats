@@ -779,3 +779,38 @@ EOF
   assert_output --partial "unverified"
   refute_output --partial "provenance consistent"
 }
+
+# REVIEW_8: Canonical ref sync invariant and runtime fallback to deploy pin
+
+@test "doctor_check_drift uses deploy pin when doctor constant is stale (REVIEW_8)" {
+  # Simulate a future release where deploy.sh was bumped but doctor.sh was not:
+  # HERMES_AGENT_DEFAULT_REF points to the new canonical SHA,
+  # _DOCTOR_HERMES_AGENT_STABLE_REF still holds the old value.
+  local _canon="8eefbef91cd715cfe410bba8c13cfab4eb3040df"
+  local _stale="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  local _saved_stable="$_DOCTOR_HERMES_AGENT_STABLE_REF"
+  _DOCTOR_HERMES_AGENT_STABLE_REF="$_stale"
+  HERMES_AGENT_DEFAULT_REF="$_canon"  # deploy constant now in scope
+  mkdir -p "${HERMES_FLY_CONFIG_DIR}/deploys"
+  cat > "${HERMES_FLY_CONFIG_DIR}/deploys/stable-deploy-pin.yaml" <<EOF
+app_name: stable-deploy-pin
+deploy_channel: stable
+hermes_agent_ref: ${_canon}
+EOF
+  export MOCK_FLY_RUNTIME_MANIFEST="{\"deploy_channel\":\"stable\",\"hermes_agent_ref\":\"${_canon}\",\"hermes_fly_version\":\"0.1.14\"}"
+  local secrets_json='[{"Name":"HERMES_AGENT_REF","Digest":"abc123"},{"Name":"HERMES_DEPLOY_CHANNEL","Digest":"chan_hash"}]'
+  run doctor_check_drift "stable-deploy-pin" "$secrets_json"
+  _DOCTOR_HERMES_AGENT_STABLE_REF="$_saved_stable"
+  unset HERMES_AGENT_DEFAULT_REF
+  unset MOCK_FLY_RUNTIME_MANIFEST
+  assert_success
+  refute_output --partial "Unexpected ref"
+}
+
+@test "doctor canonical refs stay in sync with deploy pins (REVIEW_8)" {
+  # Regression guard: source deploy.sh and assert both modules carry the same SHA.
+  # This test fails automatically if a release bumps only one module.
+  source "${PROJECT_ROOT}/lib/deploy.sh"
+  assert_equal "$_DOCTOR_HERMES_AGENT_STABLE_REF" "$HERMES_AGENT_DEFAULT_REF"
+  assert_equal "$_DOCTOR_HERMES_AGENT_PREVIEW_REF" "$HERMES_AGENT_PREVIEW_REF"
+}
