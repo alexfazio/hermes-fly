@@ -40,9 +40,11 @@ app_name: test-app
 deploy_channel: stable
 hermes_agent_ref: 8eefbef91cd715cfe410bba8c13cfab4eb3040df
 EOF
+  export MOCK_FLY_RUNTIME_MANIFEST='{"deploy_channel":"stable","hermes_agent_ref":"8eefbef91cd715cfe410bba8c13cfab4eb3040df","hermes_fly_version":"0.1.14"}'
   run cmd_doctor "test-app"
   assert_success
   assert_output --partial "PASS"
+  unset MOCK_FLY_RUNTIME_MANIFEST
 }
 
 @test "cmd_doctor with machine stopped exits 1 with hint" {
@@ -66,9 +68,11 @@ app_name: test-app
 deploy_channel: stable
 hermes_agent_ref: 8eefbef91cd715cfe410bba8c13cfab4eb3040df
 EOF
+  export MOCK_FLY_RUNTIME_MANIFEST='{"deploy_channel":"stable","hermes_agent_ref":"8eefbef91cd715cfe410bba8c13cfab4eb3040df","hermes_fly_version":"0.1.14"}'
   run cmd_doctor "test-app"
   assert_success
   assert_output --partial "8 passed, 0 failed"
+  unset MOCK_FLY_RUNTIME_MANIFEST
 }
 
 # --- doctor_check_volume_mounted ---
@@ -268,11 +272,13 @@ EOF
   cat > "${HERMES_FLY_CONFIG_DIR}/deploys/test-app.yaml" <<'EOF'
 app_name: test-app
 deploy_channel: stable
-hermes_agent_ref: abc123def456abc123def456abc123def456abc1
+hermes_agent_ref: 8eefbef91cd715cfe410bba8c13cfab4eb3040df
 EOF
+  export MOCK_FLY_RUNTIME_MANIFEST='{"deploy_channel":"stable","hermes_agent_ref":"8eefbef91cd715cfe410bba8c13cfab4eb3040df","hermes_fly_version":"0.1.14"}'
   local secrets_json='[{"Name":"HERMES_AGENT_REF","Digest":"abc123"},{"Name":"HERMES_DEPLOY_CHANNEL","Digest":"stable_hash"},{"Name":"HERMES_FLY_VERSION","Digest":"ver_hash"}]'
   run doctor_check_drift "test-app" "$secrets_json"
   assert_success
+  unset MOCK_FLY_RUNTIME_MANIFEST
 }
 
 @test "doctor_check_drift returns 1 when HERMES_AGENT_REF missing (PR-05)" {
@@ -320,11 +326,13 @@ EOF
   cat > "${HERMES_FLY_CONFIG_DIR}/deploys/stable-app.yaml" <<'EOF'
 app_name: stable-app
 deploy_channel: stable
-hermes_agent_ref: abc123def456
+hermes_agent_ref: 8eefbef91cd715cfe410bba8c13cfab4eb3040df
 EOF
+  export MOCK_FLY_RUNTIME_MANIFEST='{"deploy_channel":"stable","hermes_agent_ref":"8eefbef91cd715cfe410bba8c13cfab4eb3040df","hermes_fly_version":"0.1.14"}'
   local secrets_json='[{"Name":"HERMES_AGENT_REF","Digest":"abc123"},{"Name":"HERMES_DEPLOY_CHANNEL","Digest":"stable_hash"}]'
   run doctor_check_drift "stable-app" "$secrets_json"
   assert_success
+  unset MOCK_FLY_RUNTIME_MANIFEST
 }
 
 @test "doctor_check_drift passes for preview channel in local summary (PR-05)" {
@@ -332,8 +340,9 @@ EOF
   cat > "${HERMES_FLY_CONFIG_DIR}/deploys/preview-app.yaml" <<'EOF'
 app_name: preview-app
 deploy_channel: preview
-hermes_agent_ref: abc123def456
+hermes_agent_ref: 8eefbef91cd715cfe410bba8c13cfab4eb3040df
 EOF
+  # Preview warns but passes when runtime manifest unavailable
   local secrets_json='[{"Name":"HERMES_AGENT_REF","Digest":"abc123"},{"Name":"HERMES_DEPLOY_CHANNEL","Digest":"preview_hash"}]'
   run doctor_check_drift "preview-app" "$secrets_json"
   assert_success
@@ -399,9 +408,9 @@ EOF
   cat > "${HERMES_FLY_CONFIG_DIR}/deploys/chan-drift-app.yaml" <<'EOF'
 app_name: chan-drift-app
 deploy_channel: stable
-hermes_agent_ref: abc123def456abc123def456abc123def456abc1
+hermes_agent_ref: 8eefbef91cd715cfe410bba8c13cfab4eb3040df
 EOF
-  export MOCK_FLY_RUNTIME_MANIFEST='{"deploy_channel":"preview","hermes_agent_ref":"abc123def456abc123def456abc123def456abc1","hermes_fly_version":"0.1.14"}'
+  export MOCK_FLY_RUNTIME_MANIFEST='{"deploy_channel":"preview","hermes_agent_ref":"8eefbef91cd715cfe410bba8c13cfab4eb3040df","hermes_fly_version":"0.1.14"}'
   local secrets_json='[{"Name":"HERMES_AGENT_REF","Digest":"abc123"},{"Name":"HERMES_DEPLOY_CHANNEL","Digest":"chan_hash"}]'
   run doctor_check_drift "chan-drift-app" "$secrets_json"
   assert_failure
@@ -414,7 +423,7 @@ EOF
   cat > "${HERMES_FLY_CONFIG_DIR}/deploys/ref-drift-app.yaml" <<'EOF'
 app_name: ref-drift-app
 deploy_channel: stable
-hermes_agent_ref: abc123def456abc123def456abc123def456abc1
+hermes_agent_ref: 8eefbef91cd715cfe410bba8c13cfab4eb3040df
 EOF
   export MOCK_FLY_RUNTIME_MANIFEST='{"deploy_channel":"stable","hermes_agent_ref":"different000000000000000000000000000000000","hermes_fly_version":"0.1.14"}'
   local secrets_json='[{"Name":"HERMES_AGENT_REF","Digest":"abc123"},{"Name":"HERMES_DEPLOY_CHANNEL","Digest":"chan_hash"}]'
@@ -429,24 +438,24 @@ EOF
   cat > "${HERMES_FLY_CONFIG_DIR}/deploys/agree-app.yaml" <<'EOF'
 app_name: agree-app
 deploy_channel: stable
-hermes_agent_ref: abc123def456abc123def456abc123def456abc1
+hermes_agent_ref: 8eefbef91cd715cfe410bba8c13cfab4eb3040df
 EOF
-  export MOCK_FLY_RUNTIME_MANIFEST='{"deploy_channel":"stable","hermes_agent_ref":"abc123def456abc123def456abc123def456abc1","hermes_fly_version":"0.1.14"}'
+  export MOCK_FLY_RUNTIME_MANIFEST='{"deploy_channel":"stable","hermes_agent_ref":"8eefbef91cd715cfe410bba8c13cfab4eb3040df","hermes_fly_version":"0.1.14"}'
   local secrets_json='[{"Name":"HERMES_AGENT_REF","Digest":"abc123"},{"Name":"HERMES_DEPLOY_CHANNEL","Digest":"chan_hash"}]'
   run doctor_check_drift "agree-app" "$secrets_json"
   assert_success
   unset MOCK_FLY_RUNTIME_MANIFEST
 }
 
-@test "doctor_check_drift passes when runtime manifest unavailable (REVIEW_3)" {
-  # SSH unavailable or container stopped — gracefully skip runtime comparison
+@test "doctor_check_drift passes when runtime manifest unavailable for edge channel (REVIEW_3)" {
+  # Edge channel: SSH unavailable → warn-and-pass (only stable fails closed)
   mkdir -p "${HERMES_FLY_CONFIG_DIR}/deploys"
   cat > "${HERMES_FLY_CONFIG_DIR}/deploys/noruntime-app.yaml" <<'EOF'
 app_name: noruntime-app
-deploy_channel: stable
-hermes_agent_ref: abc123def456abc123def456abc123def456abc1
+deploy_channel: edge
+hermes_agent_ref: main
 EOF
-  # MOCK_FLY_RUNTIME_MANIFEST not set → SSH returns empty
+  # MOCK_FLY_RUNTIME_MANIFEST not set → SSH returns empty → edge warns and passes
   local secrets_json='[{"Name":"HERMES_AGENT_REF","Digest":"abc123"},{"Name":"HERMES_DEPLOY_CHANNEL","Digest":"chan_hash"}]'
   run doctor_check_drift "noruntime-app" "$secrets_json"
   assert_success
@@ -465,9 +474,9 @@ EOF
   cat > "${HERMES_FLY_CONFIG_DIR}/deploys/nodchan-app.yaml" <<'EOF'
 app_name: nodchan-app
 deploy_channel: stable
-hermes_agent_ref: abc123def456abc123def456abc123def456abc1
+hermes_agent_ref: 8eefbef91cd715cfe410bba8c13cfab4eb3040df
 EOF
-  export MOCK_FLY_RUNTIME_MANIFEST='{"hermes_agent_ref":"abc123def456abc123def456abc123def456abc1","hermes_fly_version":"0.1.14"}'
+  export MOCK_FLY_RUNTIME_MANIFEST='{"hermes_agent_ref":"8eefbef91cd715cfe410bba8c13cfab4eb3040df","hermes_fly_version":"0.1.14"}'
   local secrets_json='[{"Name":"HERMES_AGENT_REF","Digest":"abc123"},{"Name":"HERMES_DEPLOY_CHANNEL","Digest":"chan_hash"}]'
   run doctor_check_drift "nodchan-app" "$secrets_json"
   assert_failure
@@ -480,7 +489,7 @@ EOF
   cat > "${HERMES_FLY_CONFIG_DIR}/deploys/noref-app.yaml" <<'EOF'
 app_name: noref-app
 deploy_channel: stable
-hermes_agent_ref: abc123def456abc123def456abc123def456abc1
+hermes_agent_ref: 8eefbef91cd715cfe410bba8c13cfab4eb3040df
 EOF
   export MOCK_FLY_RUNTIME_MANIFEST='{"deploy_channel":"stable","hermes_fly_version":"0.1.14"}'
   local secrets_json='[{"Name":"HERMES_AGENT_REF","Digest":"abc123"},{"Name":"HERMES_DEPLOY_CHANNEL","Digest":"chan_hash"}]'
@@ -513,10 +522,10 @@ EOF
   cat > "${HERMES_FLY_CONFIG_DIR}/deploys/compat-drift-app.yaml" <<'EOF'
 app_name: compat-drift-app
 deploy_channel: stable
-hermes_agent_ref: abc123def456abc123def456abc123def456abc1
-compatibility_policy_version: openrouter-reasoning-v1.0
+hermes_agent_ref: 8eefbef91cd715cfe410bba8c13cfab4eb3040df
+compatibility_policy_version: 1.0.0
 EOF
-  export MOCK_FLY_RUNTIME_MANIFEST='{"deploy_channel":"stable","hermes_agent_ref":"abc123def456abc123def456abc123def456abc1","compatibility_policy_version":"openrouter-reasoning-v2.0","hermes_fly_version":"0.1.14"}'
+  export MOCK_FLY_RUNTIME_MANIFEST='{"deploy_channel":"stable","hermes_agent_ref":"8eefbef91cd715cfe410bba8c13cfab4eb3040df","compatibility_policy_version":"2.0.0","hermes_fly_version":"0.1.14"}'
   local secrets_json='[{"Name":"HERMES_AGENT_REF","Digest":"abc123"},{"Name":"HERMES_DEPLOY_CHANNEL","Digest":"chan_hash"}]'
   run doctor_check_drift "compat-drift-app" "$secrets_json"
   assert_failure
@@ -529,10 +538,10 @@ EOF
   cat > "${HERMES_FLY_CONFIG_DIR}/deploys/compat-match-app.yaml" <<'EOF'
 app_name: compat-match-app
 deploy_channel: stable
-hermes_agent_ref: abc123def456abc123def456abc123def456abc1
-compatibility_policy_version: openrouter-reasoning-v1.0
+hermes_agent_ref: 8eefbef91cd715cfe410bba8c13cfab4eb3040df
+compatibility_policy_version: 1.0.0
 EOF
-  export MOCK_FLY_RUNTIME_MANIFEST='{"deploy_channel":"stable","hermes_agent_ref":"abc123def456abc123def456abc123def456abc1","compatibility_policy_version":"openrouter-reasoning-v1.0","hermes_fly_version":"0.1.14"}'
+  export MOCK_FLY_RUNTIME_MANIFEST='{"deploy_channel":"stable","hermes_agent_ref":"8eefbef91cd715cfe410bba8c13cfab4eb3040df","compatibility_policy_version":"1.0.0","hermes_fly_version":"0.1.14"}'
   local secrets_json='[{"Name":"HERMES_AGENT_REF","Digest":"abc123"},{"Name":"HERMES_DEPLOY_CHANNEL","Digest":"chan_hash"}]'
   run doctor_check_drift "compat-match-app" "$secrets_json"
   assert_success
@@ -544,9 +553,9 @@ EOF
   cat > "${HERMES_FLY_CONFIG_DIR}/deploys/nocompat-app.yaml" <<'EOF'
 app_name: nocompat-app
 deploy_channel: stable
-hermes_agent_ref: abc123def456abc123def456abc123def456abc1
+hermes_agent_ref: 8eefbef91cd715cfe410bba8c13cfab4eb3040df
 EOF
-  export MOCK_FLY_RUNTIME_MANIFEST='{"deploy_channel":"stable","hermes_agent_ref":"abc123def456abc123def456abc123def456abc1","hermes_fly_version":"0.1.14"}'
+  export MOCK_FLY_RUNTIME_MANIFEST='{"deploy_channel":"stable","hermes_agent_ref":"8eefbef91cd715cfe410bba8c13cfab4eb3040df","hermes_fly_version":"0.1.14"}'
   local secrets_json='[{"Name":"HERMES_AGENT_REF","Digest":"abc123"},{"Name":"HERMES_DEPLOY_CHANNEL","Digest":"chan_hash"}]'
   run doctor_check_drift "nocompat-app" "$secrets_json"
   assert_success
@@ -554,18 +563,109 @@ EOF
 }
 
 @test "doctor_check_drift detects compat drift when local has policy but runtime does not (REVIEW_4)" {
+  # Compat drift fires before semver check since values differ
   mkdir -p "${HERMES_FLY_CONFIG_DIR}/deploys"
   cat > "${HERMES_FLY_CONFIG_DIR}/deploys/compat-gone-app.yaml" <<'EOF'
 app_name: compat-gone-app
 deploy_channel: stable
-hermes_agent_ref: abc123def456abc123def456abc123def456abc1
-compatibility_policy_version: openrouter-reasoning-v1.0
+hermes_agent_ref: 8eefbef91cd715cfe410bba8c13cfab4eb3040df
+compatibility_policy_version: 1.0.0
 EOF
   # Runtime has compat policy env var unset → empty string in manifest
-  export MOCK_FLY_RUNTIME_MANIFEST='{"deploy_channel":"stable","hermes_agent_ref":"abc123def456abc123def456abc123def456abc1","compatibility_policy_version":"","hermes_fly_version":"0.1.14"}'
+  export MOCK_FLY_RUNTIME_MANIFEST='{"deploy_channel":"stable","hermes_agent_ref":"8eefbef91cd715cfe410bba8c13cfab4eb3040df","compatibility_policy_version":"","hermes_fly_version":"0.1.14"}'
   local secrets_json='[{"Name":"HERMES_AGENT_REF","Digest":"abc123"},{"Name":"HERMES_DEPLOY_CHANNEL","Digest":"chan_hash"}]'
   run doctor_check_drift "compat-gone-app" "$secrets_json"
   assert_failure
   assert_output --partial "Compat policy drift"
+  unset MOCK_FLY_RUNTIME_MANIFEST
+}
+
+# ==========================================================================
+# REVIEW_5: Finding 1 — channel-aware runtime-manifest-unavailable policy
+#           Finding 2 — intended-ref canonical check (stable/preview)
+#           Finding 3 — unknown compat policy version surfacing
+# ==========================================================================
+
+@test "doctor_check_drift fails for stable channel when runtime manifest is unavailable (REVIEW_5)" {
+  mkdir -p "${HERMES_FLY_CONFIG_DIR}/deploys"
+  cat > "${HERMES_FLY_CONFIG_DIR}/deploys/stable-noruntime.yaml" <<'EOF'
+app_name: stable-noruntime
+deploy_channel: stable
+hermes_agent_ref: 8eefbef91cd715cfe410bba8c13cfab4eb3040df
+EOF
+  # No MOCK_FLY_RUNTIME_MANIFEST → SSH returns empty → stable must fail (fail-closed)
+  local secrets_json='[{"Name":"HERMES_AGENT_REF","Digest":"abc123"},{"Name":"HERMES_DEPLOY_CHANNEL","Digest":"chan_hash"}]'
+  run doctor_check_drift "stable-noruntime" "$secrets_json"
+  assert_failure
+  assert_output --partial "stable"
+}
+
+@test "doctor_check_drift warns but passes for preview channel when runtime manifest unavailable (REVIEW_5)" {
+  mkdir -p "${HERMES_FLY_CONFIG_DIR}/deploys"
+  cat > "${HERMES_FLY_CONFIG_DIR}/deploys/preview-noruntime.yaml" <<'EOF'
+app_name: preview-noruntime
+deploy_channel: preview
+hermes_agent_ref: 8eefbef91cd715cfe410bba8c13cfab4eb3040df
+EOF
+  local secrets_json='[{"Name":"HERMES_AGENT_REF","Digest":"abc123"},{"Name":"HERMES_DEPLOY_CHANNEL","Digest":"chan_hash"}]'
+  run doctor_check_drift "preview-noruntime" "$secrets_json"
+  assert_success
+}
+
+@test "doctor_check_drift warns but passes for edge channel when runtime manifest unavailable (REVIEW_5)" {
+  mkdir -p "${HERMES_FLY_CONFIG_DIR}/deploys"
+  cat > "${HERMES_FLY_CONFIG_DIR}/deploys/edge-noruntime.yaml" <<'EOF'
+app_name: edge-noruntime
+deploy_channel: edge
+hermes_agent_ref: main
+EOF
+  local secrets_json='[{"Name":"HERMES_AGENT_REF","Digest":"abc123"},{"Name":"HERMES_DEPLOY_CHANNEL","Digest":"chan_hash"}]'
+  run doctor_check_drift "edge-noruntime" "$secrets_json"
+  assert_success
+}
+
+@test "doctor_check_drift detects unexpected ref for stable channel when both agree on non-canonical (REVIEW_5)" {
+  mkdir -p "${HERMES_FLY_CONFIG_DIR}/deploys"
+  cat > "${HERMES_FLY_CONFIG_DIR}/deploys/unexpected-ref.yaml" <<'EOF'
+app_name: unexpected-ref
+deploy_channel: stable
+hermes_agent_ref: deadbeef00000000000000000000000000000000
+EOF
+  # Both agree on non-canonical ref — a coordinated drift — must be caught
+  export MOCK_FLY_RUNTIME_MANIFEST='{"deploy_channel":"stable","hermes_agent_ref":"deadbeef00000000000000000000000000000000","hermes_fly_version":"0.1.14"}'
+  local secrets_json='[{"Name":"HERMES_AGENT_REF","Digest":"abc123"},{"Name":"HERMES_DEPLOY_CHANNEL","Digest":"chan_hash"}]'
+  run doctor_check_drift "unexpected-ref" "$secrets_json"
+  assert_failure
+  assert_output --partial "Unexpected ref"
+  unset MOCK_FLY_RUNTIME_MANIFEST
+}
+
+@test "doctor_check_drift detects unexpected ref for preview channel not matching canonical (REVIEW_5)" {
+  mkdir -p "${HERMES_FLY_CONFIG_DIR}/deploys"
+  cat > "${HERMES_FLY_CONFIG_DIR}/deploys/preview-unexpected.yaml" <<'EOF'
+app_name: preview-unexpected
+deploy_channel: preview
+hermes_agent_ref: deadbeef00000000000000000000000000000000
+EOF
+  local secrets_json='[{"Name":"HERMES_AGENT_REF","Digest":"abc123"},{"Name":"HERMES_DEPLOY_CHANNEL","Digest":"chan_hash"}]'
+  run doctor_check_drift "preview-unexpected" "$secrets_json"
+  assert_failure
+  assert_output --partial "Unexpected ref"
+}
+
+@test "doctor_check_drift flags unknown compat policy version format when both agree (REVIEW_5)" {
+  mkdir -p "${HERMES_FLY_CONFIG_DIR}/deploys"
+  cat > "${HERMES_FLY_CONFIG_DIR}/deploys/badcompat.yaml" <<'EOF'
+app_name: badcompat
+deploy_channel: stable
+hermes_agent_ref: 8eefbef91cd715cfe410bba8c13cfab4eb3040df
+compatibility_policy_version: not-a-semver
+EOF
+  # Both agree on non-semver compat version — must be surfaced as unknown
+  export MOCK_FLY_RUNTIME_MANIFEST='{"deploy_channel":"stable","hermes_agent_ref":"8eefbef91cd715cfe410bba8c13cfab4eb3040df","compatibility_policy_version":"not-a-semver","hermes_fly_version":"0.1.14"}'
+  local secrets_json='[{"Name":"HERMES_AGENT_REF","Digest":"abc123"},{"Name":"HERMES_DEPLOY_CHANNEL","Digest":"chan_hash"}]'
+  run doctor_check_drift "badcompat" "$secrets_json"
+  assert_failure
+  assert_output --partial "Unknown compat policy version"
   unset MOCK_FLY_RUNTIME_MANIFEST
 }

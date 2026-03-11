@@ -19,6 +19,12 @@ if ! command -v fly_status &>/dev/null; then
   source "${_DOCTOR_SCRIPT_DIR}/fly-helpers.sh" 2>/dev/null || true
 fi
 
+# Canonical hermes agent refs for drift validation.
+# MUST stay in sync with HERMES_AGENT_DEFAULT_REF / HERMES_AGENT_PREVIEW_REF in deploy.sh.
+# I1: intentionally not readonly — consistent with other module-level constants in this project.
+_DOCTOR_HERMES_AGENT_STABLE_REF="8eefbef91cd715cfe410bba8c13cfab4eb3040df"
+_DOCTOR_HERMES_AGENT_PREVIEW_REF="${_DOCTOR_HERMES_AGENT_STABLE_REF}"
+
 # --------------------------------------------------------------------------
 # doctor_report "check_name" "pass|fail" "message"
 # Format and print a single check result.
@@ -247,79 +253,123 @@ doctor_check_drift() {
       ;;
   esac
 
-  # Check 4: compare local summary values against runtime manifest (if readable).
+  # Check 4a: for stable/preview channels, verify local summary ref matches the canonical
+  # intended ref. This catches coordinated drift where both local summary and runtime
+  # manifest agree on a non-canonical ref (bypassing the local-vs-runtime comparison).
+  local local_ref
+  local_ref="$(printf '%s' "$summary" | grep -E '^hermes_agent_ref:' \
+    | sed 's/^hermes_agent_ref:[[:space:]]*//' | head -1)"
+
+  case "$local_channel" in
+    stable | preview)
+      local _intended_ref="$_DOCTOR_HERMES_AGENT_STABLE_REF"
+      if [[ "$local_channel" == "preview" ]]; then
+        _intended_ref="$_DOCTOR_HERMES_AGENT_PREVIEW_REF"
+      fi
+      if [[ -z "$local_ref" ]]; then
+        printf 'local summary missing hermes_agent_ref — cannot verify ref for %s channel\n' \
+          "$local_channel" >&2
+        return 1
+      fi
+      if [[ "$local_ref" != "$_intended_ref" ]]; then
+        printf 'Unexpected ref: local summary=%s expected=%s for %s channel\n' \
+          "$local_ref" "$_intended_ref" "$local_channel" >&2
+        return 1
+      fi
+      ;;
+    edge)
+      # Edge tracks moving upstream — any ref is expected; skip canonical check.
+      ;;
+  esac
+
+  # Check 4b: compare local summary values against runtime manifest.
+  # Availability policy: fail-closed for stable (runtime verification required);
+  # warn-only for preview/edge (machine may be stopped during review cycles).
   local runtime_manifest
   runtime_manifest="$(doctor_read_runtime_manifest "$app_name")"
 
-  if [[ -n "$runtime_manifest" ]]; then
-    # Extract deploy_channel from runtime manifest JSON
-    local runtime_channel
-    runtime_channel="$(printf '%s' "$runtime_manifest" \
-      | grep -oE '"deploy_channel"[[:space:]]*:[[:space:]]*"[^"]*"' \
-      | sed 's/.*"deploy_channel"[[:space:]]*:[[:space:]]*"//;s/"//' \
-      | head -1)"
+  if [[ -z "$runtime_manifest" ]]; then
+    if [[ "$local_channel" == "stable" ]]; then
+      printf 'runtime manifest unavailable — stable channel requires runtime verification\n' >&2
+      return 1
+    else
+      printf 'Warning: runtime manifest unavailable for %s channel — provenance unverified\n' \
+        "$local_channel" >&2
+      return 0
+    fi
+  fi
 
-    # Fail-closed: readable manifest must contain deploy_channel
-    if [[ -z "$runtime_channel" ]]; then
-      printf 'runtime manifest missing deploy_channel — deploy may predate provenance tracking\n' >&2
+  # Runtime manifest is readable — proceed with field comparisons.
+
+  # Extract deploy_channel from runtime manifest JSON
+  local runtime_channel
+  runtime_channel="$(printf '%s' "$runtime_manifest" \
+    | grep -oE '"deploy_channel"[[:space:]]*:[[:space:]]*"[^"]*"' \
+    | sed 's/.*"deploy_channel"[[:space:]]*:[[:space:]]*"//;s/"//' \
+    | head -1)"
+
+  # Fail-closed: readable manifest must contain deploy_channel
+  if [[ -z "$runtime_channel" ]]; then
+    printf 'runtime manifest missing deploy_channel — deploy may predate provenance tracking\n' >&2
+    return 1
+  fi
+
+  # Extract hermes_agent_ref from runtime manifest JSON
+  local runtime_ref
+  runtime_ref="$(printf '%s' "$runtime_manifest" \
+    | grep -oE '"hermes_agent_ref"[[:space:]]*:[[:space:]]*"[^"]*"' \
+    | sed 's/.*"hermes_agent_ref"[[:space:]]*:[[:space:]]*"//;s/"//' \
+    | head -1)"
+
+  # Fail-closed: readable manifest must contain hermes_agent_ref
+  if [[ -z "$runtime_ref" ]]; then
+    printf 'runtime manifest missing hermes_agent_ref — deploy may predate provenance tracking\n' >&2
+    return 1
+  fi
+
+  # Fail-closed: local summary must contain hermes_agent_ref when runtime is readable
+  if [[ -z "$local_ref" ]]; then
+    printf 'local summary missing hermes_agent_ref — cannot verify ref provenance\n' >&2
+    return 1
+  fi
+
+  # Compare channel values
+  if [[ "$runtime_channel" != "$local_channel" ]]; then
+    printf 'Channel drift: local summary=%s runtime=%s\n' \
+      "$local_channel" "$runtime_channel" >&2
+    return 1
+  fi
+
+  # Compare ref values
+  if [[ "$runtime_ref" != "$local_ref" ]]; then
+    printf 'Ref drift: local summary=%s runtime=%s\n' \
+      "$local_ref" "$runtime_ref" >&2
+    return 1
+  fi
+
+  # Extract compatibility_policy_version from runtime manifest JSON
+  local runtime_compat
+  runtime_compat="$(printf '%s' "$runtime_manifest" \
+    | grep -oE '"compatibility_policy_version"[[:space:]]*:[[:space:]]*"[^"]*"' \
+    | sed 's/.*"compatibility_policy_version"[[:space:]]*:[[:space:]]*"//;s/"//' \
+    | head -1)"
+
+  # Extract compatibility_policy_version from local summary YAML
+  local local_compat
+  local_compat="$(printf '%s' "$summary" | grep -E '^compatibility_policy_version:' \
+    | sed 's/^compatibility_policy_version:[[:space:]]*//' | head -1)"
+
+  # Compare compat policy versions (skip when both absent; fail when one or both set and differ)
+  if [[ -n "$local_compat" || -n "$runtime_compat" ]]; then
+    if [[ "$local_compat" != "$runtime_compat" ]]; then
+      printf 'Compat policy drift: local summary=%s runtime=%s\n' \
+        "${local_compat:-<none>}" "${runtime_compat:-<none>}" >&2
       return 1
     fi
-
-    # Extract hermes_agent_ref from runtime manifest JSON
-    local runtime_ref
-    runtime_ref="$(printf '%s' "$runtime_manifest" \
-      | grep -oE '"hermes_agent_ref"[[:space:]]*:[[:space:]]*"[^"]*"' \
-      | sed 's/.*"hermes_agent_ref"[[:space:]]*:[[:space:]]*"//;s/"//' \
-      | head -1)"
-
-    # Fail-closed: readable manifest must contain hermes_agent_ref
-    if [[ -z "$runtime_ref" ]]; then
-      printf 'runtime manifest missing hermes_agent_ref — deploy may predate provenance tracking\n' >&2
-      return 1
-    fi
-
-    # Extract local hermes_agent_ref from summary YAML
-    local local_ref
-    local_ref="$(printf '%s' "$summary" | grep -E '^hermes_agent_ref:' \
-      | sed 's/^hermes_agent_ref:[[:space:]]*//' | head -1)"
-
-    # Fail-closed: local summary must contain hermes_agent_ref when runtime is readable
-    if [[ -z "$local_ref" ]]; then
-      printf 'local summary missing hermes_agent_ref — cannot verify ref provenance\n' >&2
-      return 1
-    fi
-
-    # Compare channel values
-    if [[ "$runtime_channel" != "$local_channel" ]]; then
-      printf 'Channel drift: local summary=%s runtime=%s\n' \
-        "$local_channel" "$runtime_channel" >&2
-      return 1
-    fi
-
-    # Compare ref values
-    if [[ "$runtime_ref" != "$local_ref" ]]; then
-      printf 'Ref drift: local summary=%s runtime=%s\n' \
-        "$local_ref" "$runtime_ref" >&2
-      return 1
-    fi
-
-    # Extract compatibility_policy_version from runtime manifest JSON
-    local runtime_compat
-    runtime_compat="$(printf '%s' "$runtime_manifest" \
-      | grep -oE '"compatibility_policy_version"[[:space:]]*:[[:space:]]*"[^"]*"' \
-      | sed 's/.*"compatibility_policy_version"[[:space:]]*:[[:space:]]*"//;s/"//' \
-      | head -1)"
-
-    # Extract compatibility_policy_version from local summary YAML
-    local local_compat
-    local_compat="$(printf '%s' "$summary" | grep -E '^compatibility_policy_version:' \
-      | sed 's/^compatibility_policy_version:[[:space:]]*//' | head -1)"
-
-    # Compare compat policy versions (skip when both absent; fail when one or both set and differ)
-    if [[ -n "$local_compat" || -n "$runtime_compat" ]]; then
-      if [[ "$local_compat" != "$runtime_compat" ]]; then
-        printf 'Compat policy drift: local summary=%s runtime=%s\n' \
-          "${local_compat:-<none>}" "${runtime_compat:-<none>}" >&2
+    # Validate compat policy version is a recognized semver format (X.Y.Z)
+    if [[ -n "$local_compat" ]]; then
+      if ! printf '%s' "$local_compat" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+        printf 'Unknown compat policy version: %s\n' "$local_compat" >&2
         return 1
       fi
     fi
