@@ -60,7 +60,11 @@ function resolveConfigDir(env: NodeJS.ProcessEnv): string {
   }
 
   const home = env.HOME ?? "";
-  return join(home, ".hermes-fly");
+  if (home.length > 0) {
+    return join(home, ".hermes-fly");
+  }
+
+  return join("/", ".hermes-fly");
 }
 
 async function safeReadText(path: string): Promise<string | null> {

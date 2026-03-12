@@ -38,6 +38,263 @@ tests/bats/bin/bats \
 
 npm run build
 
+expected_version="$(
+  sed -n 's/^HERMES_FLY_VERSION="\([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\)"$/\1/p' \
+    "${PROJECT_ROOT}/hermes-fly" | head -1
+)"
+expected_version_line="hermes-fly ${expected_version}"
+
+dist_flag_version_output="$(node dist/cli.js --version)"
+if [[ "${dist_flag_version_output}" != "${expected_version_line}" ]]; then
+  printf "Unexpected dist --version output: %s\n" "${dist_flag_version_output}" >&2
+  exit 1
+fi
+
+dist_command_version_output="$(node dist/cli.js version)"
+if [[ "${dist_command_version_output}" != "${expected_version_line}" ]]; then
+  printf "Unexpected dist version output: %s\n" "${dist_command_version_output}" >&2
+  exit 1
+fi
+
+dist_help_out="$(mktemp)"
+dist_help_err="$(mktemp)"
+node dist/cli.js version --help >"${dist_help_out}" 2>"${dist_help_err}"
+if [[ "$(cat "${dist_help_out}")" != "${expected_version_line}" ]]; then
+  printf "Unexpected dist version --help output: %s\n" "$(cat "${dist_help_out}")" >&2
+  rm -f "${dist_help_out}" "${dist_help_err}"
+  exit 1
+fi
+if [[ -s "${dist_help_err}" ]]; then
+  printf "Unexpected dist version --help stderr: %s\n" "$(cat "${dist_help_err}")" >&2
+  rm -f "${dist_help_out}" "${dist_help_err}"
+  exit 1
+fi
+rm -f "${dist_help_out}" "${dist_help_err}"
+
+dist_unknown_out="$(mktemp)"
+dist_unknown_err="$(mktemp)"
+node dist/cli.js version --unknown-flag >"${dist_unknown_out}" 2>"${dist_unknown_err}"
+if [[ "$(cat "${dist_unknown_out}")" != "${expected_version_line}" ]]; then
+  printf "Unexpected dist version --unknown-flag output: %s\n" "$(cat "${dist_unknown_out}")" >&2
+  rm -f "${dist_unknown_out}" "${dist_unknown_err}"
+  exit 1
+fi
+if [[ -s "${dist_unknown_err}" ]]; then
+  printf "Unexpected dist version --unknown-flag stderr: %s\n" "$(cat "${dist_unknown_err}")" >&2
+  rm -f "${dist_unknown_out}" "${dist_unknown_err}"
+  exit 1
+fi
+rm -f "${dist_unknown_out}" "${dist_unknown_err}"
+
+hybrid_allowlisted_version_output="$(
+  HERMES_FLY_IMPL_MODE=hybrid HERMES_FLY_TS_COMMANDS=version ./hermes-fly version
+)"
+if [[ "${hybrid_allowlisted_version_output}" != "${expected_version_line}" ]]; then
+  printf "Unexpected hybrid allowlisted version output: %s\n" "${hybrid_allowlisted_version_output}" >&2
+  exit 1
+fi
+
+wrapper_legacy_help_out="$(mktemp)"
+wrapper_legacy_help_err="$(mktemp)"
+wrapper_legacy_help_exit="$(mktemp)"
+wrapper_ts_help_out="$(mktemp)"
+wrapper_ts_help_err="$(mktemp)"
+wrapper_ts_help_exit="$(mktemp)"
+
+HERMES_FLY_IMPL_MODE=legacy ./hermes-fly version --help >"${wrapper_legacy_help_out}" 2>"${wrapper_legacy_help_err}"
+printf "%s\n" "$?" >"${wrapper_legacy_help_exit}"
+HERMES_FLY_IMPL_MODE=hybrid HERMES_FLY_TS_COMMANDS=version ./hermes-fly version --help >"${wrapper_ts_help_out}" 2>"${wrapper_ts_help_err}"
+printf "%s\n" "$?" >"${wrapper_ts_help_exit}"
+
+diff -u "${wrapper_legacy_help_out}" "${wrapper_ts_help_out}"
+diff -u "${wrapper_legacy_help_err}" "${wrapper_ts_help_err}"
+diff -u "${wrapper_legacy_help_exit}" "${wrapper_ts_help_exit}"
+
+rm -f "${wrapper_legacy_help_out}" "${wrapper_legacy_help_err}" "${wrapper_legacy_help_exit}" \
+  "${wrapper_ts_help_out}" "${wrapper_ts_help_err}" "${wrapper_ts_help_exit}"
+
+wrapper_legacy_unknown_out="$(mktemp)"
+wrapper_legacy_unknown_err="$(mktemp)"
+wrapper_legacy_unknown_exit="$(mktemp)"
+wrapper_ts_unknown_out="$(mktemp)"
+wrapper_ts_unknown_err="$(mktemp)"
+wrapper_ts_unknown_exit="$(mktemp)"
+
+HERMES_FLY_IMPL_MODE=legacy ./hermes-fly version --unknown-flag >"${wrapper_legacy_unknown_out}" 2>"${wrapper_legacy_unknown_err}"
+printf "%s\n" "$?" >"${wrapper_legacy_unknown_exit}"
+HERMES_FLY_IMPL_MODE=hybrid HERMES_FLY_TS_COMMANDS=version ./hermes-fly version --unknown-flag >"${wrapper_ts_unknown_out}" 2>"${wrapper_ts_unknown_err}"
+printf "%s\n" "$?" >"${wrapper_ts_unknown_exit}"
+
+diff -u "${wrapper_legacy_unknown_out}" "${wrapper_ts_unknown_out}"
+diff -u "${wrapper_legacy_unknown_err}" "${wrapper_ts_unknown_err}"
+diff -u "${wrapper_legacy_unknown_exit}" "${wrapper_ts_unknown_exit}"
+
+rm -f "${wrapper_legacy_unknown_out}" "${wrapper_legacy_unknown_err}" "${wrapper_legacy_unknown_exit}" \
+  "${wrapper_ts_unknown_out}" "${wrapper_ts_unknown_err}" "${wrapper_ts_unknown_exit}"
+
+wrapper_legacy_ts_help_out="$(mktemp)"
+wrapper_legacy_ts_help_err="$(mktemp)"
+wrapper_legacy_ts_help_exit="$(mktemp)"
+wrapper_ts_mode_help_out="$(mktemp)"
+wrapper_ts_mode_help_err="$(mktemp)"
+wrapper_ts_mode_help_exit="$(mktemp)"
+
+HERMES_FLY_IMPL_MODE=legacy ./hermes-fly version --help >"${wrapper_legacy_ts_help_out}" 2>"${wrapper_legacy_ts_help_err}"
+printf "%s\n" "$?" >"${wrapper_legacy_ts_help_exit}"
+HERMES_FLY_IMPL_MODE=ts HERMES_FLY_TS_COMMANDS=version ./hermes-fly version --help >"${wrapper_ts_mode_help_out}" 2>"${wrapper_ts_mode_help_err}"
+printf "%s\n" "$?" >"${wrapper_ts_mode_help_exit}"
+
+diff -u "${wrapper_legacy_ts_help_out}" "${wrapper_ts_mode_help_out}"
+diff -u "${wrapper_legacy_ts_help_err}" "${wrapper_ts_mode_help_err}"
+diff -u "${wrapper_legacy_ts_help_exit}" "${wrapper_ts_mode_help_exit}"
+
+rm -f "${wrapper_legacy_ts_help_out}" "${wrapper_legacy_ts_help_err}" "${wrapper_legacy_ts_help_exit}" \
+  "${wrapper_ts_mode_help_out}" "${wrapper_ts_mode_help_err}" "${wrapper_ts_mode_help_exit}"
+
+wrapper_legacy_ts_unknown_out="$(mktemp)"
+wrapper_legacy_ts_unknown_err="$(mktemp)"
+wrapper_legacy_ts_unknown_exit="$(mktemp)"
+wrapper_ts_mode_unknown_out="$(mktemp)"
+wrapper_ts_mode_unknown_err="$(mktemp)"
+wrapper_ts_mode_unknown_exit="$(mktemp)"
+
+HERMES_FLY_IMPL_MODE=legacy ./hermes-fly version --unknown-flag >"${wrapper_legacy_ts_unknown_out}" 2>"${wrapper_legacy_ts_unknown_err}"
+printf "%s\n" "$?" >"${wrapper_legacy_ts_unknown_exit}"
+HERMES_FLY_IMPL_MODE=ts HERMES_FLY_TS_COMMANDS=version ./hermes-fly version --unknown-flag >"${wrapper_ts_mode_unknown_out}" 2>"${wrapper_ts_mode_unknown_err}"
+printf "%s\n" "$?" >"${wrapper_ts_mode_unknown_exit}"
+
+diff -u "${wrapper_legacy_ts_unknown_out}" "${wrapper_ts_mode_unknown_out}"
+diff -u "${wrapper_legacy_ts_unknown_err}" "${wrapper_ts_mode_unknown_err}"
+diff -u "${wrapper_legacy_ts_unknown_exit}" "${wrapper_ts_mode_unknown_exit}"
+
+rm -f "${wrapper_legacy_ts_unknown_out}" "${wrapper_legacy_ts_unknown_err}" "${wrapper_legacy_ts_unknown_exit}" \
+  "${wrapper_ts_mode_unknown_out}" "${wrapper_ts_mode_unknown_err}" "${wrapper_ts_mode_unknown_exit}"
+
+wrapper_legacy_h_out="$(mktemp)"
+wrapper_legacy_h_err="$(mktemp)"
+wrapper_legacy_h_exit="$(mktemp)"
+wrapper_hybrid_h_out="$(mktemp)"
+wrapper_hybrid_h_err="$(mktemp)"
+wrapper_hybrid_h_exit="$(mktemp)"
+
+HERMES_FLY_IMPL_MODE=legacy ./hermes-fly version -h >"${wrapper_legacy_h_out}" 2>"${wrapper_legacy_h_err}"
+printf "%s\n" "$?" >"${wrapper_legacy_h_exit}"
+HERMES_FLY_IMPL_MODE=hybrid HERMES_FLY_TS_COMMANDS=version ./hermes-fly version -h >"${wrapper_hybrid_h_out}" 2>"${wrapper_hybrid_h_err}"
+printf "%s\n" "$?" >"${wrapper_hybrid_h_exit}"
+
+diff -u "${wrapper_legacy_h_out}" "${wrapper_hybrid_h_out}"
+diff -u "${wrapper_legacy_h_err}" "${wrapper_hybrid_h_err}"
+diff -u "${wrapper_legacy_h_exit}" "${wrapper_hybrid_h_exit}"
+
+rm -f "${wrapper_legacy_h_out}" "${wrapper_legacy_h_err}" "${wrapper_legacy_h_exit}" \
+  "${wrapper_hybrid_h_out}" "${wrapper_hybrid_h_err}" "${wrapper_hybrid_h_exit}"
+
+wrapper_legacy_v_out="$(mktemp)"
+wrapper_legacy_v_err="$(mktemp)"
+wrapper_legacy_v_exit="$(mktemp)"
+wrapper_hybrid_v_out="$(mktemp)"
+wrapper_hybrid_v_err="$(mktemp)"
+wrapper_hybrid_v_exit="$(mktemp)"
+
+HERMES_FLY_IMPL_MODE=legacy ./hermes-fly version -V >"${wrapper_legacy_v_out}" 2>"${wrapper_legacy_v_err}"
+printf "%s\n" "$?" >"${wrapper_legacy_v_exit}"
+HERMES_FLY_IMPL_MODE=hybrid HERMES_FLY_TS_COMMANDS=version ./hermes-fly version -V >"${wrapper_hybrid_v_out}" 2>"${wrapper_hybrid_v_err}"
+printf "%s\n" "$?" >"${wrapper_hybrid_v_exit}"
+
+diff -u "${wrapper_legacy_v_out}" "${wrapper_hybrid_v_out}"
+diff -u "${wrapper_legacy_v_err}" "${wrapper_hybrid_v_err}"
+diff -u "${wrapper_legacy_v_exit}" "${wrapper_hybrid_v_exit}"
+
+rm -f "${wrapper_legacy_v_out}" "${wrapper_legacy_v_err}" "${wrapper_legacy_v_exit}" \
+  "${wrapper_hybrid_v_out}" "${wrapper_hybrid_v_err}" "${wrapper_hybrid_v_exit}"
+
+wrapper_legacy_mixed_help_first_out="$(mktemp)"
+wrapper_legacy_mixed_help_first_err="$(mktemp)"
+wrapper_legacy_mixed_help_first_exit="$(mktemp)"
+wrapper_hybrid_mixed_help_first_out="$(mktemp)"
+wrapper_hybrid_mixed_help_first_err="$(mktemp)"
+wrapper_hybrid_mixed_help_first_exit="$(mktemp)"
+
+HERMES_FLY_IMPL_MODE=legacy ./hermes-fly version --help --unknown-flag >"${wrapper_legacy_mixed_help_first_out}" 2>"${wrapper_legacy_mixed_help_first_err}"
+printf "%s\n" "$?" >"${wrapper_legacy_mixed_help_first_exit}"
+HERMES_FLY_IMPL_MODE=hybrid HERMES_FLY_TS_COMMANDS=version ./hermes-fly version --help --unknown-flag >"${wrapper_hybrid_mixed_help_first_out}" 2>"${wrapper_hybrid_mixed_help_first_err}"
+printf "%s\n" "$?" >"${wrapper_hybrid_mixed_help_first_exit}"
+
+diff -u "${wrapper_legacy_mixed_help_first_out}" "${wrapper_hybrid_mixed_help_first_out}"
+diff -u "${wrapper_legacy_mixed_help_first_err}" "${wrapper_hybrid_mixed_help_first_err}"
+diff -u "${wrapper_legacy_mixed_help_first_exit}" "${wrapper_hybrid_mixed_help_first_exit}"
+
+rm -f "${wrapper_legacy_mixed_help_first_out}" "${wrapper_legacy_mixed_help_first_err}" "${wrapper_legacy_mixed_help_first_exit}" \
+  "${wrapper_hybrid_mixed_help_first_out}" "${wrapper_hybrid_mixed_help_first_err}" "${wrapper_hybrid_mixed_help_first_exit}"
+
+wrapper_legacy_mixed_unknown_first_out="$(mktemp)"
+wrapper_legacy_mixed_unknown_first_err="$(mktemp)"
+wrapper_legacy_mixed_unknown_first_exit="$(mktemp)"
+wrapper_hybrid_mixed_unknown_first_out="$(mktemp)"
+wrapper_hybrid_mixed_unknown_first_err="$(mktemp)"
+wrapper_hybrid_mixed_unknown_first_exit="$(mktemp)"
+
+HERMES_FLY_IMPL_MODE=legacy ./hermes-fly version --unknown-flag --help >"${wrapper_legacy_mixed_unknown_first_out}" 2>"${wrapper_legacy_mixed_unknown_first_err}"
+printf "%s\n" "$?" >"${wrapper_legacy_mixed_unknown_first_exit}"
+HERMES_FLY_IMPL_MODE=hybrid HERMES_FLY_TS_COMMANDS=version ./hermes-fly version --unknown-flag --help >"${wrapper_hybrid_mixed_unknown_first_out}" 2>"${wrapper_hybrid_mixed_unknown_first_err}"
+printf "%s\n" "$?" >"${wrapper_hybrid_mixed_unknown_first_exit}"
+
+diff -u "${wrapper_legacy_mixed_unknown_first_out}" "${wrapper_hybrid_mixed_unknown_first_out}"
+diff -u "${wrapper_legacy_mixed_unknown_first_err}" "${wrapper_hybrid_mixed_unknown_first_err}"
+diff -u "${wrapper_legacy_mixed_unknown_first_exit}" "${wrapper_hybrid_mixed_unknown_first_exit}"
+
+rm -f "${wrapper_legacy_mixed_unknown_first_out}" "${wrapper_legacy_mixed_unknown_first_err}" "${wrapper_legacy_mixed_unknown_first_exit}" \
+  "${wrapper_hybrid_mixed_unknown_first_out}" "${wrapper_hybrid_mixed_unknown_first_err}" "${wrapper_hybrid_mixed_unknown_first_exit}"
+
+(
+  set -euo pipefail
+  dist_missing_tmp="$(mktemp -d)"
+  dist_backup="${dist_missing_tmp}/cli.js.bak"
+  trap 'if [[ -f "${dist_backup}" ]]; then mv "${dist_backup}" dist/cli.js; fi; rm -rf "${dist_missing_tmp}"' EXIT
+
+  mv dist/cli.js "${dist_backup}"
+
+  hybrid_help_out="${dist_missing_tmp}/hybrid-help.out"
+  hybrid_help_err="${dist_missing_tmp}/hybrid-help.err"
+  hybrid_help_exit="${dist_missing_tmp}/hybrid-help.exit"
+  ts_unknown_out="${dist_missing_tmp}/ts-unknown.out"
+  ts_unknown_err="${dist_missing_tmp}/ts-unknown.err"
+  ts_unknown_exit="${dist_missing_tmp}/ts-unknown.exit"
+
+  HERMES_FLY_IMPL_MODE=hybrid HERMES_FLY_TS_COMMANDS=version ./hermes-fly version --help >"${hybrid_help_out}" 2>"${hybrid_help_err}"
+  printf "%s\n" "$?" >"${hybrid_help_exit}"
+  HERMES_FLY_IMPL_MODE=ts HERMES_FLY_TS_COMMANDS=version ./hermes-fly version --unknown-flag >"${ts_unknown_out}" 2>"${ts_unknown_err}"
+  printf "%s\n" "$?" >"${ts_unknown_exit}"
+
+  if [[ "$(cat "${hybrid_help_out}")" != "${expected_version_line}" ]]; then
+    printf "Unexpected hybrid fallback version --help output: %s\n" "$(cat "${hybrid_help_out}")" >&2
+    exit 1
+  fi
+  if [[ "$(cat "${ts_unknown_out}")" != "${expected_version_line}" ]]; then
+    printf "Unexpected ts fallback version --unknown-flag output: %s\n" "$(cat "${ts_unknown_out}")" >&2
+    exit 1
+  fi
+  if [[ "$(cat "${hybrid_help_exit}")" != "0" ]]; then
+    printf "Unexpected hybrid fallback version --help exit: %s\n" "$(cat "${hybrid_help_exit}")" >&2
+    exit 1
+  fi
+  if [[ "$(cat "${ts_unknown_exit}")" != "0" ]]; then
+    printf "Unexpected ts fallback version --unknown-flag exit: %s\n" "$(cat "${ts_unknown_exit}")" >&2
+    exit 1
+  fi
+  if [[ "$(wc -l < "${hybrid_help_err}" | tr -d "[:space:]")" != "1" ]]; then
+    printf "Unexpected hybrid fallback version --help stderr line count: %s\n" "$(wc -l < "${hybrid_help_err}")" >&2
+    exit 1
+  fi
+  if [[ "$(wc -l < "${ts_unknown_err}" | tr -d "[:space:]")" != "1" ]]; then
+    printf "Unexpected ts fallback version --unknown-flag stderr line count: %s\n" "$(wc -l < "${ts_unknown_err}")" >&2
+    exit 1
+  fi
+
+  grep -x "Warning: TS implementation unavailable for command 'version'; falling back to legacy" "${hybrid_help_err}" >/dev/null
+  grep -x "Warning: TS implementation unavailable for command 'version'; falling back to legacy" "${ts_unknown_err}" >/dev/null
+)
+
 tmp="$(mktemp -d)"
 trap 'rm -rf "${tmp}"' EXIT
 mkdir -p "${tmp}/config" "${tmp}/logs"
@@ -53,5 +310,37 @@ PATH="tests/mocks:${PATH}" HERMES_FLY_CONFIG_DIR="${tmp}/config" HERMES_FLY_LOG_
 diff -u tests/parity/baseline/list.stdout.snap "${tmp}/out"
 diff -u tests/parity/baseline/list.stderr.snap "${tmp}/err"
 diff -u tests/parity/baseline/list.exit.snap "${tmp}/exit"
+
+PATH="tests/mocks:${PATH}" HERMES_FLY_CONFIG_DIR="${tmp}/config" HERMES_FLY_LOG_DIR="${tmp}/logs" \
+  TMP_DIR="${tmp}" bash -c '
+    source ./lib/config.sh
+    config_save_app "test-app" "ord"
+    HERMES_FLY_IMPL_MODE=legacy ./hermes-fly list --help >"${TMP_DIR}/legacy-help.out" 2>"${TMP_DIR}/legacy-help.err"
+    printf "%s\n" "$?" >"${TMP_DIR}/legacy-help.exit"
+    HERMES_FLY_IMPL_MODE=hybrid HERMES_FLY_TS_COMMANDS=list ./hermes-fly list --help >"${TMP_DIR}/ts-help.out" 2>"${TMP_DIR}/ts-help.err"
+    printf "%s\n" "$?" >"${TMP_DIR}/ts-help.exit"
+    HERMES_FLY_IMPL_MODE=legacy ./hermes-fly list --unknown-flag >"${TMP_DIR}/legacy-unknown.out" 2>"${TMP_DIR}/legacy-unknown.err"
+    printf "%s\n" "$?" >"${TMP_DIR}/legacy-unknown.exit"
+    HERMES_FLY_IMPL_MODE=hybrid HERMES_FLY_TS_COMMANDS=list ./hermes-fly list --unknown-flag >"${TMP_DIR}/ts-unknown.out" 2>"${TMP_DIR}/ts-unknown.err"
+    printf "%s\n" "$?" >"${TMP_DIR}/ts-unknown.exit"
+  '
+
+diff -u "${tmp}/legacy-help.out" "${tmp}/ts-help.out"
+diff -u "${tmp}/legacy-help.err" "${tmp}/ts-help.err"
+diff -u "${tmp}/legacy-help.exit" "${tmp}/ts-help.exit"
+diff -u "${tmp}/legacy-unknown.out" "${tmp}/ts-unknown.out"
+diff -u "${tmp}/legacy-unknown.err" "${tmp}/ts-unknown.err"
+diff -u "${tmp}/legacy-unknown.exit" "${tmp}/ts-unknown.exit"
+
+review3_report="docs/plans/typescript-commander-hybrid-rewrite-pr-d1-list-command-20260312-review-3-implementation-report.md"
+if [[ ! -f "${review3_report}" ]]; then
+  printf "Missing required review-3 implementation report: %s\n" "${review3_report}" >&2
+  exit 1
+fi
+
+grep -x "## Summary" "${review3_report}" >/dev/null
+grep -x "## Section 5 Verification Command Log Summary" "${review3_report}" >/dev/null
+grep -F "scripts/install.sh" "${review3_report}" >/dev/null
+grep -F "scripts/release-guard.sh" "${review3_report}" >/dev/null
 
 printf 'PR-D1 verification passed.\n'
