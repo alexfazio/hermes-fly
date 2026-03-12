@@ -383,6 +383,24 @@ teardown() {
   rm -f "$cache_file"
 }
 
+@test "openrouter_fetch_models: missing required data field fails safely" {
+  local api_key="test-key-12345"
+
+  curl() {
+    echo '{"models":[{"id":"openai/gpt-5-mini"}]}'
+    return 0
+  }
+  export -f curl
+
+  local cache_file
+  cache_file="$(mktemp)"
+
+  openrouter_fetch_models "$api_key" "$cache_file" >/dev/null 2>&1 || local status=$?
+  [ "${status:-0}" -ne 0 ]
+
+  rm -f "$cache_file"
+}
+
 # ============================================================================
 # Integration: full flow with provider-first selection
 # ============================================================================
@@ -429,6 +447,27 @@ teardown() {
   result=$(openrouter_setup_with_models "$api_key")
   rm -f "$call_count_file"
   [[ "$result" == "openai/gpt-5" ]]
+}
+
+@test "openrouter_setup_with_models: incomplete model metadata falls back to manual entry safely" {
+  local api_key="test-key"
+  local payload='{"data":[{"name":"Missing ID only"}]}'
+
+  curl() {
+    echo "$payload"
+    return 0
+  }
+  export -f curl
+
+  openrouter_manual_fallback() {
+    echo "openai/gpt-5-mini"
+    return 0
+  }
+  export -f openrouter_manual_fallback
+
+  local result
+  result="$(openrouter_setup_with_models "$api_key")"
+  [ "$result" = "openai/gpt-5-mini" ]
 }
 
 # ============================================================================

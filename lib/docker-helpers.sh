@@ -18,12 +18,14 @@ DOCKER_HELPERS_SCRIPT_DIR="$(cd -P "$(dirname "$_docker_helpers_source")" && pwd
 DOCKER_HELPERS_TEMPLATE_DIR="${DOCKER_HELPERS_SCRIPT_DIR}/../templates"
 unset _docker_helpers_source _docker_helpers_link_dir
 
-# docker_generate_dockerfile "output_dir" "hermes_version"
+# docker_generate_dockerfile "output_dir" "hermes_version" ["channel"] ["compat_policy_version"]
 #   Read templates/Dockerfile.template, substitute {{HERMES_VERSION}},
 #   and write the result to output_dir/Dockerfile.
 docker_generate_dockerfile() {
   local output_dir="$1"
   local version="$2"
+  local channel="${3:-stable}"
+  local compat_policy="${4:-unknown}"
   local template="${DOCKER_HELPERS_TEMPLATE_DIR}/Dockerfile.template"
 
   if [[ ! -f "$template" ]]; then
@@ -33,9 +35,15 @@ docker_generate_dockerfile() {
 
   mkdir -p "$output_dir"
   # M1: escape sed replacement-significant chars (& backreference, | delimiter, / and \)
-  local safe_version
+  local safe_version safe_channel safe_compat_policy
   safe_version="$(printf '%s' "$version" | sed -e 's/[&|\\/]/\\&/g')"
-  sed -e "s|{{HERMES_VERSION}}|${safe_version}|g" "$template" >"${output_dir}/Dockerfile"
+  safe_channel="$(printf '%s' "$channel" | sed -e 's/[&|\\/]/\\&/g')"
+  safe_compat_policy="$(printf '%s' "$compat_policy" | sed -e 's/[&|\\/]/\\&/g')"
+  sed \
+    -e "s|{{HERMES_VERSION}}|${safe_version}|g" \
+    -e "s|{{HERMES_CHANNEL}}|${safe_channel}|g" \
+    -e "s|{{HERMES_COMPAT_POLICY}}|${safe_compat_policy}|g" \
+    "$template" >"${output_dir}/Dockerfile"
 }
 
 # docker_generate_fly_toml "output_dir" "app_name" "region" "vm_size" "vm_memory" "volume_name" "volume_size"

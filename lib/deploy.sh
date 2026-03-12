@@ -617,28 +617,20 @@ deploy_parse_vm_sizes() {
 
   [[ "$json" == "[]" || -z "$json" ]] && return 0
 
-  local names_raw mem_raw prices_raw
-  names_raw="$(printf '%s' "$json" | grep -oE '"name"\s*:\s*"[^"]*"' | sed 's/.*"\([^"]*\)"$/\1/')"
-  mem_raw="$(printf '%s' "$json" | grep -oE '"memory_mb"\s*:\s*[0-9]+' | grep -oE '[0-9]+$')"
-  prices_raw="$(printf '%s' "$json" | grep -oE '"price_month"\s*:\s*[0-9.]+' | grep -oE '[0-9.]+$')"
-
-  local n_arr=() m_arr=() p_arr=() line
-  while IFS= read -r line; do
-    [[ -n "$line" ]] && n_arr+=("$line")
-  done <<<"$names_raw"
-  while IFS= read -r line; do
-    [[ -n "$line" ]] && m_arr+=("$line")
-  done <<<"$mem_raw"
-  while IFS= read -r line; do
-    [[ -n "$line" ]] && p_arr+=("$line")
-  done <<<"$prices_raw"
-
-  local i
-  for i in "${!n_arr[@]}"; do
-    _VM_NAMES+=("${n_arr[$i]}")
-    _VM_MEMORY+=("${m_arr[$i]:-0}")
-    _VM_PRICES+=("${p_arr[$i]:-0}")
-  done
+  # Parse per-object to avoid cross-record field skew when Fly payloads are incomplete.
+  local obj name mem price objects_raw
+  objects_raw="$(printf '%s' "$json" | tr '\n' ' ' | sed 's/^\[//;s/\]$//;s/}[[:space:]]*,[[:space:]]*{/}\
+{/g')"
+  while IFS= read -r obj; do
+    [[ -z "$obj" ]] && continue
+    name="$(printf '%s' "$obj" | sed -n 's/.*"name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')"
+    [[ -z "$name" ]] && continue
+    mem="$(printf '%s' "$obj" | sed -n 's/.*"memory_mb"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p')"
+    price="$(printf '%s' "$obj" | sed -n 's/.*"price_month"[[:space:]]*:[[:space:]]*\([0-9.][0-9.]*\).*/\1/p')"
+    _VM_NAMES+=("$name")
+    _VM_MEMORY+=("${mem:-0}")
+    _VM_PRICES+=("${price:-0}")
+  done <<<"$objects_raw"
 }
 
 # --------------------------------------------------------------------------
@@ -1106,7 +1098,11 @@ deploy_create_build_context() {
   DEPLOY_HERMES_AGENT_REF="$hermes_ref"
   export DEPLOY_HERMES_AGENT_REF
 
-  if ! docker_generate_dockerfile "$build_dir" "$hermes_ref"; then
+  if ! docker_generate_dockerfile \
+    "$build_dir" \
+    "$hermes_ref" \
+    "${DEPLOY_CHANNEL:-stable}" \
+    "${REASONING_SNAPSHOT_VERSION:-unknown}"; then
     ui_error "Failed to generate Dockerfile"
     return 1
   fi

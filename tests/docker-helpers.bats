@@ -17,6 +17,8 @@ teardown() { _common_teardown; }
   assert [ -f "$TEST_TEMP_DIR/Dockerfile" ]
   run cat "$TEST_TEMP_DIR/Dockerfile"
   assert_output --partial "HERMES_VERSION=main"
+  assert_output --partial 'io.hermes.deploy.channel="stable"'
+  assert_output --partial 'io.hermes.compatibility_policy="unknown"'
 }
 
 @test "generate_dockerfile with SHA version" {
@@ -25,6 +27,16 @@ teardown() { _common_teardown; }
   assert [ -f "$TEST_TEMP_DIR/Dockerfile" ]
   run cat "$TEST_TEMP_DIR/Dockerfile"
   assert_output --partial "HERMES_VERSION=abc123def"
+}
+
+@test "generate_dockerfile renders explicit channel and compat policy metadata" {
+  run docker_generate_dockerfile "$TEST_TEMP_DIR" "abc123def" "preview" "1.0.0"
+  assert_success
+  run cat "$TEST_TEMP_DIR/Dockerfile"
+  assert_output --partial "ARG HERMES_CHANNEL=preview"
+  assert_output --partial "ARG HERMES_COMPAT_POLICY=1.0.0"
+  assert_output --partial 'io.hermes.deploy.channel="preview"'
+  assert_output --partial 'io.hermes.compatibility_policy="1.0.0"'
 }
 
 # --- docker_generate_fly_toml ---
@@ -62,6 +74,12 @@ teardown() { _common_teardown; }
   local template="${PROJECT_ROOT}/templates/Dockerfile.template"
   run cat "$template"
   assert_output --partial "--skip-setup"
+}
+
+@test "templates/Dockerfile.template installs hermes-agent from versioned install entrypoint path" {
+  local template="${PROJECT_ROOT}/templates/Dockerfile.template"
+  run cat "$template"
+  assert_output --partial "raw.githubusercontent.com/NousResearch/hermes-agent/\${HERMES_VERSION}/scripts/install.sh"
 }
 
 # --- docker_validate_dockerfile ---

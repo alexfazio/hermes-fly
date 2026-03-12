@@ -32,6 +32,16 @@ specific release:
 HERMES_FLY_VERSION=vX.Y.Z curl -fsSL "https://raw.githubusercontent.com/alexfazio/hermes-fly/main/scripts/install.sh" | bash
 ```
 
+Install channels are also supported via `HERMES_FLY_CHANNEL`:
+
+- `stable` (default): latest release tag
+- `preview`: currently follows `stable` until a dedicated preview stream is published
+- `edge`: installs from moving `main` (non-reproducible)
+
+```bash
+HERMES_FLY_CHANNEL=edge curl -fsSL "https://raw.githubusercontent.com/alexfazio/hermes-fly/main/scripts/install.sh" | bash
+```
+
 Or clone and run directly:
 
 ```bash
@@ -124,6 +134,7 @@ See the [docs/](docs/) directory for detailed guides:
 - [Getting Started](docs/getting-started.md) -- step-by-step deployment walkthrough
 - [Messaging Setup](docs/messaging.md) -- Telegram and Discord configuration
 - [Troubleshooting](docs/troubleshooting.md) -- common issues and fixes
+- [Release Operations](docs/release-operations.md) -- stable promotion gates, drift checks, and rollback playbook
 
 ---
 

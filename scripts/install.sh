@@ -81,13 +81,43 @@ resolve_latest_release_tag() {
   resolve_latest_release_tag_via_git
 }
 
+resolve_install_channel() {
+  local channel="${HERMES_FLY_CHANNEL:-stable}"
+  if [[ -z "$channel" ]]; then
+    channel="stable"
+  fi
+
+  case "$channel" in
+    stable | preview | edge)
+      printf '%s\n' "$channel"
+      ;;
+    *)
+      echo "Warning: Unknown HERMES_FLY_CHANNEL '${channel}', falling back to stable" >&2
+      printf 'stable\n'
+      ;;
+  esac
+}
+
 resolve_install_ref() {
+  local channel="${1:-stable}"
   if [[ -n "${HERMES_FLY_VERSION:-}" ]]; then
     normalize_install_ref "$HERMES_FLY_VERSION"
     return 0
   fi
 
-  resolve_latest_release_tag
+  case "$channel" in
+    edge)
+      # Edge is explicitly moving/non-reproducible.
+      printf 'main\n'
+      ;;
+    preview)
+      # Preview channel follows latest stable release until a dedicated preview stream exists.
+      resolve_latest_release_tag
+      ;;
+    *)
+      resolve_latest_release_tag
+      ;;
+  esac
 }
 
 verify_checksum() {
@@ -192,12 +222,14 @@ install_files() {
 main() {
   echo "Installing hermes-fly..."
 
-  local platform arch install_ref
+  local platform arch install_ref install_channel
   platform="$(detect_platform)" || exit 1
   arch="$(detect_arch)" || exit 1
-  install_ref="$(resolve_install_ref)" || exit 1
+  install_channel="$(resolve_install_channel)" || exit 1
+  install_ref="$(resolve_install_ref "$install_channel")" || exit 1
 
   echo "Platform: $platform/$arch"
+  echo "Channel: $install_channel"
   echo "Install to: $HERMES_HOME"
   echo "Symlink in: $INSTALL_DIR"
   echo "Release: $install_ref"

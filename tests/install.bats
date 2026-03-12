@@ -74,6 +74,45 @@ teardown() {
 
 # --- release resolution ---
 
+@test "resolve_install_channel defaults to stable" {
+  run bash -c '
+    unset HERMES_FLY_CHANNEL
+    source "'"${PROJECT_ROOT}"'/scripts/install.sh"
+    resolve_install_channel
+  '
+  assert_success
+  assert_output "stable"
+}
+
+@test "resolve_install_channel accepts preview and edge" {
+  run bash -c '
+    export HERMES_FLY_CHANNEL="preview"
+    source "'"${PROJECT_ROOT}"'/scripts/install.sh"
+    resolve_install_channel
+  '
+  assert_success
+  assert_output "preview"
+
+  run bash -c '
+    export HERMES_FLY_CHANNEL="edge"
+    source "'"${PROJECT_ROOT}"'/scripts/install.sh"
+    resolve_install_channel
+  '
+  assert_success
+  assert_output "edge"
+}
+
+@test "resolve_install_channel unknown value falls back to stable with warning" {
+  run bash -c '
+    export HERMES_FLY_CHANNEL="nightly"
+    source "'"${PROJECT_ROOT}"'/scripts/install.sh"
+    resolve_install_channel 2>&1
+  '
+  assert_success
+  assert_output --partial "stable"
+  assert_output --partial "Warning"
+}
+
 @test "resolve_install_ref uses latest GitHub release by default" {
   local mock_dir="${TEST_TEMP_DIR}/mock_bin"
   mkdir -p "$mock_dir"
@@ -92,6 +131,16 @@ MOCK
   assert_output "v0.1.12"
 }
 
+@test "resolve_install_ref returns main for edge channel by default" {
+  run bash -c '
+    unset HERMES_FLY_VERSION
+    source "'"${PROJECT_ROOT}"'/scripts/install.sh"
+    resolve_install_ref edge
+  '
+  assert_success
+  assert_output "main"
+}
+
 @test "resolve_install_ref normalizes HERMES_FLY_VERSION override without v prefix" {
   run bash -c '
     export HERMES_FLY_VERSION="0.1.12"
@@ -100,6 +149,16 @@ MOCK
   '
   assert_success
   assert_output "v0.1.12"
+}
+
+@test "resolve_install_ref explicit HERMES_FLY_VERSION override wins over edge channel" {
+  run bash -c '
+    export HERMES_FLY_VERSION="0.9.1"
+    source "'"${PROJECT_ROOT}"'/scripts/install.sh"
+    resolve_install_ref edge
+  '
+  assert_success
+  assert_output "v0.9.1"
 }
 
 # --- main() with git clone ---
@@ -150,6 +209,45 @@ MOCK
   run cat "$git_args_file"
   assert_success
   assert_output --partial "--branch v0.1.12"
+}
+
+@test "install main uses main branch when HERMES_FLY_CHANNEL=edge" {
+  local mock_dir="${TEST_TEMP_DIR}/mock_bin"
+  mkdir -p "$mock_dir"
+  local git_args_file="${TEST_TEMP_DIR}/git_args_edge"
+
+  cat > "$mock_dir/git" <<'MOCK'
+#!/usr/bin/env bash
+if [[ "$1" == "clone" ]]; then
+  printf '%s\n' "$*" > "${MOCK_GIT_ARGS_FILE}"
+  dest="${@: -1}"
+  mkdir -p "$dest/lib" "$dest/templates" "$dest/data"
+  printf '#!/bin/sh\necho "hermes-fly 0.0.0-dev"\n' > "$dest/hermes-fly"
+  echo 'ui' > "$dest/lib/ui.sh"
+  echo 'tpl' > "$dest/templates/Dockerfile.template"
+  echo '{}' > "$dest/data/reasoning-snapshot.json"
+  exit 0
+fi
+exit 1
+MOCK
+  chmod +x "$mock_dir/git"
+
+  local install_home="${TEST_TEMP_DIR}/hermes_home_edge"
+  local install_bin="${TEST_TEMP_DIR}/install_bin_edge"
+  run bash -c '
+    export HERMES_FLY_CHANNEL="edge"
+    export HERMES_FLY_HOME="'"$install_home"'"
+    export HERMES_FLY_INSTALL_DIR="'"$install_bin"'"
+    export MOCK_GIT_ARGS_FILE="'"$git_args_file"'"
+    export PATH="'"$mock_dir"':${PATH}"
+    source "'"${PROJECT_ROOT}"'/scripts/install.sh"
+    main
+  '
+  assert_success
+  assert_output --partial "Channel: edge"
+  run cat "$git_args_file"
+  assert_success
+  assert_output --partial "--branch main"
 }
 
 @test "install main fails when installed version does not match requested release" {

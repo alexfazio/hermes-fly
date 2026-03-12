@@ -591,6 +591,18 @@ teardown() {
   [[ "${_VM_MEMORY[1]}" == "512" ]]
 }
 
+@test "deploy_parse_vm_sizes handles incomplete Fly payload fields safely" {
+  # Missing memory/price must not shift values between records.
+  local json='[{"name":"shared-cpu-1x","cpu_cores":1},{"name":"shared-cpu-2x","cpu_cores":2,"memory_mb":512}]'
+  deploy_parse_vm_sizes "$json"
+  [[ "${_VM_NAMES[0]}" == "shared-cpu-1x" ]]
+  [[ "${_VM_MEMORY[0]}" == "0" ]]
+  [[ "${_VM_PRICES[0]}" == "0" ]]
+  [[ "${_VM_NAMES[1]}" == "shared-cpu-2x" ]]
+  [[ "${_VM_MEMORY[1]}" == "512" ]]
+  [[ "${_VM_PRICES[1]}" == "0" ]]
+}
+
 @test "deploy_collect_vm_size uses dynamic pricing from fly API" {
   # Pick option 1 explicitly
   run bash -c 'export NO_COLOR=1; export PATH="'"${BATS_TEST_DIRNAME}/mocks:${PATH}"'"; source lib/ui.sh; source lib/fly-helpers.sh; source lib/docker-helpers.sh; source lib/messaging.sh; source lib/config.sh; source lib/status.sh; source lib/deploy.sh; deploy_collect_vm_size SIZE MEM <<< "1" 2>/dev/null; echo "SIZE=$SIZE MEM=$MEM"'

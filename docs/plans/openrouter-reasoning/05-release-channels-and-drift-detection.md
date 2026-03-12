@@ -2,7 +2,7 @@
 
 Date: 2026-03-10
 Scope: `hermes-fly` repo only
-Status: Ready for implementation
+Status: Implemented (2026-03-12)
 
 ## Problem
 

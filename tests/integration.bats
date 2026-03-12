@@ -13,15 +13,19 @@ teardown() {
 # --- Version ---
 
 @test "hermes-fly --version outputs version string" {
+  local expected
+  expected="$(sed -n 's/^HERMES_FLY_VERSION=\"\\([0-9.]*\\)\"/\\1/p' "${PROJECT_ROOT}/hermes-fly" | head -1)"
   run "${PROJECT_ROOT}/hermes-fly" --version
   assert_success
-  assert_output --partial "hermes-fly 0.1.18"
+  assert_output --partial "hermes-fly ${expected}"
 }
 
 @test "hermes-fly version outputs version string" {
+  local expected
+  expected="$(sed -n 's/^HERMES_FLY_VERSION=\"\\([0-9.]*\\)\"/\\1/p' "${PROJECT_ROOT}/hermes-fly" | head -1)"
   run "${PROJECT_ROOT}/hermes-fly" version
   assert_success
-  assert_output --partial "hermes-fly 0.1.18"
+  assert_output --partial "hermes-fly ${expected}"
 }
 
 # --- Help ---
@@ -122,4 +126,31 @@ teardown() {
   run bash -c 'export NO_COLOR=1; export PATH="'"${BATS_TEST_DIRNAME}/mocks:${PATH}"'"; source '"${PROJECT_ROOT}"'/lib/ui.sh; source '"${PROJECT_ROOT}"'/lib/fly-helpers.sh; source '"${PROJECT_ROOT}"'/lib/docker-helpers.sh; source '"${PROJECT_ROOT}"'/lib/messaging.sh; source '"${PROJECT_ROOT}"'/lib/config.sh; source '"${PROJECT_ROOT}"'/lib/status.sh; source '"${PROJECT_ROOT}"'/lib/reasoning.sh; source '"${PROJECT_ROOT}"'/lib/deploy.sh
   HERMES_FLY_CHANNEL=preview result=$(deploy_resolve_channel); echo "$result"'
   assert_output --partial "preview"
+}
+
+@test "channel end-to-end matrix resolves expected refs for stable preview edge (PR-05)" {
+  run bash -c 'set -euo pipefail
+    export NO_COLOR=1
+    export PATH="'"${BATS_TEST_DIRNAME}/mocks:${PATH}"'"
+    source "'"${PROJECT_ROOT}"'/lib/ui.sh"
+    source "'"${PROJECT_ROOT}"'/lib/fly-helpers.sh"
+    source "'"${PROJECT_ROOT}"'/lib/docker-helpers.sh"
+    source "'"${PROJECT_ROOT}"'/lib/messaging.sh"
+    source "'"${PROJECT_ROOT}"'/lib/config.sh"
+    source "'"${PROJECT_ROOT}"'/lib/status.sh"
+    source "'"${PROJECT_ROOT}"'/lib/reasoning.sh"
+    source "'"${PROJECT_ROOT}"'/lib/deploy.sh"
+
+    for ch in stable preview edge; do
+      export HERMES_FLY_CHANNEL="$ch"
+      DEPLOY_CHANNEL="$(deploy_resolve_channel)"
+      export DEPLOY_CHANNEL
+      resolved_ref="$(deploy_resolve_hermes_ref)"
+      printf "%s:%s:%s\n" "$ch" "$DEPLOY_CHANNEL" "$resolved_ref"
+    done
+  '
+  assert_success
+  assert_output --partial "stable:stable:8eefbef91cd715cfe410bba8c13cfab4eb3040df"
+  assert_output --partial "preview:preview:8eefbef91cd715cfe410bba8c13cfab4eb3040df"
+  assert_output --partial "edge:edge:main"
 }

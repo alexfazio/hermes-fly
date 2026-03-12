@@ -7,6 +7,10 @@ if printf '%s' "$*" | grep -q "api.telegram.org.*getMe"; then
         printf '{"ok":false,"error_code":401,"description":"Unauthorized"}\n'
         exit 7
     fi
+    if [[ "${MOCK_TELEGRAM_GETME_MISSING_USERNAME:-false}" == "true" ]]; then
+        printf '{"ok":true,"result":{"id":12345,"is_bot":true,"first_name":"Test Hermes"}}\n'
+        exit 0
+    fi
     printf '{"ok":true,"result":{"id":12345,"is_bot":true,"first_name":"Test Hermes","username":"test_hermes_bot"}}\n'
     exit 0
 fi

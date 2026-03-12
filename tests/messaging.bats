@@ -228,6 +228,13 @@ teardown() {
   assert_failure
 }
 
+@test "messaging_validate_telegram_token_api fails safely when Telegram response lacks username" {
+  run bash -c 'export NO_COLOR=1; export PATH="'"${BATS_TEST_DIRNAME}/mocks:${PATH}"'"; export MOCK_TELEGRAM_GETME_MISSING_USERNAME=true;
+    source '"${PROJECT_ROOT}"'/lib/ui.sh; source '"${PROJECT_ROOT}"'/lib/messaging.sh;
+    messaging_validate_telegram_token_api "123456:ValidToken"'
+  assert_failure
+}
+
 @test "messaging_detect_telegram_poll_conflict returns 0 on active long-poll conflict" {
   run bash -c 'export NO_COLOR=1; export PATH="'"${BATS_TEST_DIRNAME}/mocks:${PATH}"'"; export MOCK_TELEGRAM_GETUPDATES_CONFLICT=true;
     source '"${PROJECT_ROOT}"'/lib/ui.sh; source '"${PROJECT_ROOT}"'/lib/messaging.sh;
