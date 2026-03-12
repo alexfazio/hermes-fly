@@ -266,6 +266,18 @@ rm -f "${wrapper_legacy_mixed_unknown_first_out}" "${wrapper_legacy_mixed_unknow
   hybrid_mixed_out="${dist_missing_tmp}/hybrid-mixed.out"
   hybrid_mixed_err="${dist_missing_tmp}/hybrid-mixed.err"
   hybrid_mixed_exit="${dist_missing_tmp}/hybrid-mixed.exit"
+  hybrid_unknown_help_out="${dist_missing_tmp}/hybrid-unknown-help.out"
+  hybrid_unknown_help_err="${dist_missing_tmp}/hybrid-unknown-help.err"
+  hybrid_unknown_help_exit="${dist_missing_tmp}/hybrid-unknown-help.exit"
+  ts_help_out="${dist_missing_tmp}/ts-help.out"
+  ts_help_err="${dist_missing_tmp}/ts-help.err"
+  ts_help_exit="${dist_missing_tmp}/ts-help.exit"
+  ts_h_out="${dist_missing_tmp}/ts-h.out"
+  ts_h_err="${dist_missing_tmp}/ts-h.err"
+  ts_h_exit="${dist_missing_tmp}/ts-h.exit"
+  ts_v_out="${dist_missing_tmp}/ts-v.out"
+  ts_v_err="${dist_missing_tmp}/ts-v.err"
+  ts_v_exit="${dist_missing_tmp}/ts-v.exit"
   ts_unknown_out="${dist_missing_tmp}/ts-unknown.out"
   ts_unknown_err="${dist_missing_tmp}/ts-unknown.err"
   ts_unknown_exit="${dist_missing_tmp}/ts-unknown.exit"
@@ -281,6 +293,14 @@ rm -f "${wrapper_legacy_mixed_unknown_first_out}" "${wrapper_legacy_mixed_unknow
   printf "%s\n" "$?" >"${hybrid_v_exit}"
   HERMES_FLY_IMPL_MODE=hybrid HERMES_FLY_TS_COMMANDS=version ./hermes-fly version --help --unknown-flag >"${hybrid_mixed_out}" 2>"${hybrid_mixed_err}"
   printf "%s\n" "$?" >"${hybrid_mixed_exit}"
+  HERMES_FLY_IMPL_MODE=hybrid HERMES_FLY_TS_COMMANDS=version ./hermes-fly version --unknown-flag --help >"${hybrid_unknown_help_out}" 2>"${hybrid_unknown_help_err}"
+  printf "%s\n" "$?" >"${hybrid_unknown_help_exit}"
+  HERMES_FLY_IMPL_MODE=ts HERMES_FLY_TS_COMMANDS=version ./hermes-fly version --help >"${ts_help_out}" 2>"${ts_help_err}"
+  printf "%s\n" "$?" >"${ts_help_exit}"
+  HERMES_FLY_IMPL_MODE=ts HERMES_FLY_TS_COMMANDS=version ./hermes-fly version -h >"${ts_h_out}" 2>"${ts_h_err}"
+  printf "%s\n" "$?" >"${ts_h_exit}"
+  HERMES_FLY_IMPL_MODE=ts HERMES_FLY_TS_COMMANDS=version ./hermes-fly version -V >"${ts_v_out}" 2>"${ts_v_err}"
+  printf "%s\n" "$?" >"${ts_v_exit}"
   HERMES_FLY_IMPL_MODE=ts HERMES_FLY_TS_COMMANDS=version ./hermes-fly version --unknown-flag >"${ts_unknown_out}" 2>"${ts_unknown_err}"
   printf "%s\n" "$?" >"${ts_unknown_exit}"
   HERMES_FLY_IMPL_MODE=ts HERMES_FLY_TS_COMMANDS=version ./hermes-fly version --unknown-flag --help >"${ts_mixed_out}" 2>"${ts_mixed_err}"
@@ -300,6 +320,22 @@ rm -f "${wrapper_legacy_mixed_unknown_first_out}" "${wrapper_legacy_mixed_unknow
   fi
   if [[ "$(cat "${hybrid_mixed_out}")" != "${expected_version_line}" ]]; then
     printf "Unexpected hybrid fallback version --help --unknown-flag output: %s\n" "$(cat "${hybrid_mixed_out}")" >&2
+    exit 1
+  fi
+  if [[ "$(cat "${hybrid_unknown_help_out}")" != "${expected_version_line}" ]]; then
+    printf "Unexpected hybrid fallback version --unknown-flag --help output: %s\n" "$(cat "${hybrid_unknown_help_out}")" >&2
+    exit 1
+  fi
+  if [[ "$(cat "${ts_help_out}")" != "${expected_version_line}" ]]; then
+    printf "Unexpected ts fallback version --help output: %s\n" "$(cat "${ts_help_out}")" >&2
+    exit 1
+  fi
+  if [[ "$(cat "${ts_h_out}")" != "${expected_version_line}" ]]; then
+    printf "Unexpected ts fallback version -h output: %s\n" "$(cat "${ts_h_out}")" >&2
+    exit 1
+  fi
+  if [[ "$(cat "${ts_v_out}")" != "${expected_version_line}" ]]; then
+    printf "Unexpected ts fallback version -V output: %s\n" "$(cat "${ts_v_out}")" >&2
     exit 1
   fi
   if [[ "$(cat "${ts_unknown_out}")" != "${expected_version_line}" ]]; then
@@ -326,6 +362,22 @@ rm -f "${wrapper_legacy_mixed_unknown_first_out}" "${wrapper_legacy_mixed_unknow
     printf "Unexpected hybrid fallback version --help --unknown-flag exit: %s\n" "$(cat "${hybrid_mixed_exit}")" >&2
     exit 1
   fi
+  if [[ "$(cat "${hybrid_unknown_help_exit}")" != "0" ]]; then
+    printf "Unexpected hybrid fallback version --unknown-flag --help exit: %s\n" "$(cat "${hybrid_unknown_help_exit}")" >&2
+    exit 1
+  fi
+  if [[ "$(cat "${ts_help_exit}")" != "0" ]]; then
+    printf "Unexpected ts fallback version --help exit: %s\n" "$(cat "${ts_help_exit}")" >&2
+    exit 1
+  fi
+  if [[ "$(cat "${ts_h_exit}")" != "0" ]]; then
+    printf "Unexpected ts fallback version -h exit: %s\n" "$(cat "${ts_h_exit}")" >&2
+    exit 1
+  fi
+  if [[ "$(cat "${ts_v_exit}")" != "0" ]]; then
+    printf "Unexpected ts fallback version -V exit: %s\n" "$(cat "${ts_v_exit}")" >&2
+    exit 1
+  fi
   if [[ "$(cat "${ts_unknown_exit}")" != "0" ]]; then
     printf "Unexpected ts fallback version --unknown-flag exit: %s\n" "$(cat "${ts_unknown_exit}")" >&2
     exit 1
@@ -350,6 +402,22 @@ rm -f "${wrapper_legacy_mixed_unknown_first_out}" "${wrapper_legacy_mixed_unknow
     printf "Unexpected hybrid fallback version --help --unknown-flag stderr line count: %s\n" "$(wc -l < "${hybrid_mixed_err}")" >&2
     exit 1
   fi
+  if [[ "$(wc -l < "${hybrid_unknown_help_err}" | tr -d "[:space:]")" != "1" ]]; then
+    printf "Unexpected hybrid fallback version --unknown-flag --help stderr line count: %s\n" "$(wc -l < "${hybrid_unknown_help_err}")" >&2
+    exit 1
+  fi
+  if [[ "$(wc -l < "${ts_help_err}" | tr -d "[:space:]")" != "1" ]]; then
+    printf "Unexpected ts fallback version --help stderr line count: %s\n" "$(wc -l < "${ts_help_err}")" >&2
+    exit 1
+  fi
+  if [[ "$(wc -l < "${ts_h_err}" | tr -d "[:space:]")" != "1" ]]; then
+    printf "Unexpected ts fallback version -h stderr line count: %s\n" "$(wc -l < "${ts_h_err}")" >&2
+    exit 1
+  fi
+  if [[ "$(wc -l < "${ts_v_err}" | tr -d "[:space:]")" != "1" ]]; then
+    printf "Unexpected ts fallback version -V stderr line count: %s\n" "$(wc -l < "${ts_v_err}")" >&2
+    exit 1
+  fi
   if [[ "$(wc -l < "${ts_unknown_err}" | tr -d "[:space:]")" != "1" ]]; then
     printf "Unexpected ts fallback version --unknown-flag stderr line count: %s\n" "$(wc -l < "${ts_unknown_err}")" >&2
     exit 1
@@ -363,6 +431,10 @@ rm -f "${wrapper_legacy_mixed_unknown_first_out}" "${wrapper_legacy_mixed_unknow
   grep -x "Warning: TS implementation unavailable for command 'version'; falling back to legacy" "${hybrid_h_err}" >/dev/null
   grep -x "Warning: TS implementation unavailable for command 'version'; falling back to legacy" "${hybrid_v_err}" >/dev/null
   grep -x "Warning: TS implementation unavailable for command 'version'; falling back to legacy" "${hybrid_mixed_err}" >/dev/null
+  grep -x "Warning: TS implementation unavailable for command 'version'; falling back to legacy" "${hybrid_unknown_help_err}" >/dev/null
+  grep -x "Warning: TS implementation unavailable for command 'version'; falling back to legacy" "${ts_help_err}" >/dev/null
+  grep -x "Warning: TS implementation unavailable for command 'version'; falling back to legacy" "${ts_h_err}" >/dev/null
+  grep -x "Warning: TS implementation unavailable for command 'version'; falling back to legacy" "${ts_v_err}" >/dev/null
   grep -x "Warning: TS implementation unavailable for command 'version'; falling back to legacy" "${ts_unknown_err}" >/dev/null
   grep -x "Warning: TS implementation unavailable for command 'version'; falling back to legacy" "${ts_mixed_err}" >/dev/null
 )

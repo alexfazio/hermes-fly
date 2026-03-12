@@ -323,6 +323,60 @@ teardown() {
   assert_line --index 2 "STDERR_FIRST=Warning: TS implementation unavailable for command 'version'; falling back to legacy"
 }
 
+@test "ts mode allowlisted version --help falls back when dist cli artifact is missing" {
+  run bash -c '
+    out_file="$(mktemp)"
+    err_file="$(mktemp)"
+    trap "rm -f \"${out_file}\" \"${err_file}\"" EXIT
+    rm -f "${PROJECT_ROOT}/dist/cli.js"
+    HERMES_FLY_IMPL_MODE=ts HERMES_FLY_TS_COMMANDS=version \
+      "${PROJECT_ROOT}/hermes-fly" version --help >"${out_file}" 2>"${err_file}"
+    printf "STDOUT=%s\n" "$(cat "${out_file}")"
+    printf "STDERR_LINES=%s\n" "$(wc -l < "${err_file}" | tr -d "[:space:]")"
+    printf "STDERR_FIRST=%s\n" "$(head -n 1 "${err_file}")"
+  '
+  assert_success
+  assert_line --index 0 "STDOUT=hermes-fly ${EXPECTED_VERSION}"
+  assert_line --index 1 "STDERR_LINES=1"
+  assert_line --index 2 "STDERR_FIRST=Warning: TS implementation unavailable for command 'version'; falling back to legacy"
+}
+
+@test "ts mode allowlisted version -h falls back when dist cli artifact is missing" {
+  run bash -c '
+    out_file="$(mktemp)"
+    err_file="$(mktemp)"
+    trap "rm -f \"${out_file}\" \"${err_file}\"" EXIT
+    rm -f "${PROJECT_ROOT}/dist/cli.js"
+    HERMES_FLY_IMPL_MODE=ts HERMES_FLY_TS_COMMANDS=version \
+      "${PROJECT_ROOT}/hermes-fly" version -h >"${out_file}" 2>"${err_file}"
+    printf "STDOUT=%s\n" "$(cat "${out_file}")"
+    printf "STDERR_LINES=%s\n" "$(wc -l < "${err_file}" | tr -d "[:space:]")"
+    printf "STDERR_FIRST=%s\n" "$(head -n 1 "${err_file}")"
+  '
+  assert_success
+  assert_line --index 0 "STDOUT=hermes-fly ${EXPECTED_VERSION}"
+  assert_line --index 1 "STDERR_LINES=1"
+  assert_line --index 2 "STDERR_FIRST=Warning: TS implementation unavailable for command 'version'; falling back to legacy"
+}
+
+@test "ts mode allowlisted version -V falls back when dist cli artifact is missing" {
+  run bash -c '
+    out_file="$(mktemp)"
+    err_file="$(mktemp)"
+    trap "rm -f \"${out_file}\" \"${err_file}\"" EXIT
+    rm -f "${PROJECT_ROOT}/dist/cli.js"
+    HERMES_FLY_IMPL_MODE=ts HERMES_FLY_TS_COMMANDS=version \
+      "${PROJECT_ROOT}/hermes-fly" version -V >"${out_file}" 2>"${err_file}"
+    printf "STDOUT=%s\n" "$(cat "${out_file}")"
+    printf "STDERR_LINES=%s\n" "$(wc -l < "${err_file}" | tr -d "[:space:]")"
+    printf "STDERR_FIRST=%s\n" "$(head -n 1 "${err_file}")"
+  '
+  assert_success
+  assert_line --index 0 "STDOUT=hermes-fly ${EXPECTED_VERSION}"
+  assert_line --index 1 "STDERR_LINES=1"
+  assert_line --index 2 "STDERR_FIRST=Warning: TS implementation unavailable for command 'version'; falling back to legacy"
+}
+
 @test "hybrid mode allowlisted version -h falls back when dist cli artifact is missing" {
   run bash -c '
     out_file="$(mktemp)"
@@ -331,6 +385,24 @@ teardown() {
     rm -f "${PROJECT_ROOT}/dist/cli.js"
     HERMES_FLY_IMPL_MODE=hybrid HERMES_FLY_TS_COMMANDS=version \
       "${PROJECT_ROOT}/hermes-fly" version -h >"${out_file}" 2>"${err_file}"
+    printf "STDOUT=%s\n" "$(cat "${out_file}")"
+    printf "STDERR_LINES=%s\n" "$(wc -l < "${err_file}" | tr -d "[:space:]")"
+    printf "STDERR_FIRST=%s\n" "$(head -n 1 "${err_file}")"
+  '
+  assert_success
+  assert_line --index 0 "STDOUT=hermes-fly ${EXPECTED_VERSION}"
+  assert_line --index 1 "STDERR_LINES=1"
+  assert_line --index 2 "STDERR_FIRST=Warning: TS implementation unavailable for command 'version'; falling back to legacy"
+}
+
+@test "hybrid mode allowlisted version --unknown-flag --help falls back when dist cli artifact is missing" {
+  run bash -c '
+    out_file="$(mktemp)"
+    err_file="$(mktemp)"
+    trap "rm -f \"${out_file}\" \"${err_file}\"" EXIT
+    rm -f "${PROJECT_ROOT}/dist/cli.js"
+    HERMES_FLY_IMPL_MODE=hybrid HERMES_FLY_TS_COMMANDS=version \
+      "${PROJECT_ROOT}/hermes-fly" version --unknown-flag --help >"${out_file}" 2>"${err_file}"
     printf "STDOUT=%s\n" "$(cat "${out_file}")"
     printf "STDERR_LINES=%s\n" "$(wc -l < "${err_file}" | tr -d "[:space:]")"
     printf "STDERR_FIRST=%s\n" "$(head -n 1 "${err_file}")"
