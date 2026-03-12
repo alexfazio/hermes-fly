@@ -50,3 +50,14 @@ teardown() {
   assert_success
   assert_output --partial "telegram"
 }
+
+@test "_config_file normalizes HOME-unset fallback to /.hermes-fly" {
+  run bash -c '
+    set -euo pipefail
+    source "${PROJECT_ROOT}/lib/config.sh"
+    unset HERMES_FLY_CONFIG_DIR
+    unset HOME
+    test "$(_config_file)" = "/.hermes-fly/config.yaml"
+  '
+  assert_success
+}

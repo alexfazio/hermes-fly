@@ -10,7 +10,22 @@ fi
 # --- Config path ---
 
 _config_file() {
-  echo "${HERMES_FLY_CONFIG_DIR:-${HOME:-/}/.hermes-fly}/config.yaml"
+  if [[ -n "${HERMES_FLY_CONFIG_DIR:-}" ]]; then
+    local config_dir="${HERMES_FLY_CONFIG_DIR}"
+    if [[ "${config_dir}" != "/" ]]; then
+      config_dir="${config_dir%/}"
+    fi
+    echo "${config_dir}/config.yaml"
+    return
+  fi
+
+  local home="${HOME:-}"
+  if [[ -z "${home}" || "${home}" == "/" ]]; then
+    echo "/.hermes-fly/config.yaml"
+    return
+  fi
+
+  echo "${home%/}/.hermes-fly/config.yaml"
 }
 
 # --- config_init ---

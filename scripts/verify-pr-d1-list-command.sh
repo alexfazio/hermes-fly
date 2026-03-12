@@ -13,7 +13,9 @@ required_files=(
   "src/contexts/runtime/infrastructure/adapters/fly-deployment-registry.ts"
   "tests-ts/runtime/list-deployments.test.ts"
   "tests/list-ts-hybrid.bats"
+  "tests/verify-pr-d1-report-content.bats"
   "scripts/verify-pr-d1-list-command.sh"
+  "scripts/verify-pr-d1-report-content.sh"
 )
 
 for file in "${required_files[@]}"; do
@@ -32,6 +34,7 @@ npm run test:runtime-list
 tests/bats/bin/bats \
   tests/list-ts-hybrid.bats \
   tests/list.bats \
+  tests/verify-pr-d1-report-content.bats \
   tests/parity-harness.bats \
   tests/hybrid-dispatch.bats \
   tests/integration.bats
@@ -613,35 +616,9 @@ YAML
 )
 
 review3_report="docs/plans/typescript-commander-hybrid-rewrite-pr-d1-list-command-20260312-review-3-implementation-report.md"
-if [[ ! -f "${review3_report}" ]]; then
-  printf "Missing required review-3 implementation report: %s\n" "${review3_report}" >&2
-  exit 1
-fi
-
-grep -x "## Summary" "${review3_report}" >/dev/null
-grep -x "## Section 5 Verification Command Log Summary" "${review3_report}" >/dev/null
-grep -F "All section 5 deterministic verification criteria were executed and passed:" "${review3_report}" >/dev/null
-grep -F "scripts/install.sh" "${review3_report}" >/dev/null
-grep -F "scripts/release-guard.sh" "${review3_report}" >/dev/null
-
 review1_plan="docs/plans/typescript-commander-hybrid-rewrite-pr-d1-list-command-20260312_REVIEW_1.md"
 review2_plan="docs/plans/typescript-commander-hybrid-rewrite-pr-d1-list-command-20260312_REVIEW_2.md"
 
-if [[ ! -f "${review1_plan}" ]]; then
-  printf "Missing required REVIEW-1 plan file: %s\n" "${review1_plan}" >&2
-  exit 1
-fi
-
-if [[ ! -f "${review2_plan}" ]]; then
-  printf "Missing required REVIEW-2 plan file: %s\n" "${review2_plan}" >&2
-  exit 1
-fi
-
-grep -x "## Historical TDD Addendum" "${review1_plan}" >/dev/null
-grep -F "This addendum records the historical process deviation and its closure path." "${review1_plan}" >/dev/null
-grep -F "The regression-prevention surface is now behavioral/content-based in active gates." "${review1_plan}" >/dev/null
-grep -x "## Historical TDD Addendum" "${review2_plan}" >/dev/null
-grep -F "This addendum records the historical process deviation and its closure path." "${review2_plan}" >/dev/null
-grep -F "The active verification surface is now behavior-first and content-assertive." "${review2_plan}" >/dev/null
+./scripts/verify-pr-d1-report-content.sh "${review3_report}" "${review1_plan}" "${review2_plan}"
 
 printf 'PR-D1 verification passed.\n'
