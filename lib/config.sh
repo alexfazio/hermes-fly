@@ -9,17 +9,66 @@ fi
 
 # --- Config path ---
 
+_normalize_dir_path() {
+  local input="$1"
+  local is_absolute=0
+  local normalized=""
+  local part
+  local old_ifs="${IFS}"
+  local -a parts=()
+  local -a stack=()
+
+  if [[ "${input}" == /* ]]; then
+    is_absolute=1
+  fi
+
+  IFS='/'
+  read -r -a parts <<<"${input}"
+  IFS="${old_ifs}"
+
+  for part in "${parts[@]}"; do
+    case "${part}" in
+      ""|".")
+        ;;
+      "..")
+        if [[ "${#stack[@]}" -gt 0 && "${stack[$((${#stack[@]} - 1))]}" != ".." ]]; then
+          local last_index
+          last_index=$((${#stack[@]} - 1))
+          unset "stack[${last_index}]"
+        elif [[ "${is_absolute}" -eq 0 ]]; then
+          stack+=("..")
+        fi
+        ;;
+      *)
+        stack+=("${part}")
+        ;;
+    esac
+  done
+
+  if [[ "${#stack[@]}" -gt 0 ]]; then
+    IFS='/'
+    normalized="${stack[*]}"
+    IFS="${old_ifs}"
+  fi
+
+  if [[ "${is_absolute}" -eq 1 ]]; then
+    if [[ -n "${normalized}" ]]; then
+      printf '/%s' "${normalized}"
+    else
+      printf '/'
+    fi
+  elif [[ -n "${normalized}" ]]; then
+    printf '%s' "${normalized}"
+  else
+    printf '.'
+  fi
+}
+
 _config_file() {
   if [[ -n "${HERMES_FLY_CONFIG_DIR:-}" ]]; then
     local config_dir="${HERMES_FLY_CONFIG_DIR}"
-    config_dir="$(printf '%s' "${config_dir}" | sed 's://*:/:g')"
-    while [[ "${config_dir}" == ./* ]]; do
-      config_dir="${config_dir#./}"
-    done
-    while [[ "${config_dir}" != "/" && "${config_dir}" == */ ]]; do
-      config_dir="${config_dir%/}"
-    done
-    if [[ -z "${config_dir}" ]]; then
+    config_dir="$(_normalize_dir_path "${config_dir}")"
+    if [[ -z "${config_dir}" || "${config_dir}" == "." ]]; then
       echo "config.yaml"
     elif [[ "${config_dir}" == "/" ]]; then
       echo "/config.yaml"

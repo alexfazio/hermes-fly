@@ -204,3 +204,42 @@ EOF
   '
   assert_failure
 }
+
+@test "report-content helper rejects section-5 wording with explicit failure-to-pass phrasing" {
+  run bash -c '
+    set -euo pipefail
+    tmp="$(mktemp -d)"
+    trap "rm -rf \"${tmp}\"" EXIT
+
+    review3="${tmp}/review3.md"
+    review1="${tmp}/review1.md"
+    review2="${tmp}/review2.md"
+
+    cat >"${review3}" <<'"'"'EOF'"'"'
+## Summary
+Some summary text.
+
+## Section 5 Verification Command Log Summary
+Section 5 checks failed to pass.
+
+Guardrails:
+- scripts/install.sh unchanged
+- scripts/release-guard.sh unchanged
+EOF
+
+    cat >"${review1}" <<'"'"'EOF'"'"'
+## Historical TDD Addendum
+This addendum records the historical process deviation and its closure path.
+The regression-prevention surface is behavior and content based in active gates.
+EOF
+
+    cat >"${review2}" <<'"'"'EOF'"'"'
+## Historical TDD Addendum
+This addendum records the historical process deviation and its closure path.
+The active verification surface is behavior-first and content-assertive.
+EOF
+
+    "${PROJECT_ROOT}/scripts/verify-pr-d1-report-content.sh" "${review3}" "${review1}" "${review2}"
+  '
+  assert_failure
+}

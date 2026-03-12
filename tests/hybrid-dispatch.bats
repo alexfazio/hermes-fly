@@ -12,6 +12,9 @@ setup() {
 }
 
 teardown() {
+  if [[ ! -f "${PROJECT_ROOT}/dist/cli.js" ]]; then
+    (cd "${PROJECT_ROOT}" && npm run build >/dev/null)
+  fi
   _common_teardown
 }
 
@@ -647,4 +650,9 @@ teardown() {
   assert_line --index 0 "STDOUT=hermes-fly ${EXPECTED_VERSION}"
   assert_line --index 1 "STDERR_LINES=1"
   assert_line --index 2 "STDERR_FIRST=Warning: TS implementation unavailable for command 'version'; falling back to legacy"
+}
+
+@test "hybrid-dispatch fallback tests leave dist artifact available for subsequent tests" {
+  run bash -c 'test -f "${PROJECT_ROOT}/dist/cli.js"'
+  assert_success
 }
