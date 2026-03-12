@@ -13,6 +13,7 @@ required_files=(
   "src/contexts/runtime/infrastructure/adapters/fly-deployment-registry.ts"
   "tests-ts/runtime/list-deployments.test.ts"
   "tests/list-ts-hybrid.bats"
+  "tests/verify-pr-d1-list-command.bats"
   "tests/verify-pr-d1-report-content.bats"
   "scripts/verify-pr-d1-list-command.sh"
   "scripts/verify-pr-d1-report-content.sh"
@@ -34,6 +35,7 @@ npm run test:runtime-list
 tests/bats/bin/bats \
   tests/list-ts-hybrid.bats \
   tests/list.bats \
+  tests/verify-pr-d1-list-command.bats \
   tests/verify-pr-d1-report-content.bats \
   tests/parity-harness.bats \
   tests/hybrid-dispatch.bats \
@@ -47,47 +49,105 @@ expected_version="$(
 )"
 expected_version_line="hermes-fly ${expected_version}"
 
-dist_flag_version_output="$(node dist/cli.js --version)"
-if [[ "${dist_flag_version_output}" != "${expected_version_line}" ]]; then
-  printf "Unexpected dist --version output: %s\n" "${dist_flag_version_output}" >&2
-  exit 1
-fi
+assert_file_equals() {
+  local path="$1"
+  local expected="$2"
+  local label="$3"
 
-dist_command_version_output="$(node dist/cli.js version)"
-if [[ "${dist_command_version_output}" != "${expected_version_line}" ]]; then
-  printf "Unexpected dist version output: %s\n" "${dist_command_version_output}" >&2
-  exit 1
-fi
+  if [[ "$(cat "${path}")" != "${expected}" ]]; then
+    printf "Unexpected %s: %s\n" "${label}" "$(cat "${path}")" >&2
+    exit 1
+  fi
+}
 
-dist_help_out="$(mktemp)"
-dist_help_err="$(mktemp)"
-node dist/cli.js version --help >"${dist_help_out}" 2>"${dist_help_err}"
-if [[ "$(cat "${dist_help_out}")" != "${expected_version_line}" ]]; then
-  printf "Unexpected dist version --help output: %s\n" "$(cat "${dist_help_out}")" >&2
-  rm -f "${dist_help_out}" "${dist_help_err}"
+assert_empty_file() {
+  local path="$1"
+  local label="$2"
+
+  if [[ -s "${path}" ]]; then
+    printf "Unexpected %s: %s\n" "${label}" "$(cat "${path}")" >&2
+    exit 1
+  fi
+}
+
+assert_exit_code() {
+  local path="$1"
+  local label="$2"
+
+  if [[ "$(cat "${path}")" != "0" ]]; then
+    printf "Unexpected %s exit: %s\n" "${label}" "$(cat "${path}")" >&2
+    exit 1
+  fi
+}
+
+dist_flag_version_out="$(mktemp)"
+dist_flag_version_err="$(mktemp)"
+dist_flag_version_exit="$(mktemp)"
+node dist/cli.js --version >"${dist_flag_version_out}" 2>"${dist_flag_version_err}"
+printf "%s\n" "$?" >"${dist_flag_version_exit}"
+assert_file_equals "${dist_flag_version_out}" "${expected_version_line}" "dist --version output"
+assert_empty_file "${dist_flag_version_err}" "dist --version stderr"
+assert_exit_code "${dist_flag_version_exit}" "dist --version"
+rm -f "${dist_flag_version_out}" "${dist_flag_version_err}" "${dist_flag_version_exit}"
+
+dist_command_version_out="$(mktemp)"
+dist_command_version_err="$(mktemp)"
+dist_command_version_exit="$(mktemp)"
+node dist/cli.js version >"${dist_command_version_out}" 2>"${dist_command_version_err}"
+printf "%s\n" "$?" >"${dist_command_version_exit}"
+assert_file_equals "${dist_command_version_out}" "${expected_version_line}" "dist version output"
+assert_empty_file "${dist_command_version_err}" "dist version stderr"
+assert_exit_code "${dist_command_version_exit}" "dist version"
+rm -f "${dist_command_version_out}" "${dist_command_version_err}" "${dist_command_version_exit}"
+
+dist_root_help_out="$(mktemp)"
+dist_root_help_err="$(mktemp)"
+dist_root_help_exit="$(mktemp)"
+node dist/cli.js help >"${dist_root_help_out}" 2>"${dist_root_help_err}"
+printf "%s\n" "$?" >"${dist_root_help_exit}"
+if ! grep -F "Usage: hermes-fly" "${dist_root_help_out}" >/dev/null; then
+  printf "Unexpected dist help output: %s\n" "$(cat "${dist_root_help_out}")" >&2
+  rm -f "${dist_root_help_out}" "${dist_root_help_err}" "${dist_root_help_exit}"
   exit 1
 fi
-if [[ -s "${dist_help_err}" ]]; then
-  printf "Unexpected dist version --help stderr: %s\n" "$(cat "${dist_help_err}")" >&2
-  rm -f "${dist_help_out}" "${dist_help_err}"
+if ! grep -F "Commands:" "${dist_root_help_out}" >/dev/null; then
+  printf "Unexpected dist help output: %s\n" "$(cat "${dist_root_help_out}")" >&2
+  rm -f "${dist_root_help_out}" "${dist_root_help_err}" "${dist_root_help_exit}"
   exit 1
 fi
-rm -f "${dist_help_out}" "${dist_help_err}"
+if grep -F "No deployed agents found." "${dist_root_help_out}" >/dev/null; then
+  printf "Unexpected dist help output: %s\n" "$(cat "${dist_root_help_out}")" >&2
+  rm -f "${dist_root_help_out}" "${dist_root_help_err}" "${dist_root_help_exit}"
+  exit 1
+fi
+if grep -F "App Name" "${dist_root_help_out}" >/dev/null; then
+  printf "Unexpected dist help output: %s\n" "$(cat "${dist_root_help_out}")" >&2
+  rm -f "${dist_root_help_out}" "${dist_root_help_err}" "${dist_root_help_exit}"
+  exit 1
+fi
+assert_empty_file "${dist_root_help_err}" "dist help stderr"
+assert_exit_code "${dist_root_help_exit}" "dist help"
+rm -f "${dist_root_help_out}" "${dist_root_help_err}" "${dist_root_help_exit}"
+
+dist_subcommand_help_out="$(mktemp)"
+dist_subcommand_help_err="$(mktemp)"
+dist_subcommand_help_exit="$(mktemp)"
+node dist/cli.js version --help >"${dist_subcommand_help_out}" 2>"${dist_subcommand_help_err}"
+printf "%s\n" "$?" >"${dist_subcommand_help_exit}"
+assert_file_equals "${dist_subcommand_help_out}" "${expected_version_line}" "dist version --help output"
+assert_empty_file "${dist_subcommand_help_err}" "dist version --help stderr"
+assert_exit_code "${dist_subcommand_help_exit}" "dist version --help"
+rm -f "${dist_subcommand_help_out}" "${dist_subcommand_help_err}" "${dist_subcommand_help_exit}"
 
 dist_unknown_out="$(mktemp)"
 dist_unknown_err="$(mktemp)"
+dist_unknown_exit="$(mktemp)"
 node dist/cli.js version --unknown-flag >"${dist_unknown_out}" 2>"${dist_unknown_err}"
-if [[ "$(cat "${dist_unknown_out}")" != "${expected_version_line}" ]]; then
-  printf "Unexpected dist version --unknown-flag output: %s\n" "$(cat "${dist_unknown_out}")" >&2
-  rm -f "${dist_unknown_out}" "${dist_unknown_err}"
-  exit 1
-fi
-if [[ -s "${dist_unknown_err}" ]]; then
-  printf "Unexpected dist version --unknown-flag stderr: %s\n" "$(cat "${dist_unknown_err}")" >&2
-  rm -f "${dist_unknown_out}" "${dist_unknown_err}"
-  exit 1
-fi
-rm -f "${dist_unknown_out}" "${dist_unknown_err}"
+printf "%s\n" "$?" >"${dist_unknown_exit}"
+assert_file_equals "${dist_unknown_out}" "${expected_version_line}" "dist version --unknown-flag output"
+assert_empty_file "${dist_unknown_err}" "dist version --unknown-flag stderr"
+assert_exit_code "${dist_unknown_exit}" "dist version --unknown-flag"
+rm -f "${dist_unknown_out}" "${dist_unknown_err}" "${dist_unknown_exit}"
 
 hybrid_allowlisted_version_output="$(
   HERMES_FLY_IMPL_MODE=hybrid HERMES_FLY_TS_COMMANDS=version ./hermes-fly version

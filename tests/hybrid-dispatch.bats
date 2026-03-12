@@ -54,6 +54,26 @@ teardown() {
   assert_output "hermes-fly ${EXPECTED_VERSION}"
 }
 
+@test "dist cli help prints root help text and exits successfully" {
+  run bash -c '
+    set -euo pipefail
+    npm run build >/dev/null
+    out_file="$(mktemp)"
+    err_file="$(mktemp)"
+    exit_file="$(mktemp)"
+    trap "rm -f \"${out_file}\" \"${err_file}\" \"${exit_file}\"" EXIT
+    node "${PROJECT_ROOT}/dist/cli.js" help >"${out_file}" 2>"${err_file}"
+    printf "%s\n" "$?" >"${exit_file}"
+    grep -F "Usage: hermes-fly" "${out_file}" >/dev/null
+    grep -F "Commands:" "${out_file}" >/dev/null
+    ! grep -F "No deployed agents found." "${out_file}" >/dev/null
+    ! grep -F "App Name" "${out_file}" >/dev/null
+    test ! -s "${err_file}"
+    test "$(cat "${exit_file}")" = "0"
+  '
+  assert_success
+}
+
 @test "dist cli version --help prints only version line" {
   run bash -c '
     set -euo pipefail
