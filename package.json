@@ -5,13 +5,15 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "arch:ddd-boundaries": "depcruise --config dependency-cruiser.cjs src --output-type err-long"
+    "arch:ddd-boundaries": "depcruise --config dependency-cruiser.cjs src --output-type err-long",
+    "test:domain-primitives": "tsx --test tests-ts/domain/primitives.test.ts"
   },
   "dependencies": {
     "commander": "^12.1.0"
   },
   "devDependencies": {
     "dependency-cruiser": "^16.8.0",
+    "tsx": "^4.20.5",
     "typescript": "^5.8.2"
   }
 }

@@ -154,6 +154,15 @@ Run this check to enforce DDD layer boundaries in `src/contexts` during migratio
 npm run arch:ddd-boundaries
 ```
 
+### Domain Primitive Tests
+
+```bash
+npm run test:domain-primitives
+```
+
+These tests validate domain invariants with zero IO mocks.
+
+
 ## License
 
 [MIT](LICENSE)
