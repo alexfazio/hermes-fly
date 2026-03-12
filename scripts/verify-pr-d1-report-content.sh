@@ -41,12 +41,12 @@ require_file "${review1_plan}"
 require_file "${review2_plan}"
 
 # REVIEW-3 implementation report: keep heading checks strict, but make pass-signal wording resilient.
-# Require standalone pass tokens to avoid substring false positives like "surpassed".
+# Require standalone pass tokens to avoid substring false positives like "surpassed" or "pass-through".
 grep -x "## Summary" "${review3_report}" >/dev/null
 grep -x "## Section 5 Verification Command Log Summary" "${review3_report}" >/dev/null
-require_pattern "section[[:space:]]*5.*(criteria|checks).*([^[:alnum:]_]|^)(pass|passed)([^[:alnum:]_]|$)" "${review3_report}"
-reject_pattern "section[[:space:]]*5.*(did[[:space:]]+not|didn't|not|never|without).*([^[:alnum:]_]|^)(pass|passed)([^[:alnum:]_]|$)" "${review3_report}"
-reject_pattern "(did[[:space:]]+not|didn't|not|never|without).*([^[:alnum:]_]|^)(pass|passed)([^[:alnum:]_]|$).*section[[:space:]]*5" "${review3_report}"
+require_pattern "section[[:space:]]*5.*(criteria|checks).*([^[:alnum:]_-]|^)(pass|passed)([^[:alnum:]_-]|$)" "${review3_report}"
+reject_pattern "section[[:space:]]*5.*(did[[:space:]]+not|didn't|not|never|without).*([^[:alnum:]_-]|^)(pass|passed)([^[:alnum:]_-]|$)" "${review3_report}"
+reject_pattern "(did[[:space:]]+not|didn't|not|never|without).*([^[:alnum:]_-]|^)(pass|passed)([^[:alnum:]_-]|$).*section[[:space:]]*5" "${review3_report}"
 grep -F "scripts/install.sh" "${review3_report}" >/dev/null
 grep -F "scripts/release-guard.sh" "${review3_report}" >/dev/null
 

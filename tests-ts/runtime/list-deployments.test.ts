@@ -9,7 +9,10 @@ import { NodeProcessRunner, type ProcessRunner } from "../../src/adapters/proces
 import type { FlyctlPort } from "../../src/adapters/flyctl.ts";
 import type { DeploymentListRow, DeploymentRegistryPort } from "../../src/contexts/runtime/application/ports/deployment-registry.port.ts";
 import { ListDeploymentsUseCase } from "../../src/contexts/runtime/application/use-cases/list-deployments.ts";
-import { FlyDeploymentRegistry } from "../../src/contexts/runtime/infrastructure/adapters/fly-deployment-registry.ts";
+import {
+  FlyDeploymentRegistry,
+  resolveConfigDir
+} from "../../src/contexts/runtime/infrastructure/adapters/fly-deployment-registry.ts";
 
 describe("process adapter", () => {
   it("captures stdout, stderr, and exitCode with env overrides", async () => {
@@ -133,6 +136,10 @@ describe("list deployments use-case", () => {
 });
 
 describe("fly deployment registry", () => {
+  it("normalizes dot-slash-prefixed HERMES_FLY_CONFIG_DIR to TS path semantics", () => {
+    assert.equal(resolveConfigDir({ HERMES_FLY_CONFIG_DIR: "./tmp//nested//" }), "tmp/nested");
+  });
+
   it("preserves order, truncates app names, and applies placeholder fallbacks", async () => {
     const root = await mkdtemp(join(tmpdir(), "hermes-fly-runtime-list-"));
     const configDir = join(root, "config");

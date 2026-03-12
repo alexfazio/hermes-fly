@@ -13,10 +13,15 @@ _config_file() {
   if [[ -n "${HERMES_FLY_CONFIG_DIR:-}" ]]; then
     local config_dir="${HERMES_FLY_CONFIG_DIR}"
     config_dir="$(printf '%s' "${config_dir}" | sed 's://*:/:g')"
+    while [[ "${config_dir}" == ./* ]]; do
+      config_dir="${config_dir#./}"
+    done
     while [[ "${config_dir}" != "/" && "${config_dir}" == */ ]]; do
       config_dir="${config_dir%/}"
     done
-    if [[ "${config_dir}" == "/" ]]; then
+    if [[ -z "${config_dir}" ]]; then
+      echo "config.yaml"
+    elif [[ "${config_dir}" == "/" ]]; then
       echo "/config.yaml"
     else
       echo "${config_dir}/config.yaml"

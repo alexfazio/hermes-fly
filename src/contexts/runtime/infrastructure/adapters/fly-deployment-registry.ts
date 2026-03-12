@@ -53,10 +53,10 @@ export class FlyDeploymentRegistry implements DeploymentRegistryPort {
   }
 }
 
-function resolveConfigDir(env: NodeJS.ProcessEnv): string {
+export function resolveConfigDir(env: NodeJS.ProcessEnv): string {
   const configDir = env.HERMES_FLY_CONFIG_DIR;
   if (typeof configDir === "string" && configDir.length > 0) {
-    return configDir;
+    return normalizeConfigDir(configDir);
   }
 
   const home = env.HOME ?? "";
@@ -65,6 +65,11 @@ function resolveConfigDir(env: NodeJS.ProcessEnv): string {
   }
 
   return join("/", ".hermes-fly");
+}
+
+function normalizeConfigDir(configDir: string): string {
+  const normalized = join(configDir, ".");
+  return normalized === "." ? "" : normalized;
 }
 
 async function safeReadText(path: string): Promise<string | null> {
