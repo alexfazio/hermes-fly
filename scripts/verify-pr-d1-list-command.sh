@@ -170,6 +170,82 @@ diff -u "${wrapper_legacy_ts_unknown_exit}" "${wrapper_ts_mode_unknown_exit}"
 rm -f "${wrapper_legacy_ts_unknown_out}" "${wrapper_legacy_ts_unknown_err}" "${wrapper_legacy_ts_unknown_exit}" \
   "${wrapper_ts_mode_unknown_out}" "${wrapper_ts_mode_unknown_err}" "${wrapper_ts_mode_unknown_exit}"
 
+wrapper_legacy_ts_h_out="$(mktemp)"
+wrapper_legacy_ts_h_err="$(mktemp)"
+wrapper_legacy_ts_h_exit="$(mktemp)"
+wrapper_ts_mode_h_out="$(mktemp)"
+wrapper_ts_mode_h_err="$(mktemp)"
+wrapper_ts_mode_h_exit="$(mktemp)"
+
+HERMES_FLY_IMPL_MODE=legacy ./hermes-fly version -h >"${wrapper_legacy_ts_h_out}" 2>"${wrapper_legacy_ts_h_err}"
+printf "%s\n" "$?" >"${wrapper_legacy_ts_h_exit}"
+HERMES_FLY_IMPL_MODE=ts HERMES_FLY_TS_COMMANDS=version ./hermes-fly version -h >"${wrapper_ts_mode_h_out}" 2>"${wrapper_ts_mode_h_err}"
+printf "%s\n" "$?" >"${wrapper_ts_mode_h_exit}"
+
+diff -u "${wrapper_legacy_ts_h_out}" "${wrapper_ts_mode_h_out}"
+diff -u "${wrapper_legacy_ts_h_err}" "${wrapper_ts_mode_h_err}"
+diff -u "${wrapper_legacy_ts_h_exit}" "${wrapper_ts_mode_h_exit}"
+
+rm -f "${wrapper_legacy_ts_h_out}" "${wrapper_legacy_ts_h_err}" "${wrapper_legacy_ts_h_exit}" \
+  "${wrapper_ts_mode_h_out}" "${wrapper_ts_mode_h_err}" "${wrapper_ts_mode_h_exit}"
+
+wrapper_legacy_ts_v_out="$(mktemp)"
+wrapper_legacy_ts_v_err="$(mktemp)"
+wrapper_legacy_ts_v_exit="$(mktemp)"
+wrapper_ts_mode_v_out="$(mktemp)"
+wrapper_ts_mode_v_err="$(mktemp)"
+wrapper_ts_mode_v_exit="$(mktemp)"
+
+HERMES_FLY_IMPL_MODE=legacy ./hermes-fly version -V >"${wrapper_legacy_ts_v_out}" 2>"${wrapper_legacy_ts_v_err}"
+printf "%s\n" "$?" >"${wrapper_legacy_ts_v_exit}"
+HERMES_FLY_IMPL_MODE=ts HERMES_FLY_TS_COMMANDS=version ./hermes-fly version -V >"${wrapper_ts_mode_v_out}" 2>"${wrapper_ts_mode_v_err}"
+printf "%s\n" "$?" >"${wrapper_ts_mode_v_exit}"
+
+diff -u "${wrapper_legacy_ts_v_out}" "${wrapper_ts_mode_v_out}"
+diff -u "${wrapper_legacy_ts_v_err}" "${wrapper_ts_mode_v_err}"
+diff -u "${wrapper_legacy_ts_v_exit}" "${wrapper_ts_mode_v_exit}"
+
+rm -f "${wrapper_legacy_ts_v_out}" "${wrapper_legacy_ts_v_err}" "${wrapper_legacy_ts_v_exit}" \
+  "${wrapper_ts_mode_v_out}" "${wrapper_ts_mode_v_err}" "${wrapper_ts_mode_v_exit}"
+
+wrapper_legacy_ts_mixed_help_first_out="$(mktemp)"
+wrapper_legacy_ts_mixed_help_first_err="$(mktemp)"
+wrapper_legacy_ts_mixed_help_first_exit="$(mktemp)"
+wrapper_ts_mode_mixed_help_first_out="$(mktemp)"
+wrapper_ts_mode_mixed_help_first_err="$(mktemp)"
+wrapper_ts_mode_mixed_help_first_exit="$(mktemp)"
+
+HERMES_FLY_IMPL_MODE=legacy ./hermes-fly version --help --unknown-flag >"${wrapper_legacy_ts_mixed_help_first_out}" 2>"${wrapper_legacy_ts_mixed_help_first_err}"
+printf "%s\n" "$?" >"${wrapper_legacy_ts_mixed_help_first_exit}"
+HERMES_FLY_IMPL_MODE=ts HERMES_FLY_TS_COMMANDS=version ./hermes-fly version --help --unknown-flag >"${wrapper_ts_mode_mixed_help_first_out}" 2>"${wrapper_ts_mode_mixed_help_first_err}"
+printf "%s\n" "$?" >"${wrapper_ts_mode_mixed_help_first_exit}"
+
+diff -u "${wrapper_legacy_ts_mixed_help_first_out}" "${wrapper_ts_mode_mixed_help_first_out}"
+diff -u "${wrapper_legacy_ts_mixed_help_first_err}" "${wrapper_ts_mode_mixed_help_first_err}"
+diff -u "${wrapper_legacy_ts_mixed_help_first_exit}" "${wrapper_ts_mode_mixed_help_first_exit}"
+
+rm -f "${wrapper_legacy_ts_mixed_help_first_out}" "${wrapper_legacy_ts_mixed_help_first_err}" "${wrapper_legacy_ts_mixed_help_first_exit}" \
+  "${wrapper_ts_mode_mixed_help_first_out}" "${wrapper_ts_mode_mixed_help_first_err}" "${wrapper_ts_mode_mixed_help_first_exit}"
+
+wrapper_legacy_ts_mixed_unknown_first_out="$(mktemp)"
+wrapper_legacy_ts_mixed_unknown_first_err="$(mktemp)"
+wrapper_legacy_ts_mixed_unknown_first_exit="$(mktemp)"
+wrapper_ts_mode_mixed_unknown_first_out="$(mktemp)"
+wrapper_ts_mode_mixed_unknown_first_err="$(mktemp)"
+wrapper_ts_mode_mixed_unknown_first_exit="$(mktemp)"
+
+HERMES_FLY_IMPL_MODE=legacy ./hermes-fly version --unknown-flag --help >"${wrapper_legacy_ts_mixed_unknown_first_out}" 2>"${wrapper_legacy_ts_mixed_unknown_first_err}"
+printf "%s\n" "$?" >"${wrapper_legacy_ts_mixed_unknown_first_exit}"
+HERMES_FLY_IMPL_MODE=ts HERMES_FLY_TS_COMMANDS=version ./hermes-fly version --unknown-flag --help >"${wrapper_ts_mode_mixed_unknown_first_out}" 2>"${wrapper_ts_mode_mixed_unknown_first_err}"
+printf "%s\n" "$?" >"${wrapper_ts_mode_mixed_unknown_first_exit}"
+
+diff -u "${wrapper_legacy_ts_mixed_unknown_first_out}" "${wrapper_ts_mode_mixed_unknown_first_out}"
+diff -u "${wrapper_legacy_ts_mixed_unknown_first_err}" "${wrapper_ts_mode_mixed_unknown_first_err}"
+diff -u "${wrapper_legacy_ts_mixed_unknown_first_exit}" "${wrapper_ts_mode_mixed_unknown_first_exit}"
+
+rm -f "${wrapper_legacy_ts_mixed_unknown_first_out}" "${wrapper_legacy_ts_mixed_unknown_first_err}" "${wrapper_legacy_ts_mixed_unknown_first_exit}" \
+  "${wrapper_ts_mode_mixed_unknown_first_out}" "${wrapper_ts_mode_mixed_unknown_first_err}" "${wrapper_ts_mode_mixed_unknown_first_exit}"
+
 wrapper_legacy_h_out="$(mktemp)"
 wrapper_legacy_h_err="$(mktemp)"
 wrapper_legacy_h_exit="$(mktemp)"
@@ -512,6 +588,30 @@ diff -u "${tmp}/legacy-unknown.out" "${tmp}/ts-unknown.out"
 diff -u "${tmp}/legacy-unknown.err" "${tmp}/ts-unknown.err"
 diff -u "${tmp}/legacy-unknown.exit" "${tmp}/ts-unknown.exit"
 
+(
+  set -euo pipefail
+  home_unset_tmp="$(mktemp -d)"
+  trap 'rm -rf "${home_unset_tmp}"' EXIT
+
+  mkdir -p "${home_unset_tmp}/.hermes-fly"
+  cat >"${home_unset_tmp}/.hermes-fly/config.yaml" <<'YAML'
+apps:
+  - name: should-not-be-read-from-relative-path
+    region: ord
+YAML
+
+  (
+    cd "${home_unset_tmp}"
+    env -u HOME -u HERMES_FLY_CONFIG_DIR HERMES_FLY_IMPL_MODE=legacy "${PROJECT_ROOT}/hermes-fly" list >legacy.out 2>legacy.err
+    printf "%s\n" "$?" >legacy.exit
+    env -u HOME -u HERMES_FLY_CONFIG_DIR HERMES_FLY_IMPL_MODE=hybrid HERMES_FLY_TS_COMMANDS=list "${PROJECT_ROOT}/hermes-fly" list >ts.out 2>ts.err
+    printf "%s\n" "$?" >ts.exit
+    diff -u legacy.out ts.out
+    diff -u legacy.err ts.err
+    diff -u legacy.exit ts.exit
+  )
+)
+
 review3_report="docs/plans/typescript-commander-hybrid-rewrite-pr-d1-list-command-20260312-review-3-implementation-report.md"
 if [[ ! -f "${review3_report}" ]]; then
   printf "Missing required review-3 implementation report: %s\n" "${review3_report}" >&2
@@ -523,5 +623,25 @@ grep -x "## Section 5 Verification Command Log Summary" "${review3_report}" >/de
 grep -F "All section 5 deterministic verification criteria were executed and passed:" "${review3_report}" >/dev/null
 grep -F "scripts/install.sh" "${review3_report}" >/dev/null
 grep -F "scripts/release-guard.sh" "${review3_report}" >/dev/null
+
+review1_plan="docs/plans/typescript-commander-hybrid-rewrite-pr-d1-list-command-20260312_REVIEW_1.md"
+review2_plan="docs/plans/typescript-commander-hybrid-rewrite-pr-d1-list-command-20260312_REVIEW_2.md"
+
+if [[ ! -f "${review1_plan}" ]]; then
+  printf "Missing required REVIEW-1 plan file: %s\n" "${review1_plan}" >&2
+  exit 1
+fi
+
+if [[ ! -f "${review2_plan}" ]]; then
+  printf "Missing required REVIEW-2 plan file: %s\n" "${review2_plan}" >&2
+  exit 1
+fi
+
+grep -x "## Historical TDD Addendum" "${review1_plan}" >/dev/null
+grep -F "This addendum records the historical process deviation and its closure path." "${review1_plan}" >/dev/null
+grep -F "The regression-prevention surface is now behavioral/content-based in active gates." "${review1_plan}" >/dev/null
+grep -x "## Historical TDD Addendum" "${review2_plan}" >/dev/null
+grep -F "This addendum records the historical process deviation and its closure path." "${review2_plan}" >/dev/null
+grep -F "The active verification surface is now behavior-first and content-assertive." "${review2_plan}" >/dev/null
 
 printf 'PR-D1 verification passed.\n'

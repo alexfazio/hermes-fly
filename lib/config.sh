@@ -10,7 +10,7 @@ fi
 # --- Config path ---
 
 _config_file() {
-  echo "${HERMES_FLY_CONFIG_DIR:-$HOME/.hermes-fly}/config.yaml"
+  echo "${HERMES_FLY_CONFIG_DIR:-${HOME:-/}/.hermes-fly}/config.yaml"
 }
 
 # --- config_init ---

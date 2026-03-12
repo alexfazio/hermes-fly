@@ -230,4 +230,36 @@ describe("fly deployment registry", () => {
       await rm(root, { recursive: true, force: true });
     }
   });
+
+  it("does not resolve config from relative .hermes-fly when HOME is unset", async () => {
+    const root = await mkdtemp(join(tmpdir(), "hermes-fly-runtime-list-home-unset-"));
+    const configDir = join(root, ".hermes-fly");
+    const previousCwd = process.cwd();
+
+    try {
+      await mkdir(configDir, { recursive: true });
+      await writeFile(
+        join(configDir, "config.yaml"),
+        ["apps:", "  - name: should-not-be-loaded", "    region: ord", ""].join("\n"),
+        "utf8"
+      );
+
+      process.chdir(root);
+
+      const flyctl: FlyctlPort = {
+        getMachineState: async () => "started"
+      };
+
+      const registry = new FlyDeploymentRegistry({
+        flyctl,
+        env: {}
+      });
+
+      const rows = await registry.listDeployments();
+      assert.deepEqual(rows, []);
+    } finally {
+      process.chdir(previousCwd);
+      await rm(root, { recursive: true, force: true });
+    }
+  });
 });

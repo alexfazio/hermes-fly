@@ -175,6 +175,102 @@ teardown() {
   assert_success
 }
 
+@test "ts mode allowlisted version -h matches legacy output and exit" {
+  run bash -c '
+    set -euo pipefail
+    npm run build >/dev/null
+    legacy_out="$(mktemp)"
+    legacy_err="$(mktemp)"
+    legacy_exit="$(mktemp)"
+    ts_out="$(mktemp)"
+    ts_err="$(mktemp)"
+    ts_exit="$(mktemp)"
+    trap "rm -f \"${legacy_out}\" \"${legacy_err}\" \"${legacy_exit}\" \"${ts_out}\" \"${ts_err}\" \"${ts_exit}\"" EXIT
+
+    HERMES_FLY_IMPL_MODE=legacy "${PROJECT_ROOT}/hermes-fly" version -h >"${legacy_out}" 2>"${legacy_err}"
+    printf "%s\n" "$?" >"${legacy_exit}"
+    HERMES_FLY_IMPL_MODE=ts HERMES_FLY_TS_COMMANDS=version "${PROJECT_ROOT}/hermes-fly" version -h >"${ts_out}" 2>"${ts_err}"
+    printf "%s\n" "$?" >"${ts_exit}"
+
+    diff -u "${legacy_out}" "${ts_out}"
+    diff -u "${legacy_err}" "${ts_err}"
+    diff -u "${legacy_exit}" "${ts_exit}"
+  '
+  assert_success
+}
+
+@test "ts mode allowlisted version -V matches legacy output and exit" {
+  run bash -c '
+    set -euo pipefail
+    npm run build >/dev/null
+    legacy_out="$(mktemp)"
+    legacy_err="$(mktemp)"
+    legacy_exit="$(mktemp)"
+    ts_out="$(mktemp)"
+    ts_err="$(mktemp)"
+    ts_exit="$(mktemp)"
+    trap "rm -f \"${legacy_out}\" \"${legacy_err}\" \"${legacy_exit}\" \"${ts_out}\" \"${ts_err}\" \"${ts_exit}\"" EXIT
+
+    HERMES_FLY_IMPL_MODE=legacy "${PROJECT_ROOT}/hermes-fly" version -V >"${legacy_out}" 2>"${legacy_err}"
+    printf "%s\n" "$?" >"${legacy_exit}"
+    HERMES_FLY_IMPL_MODE=ts HERMES_FLY_TS_COMMANDS=version "${PROJECT_ROOT}/hermes-fly" version -V >"${ts_out}" 2>"${ts_err}"
+    printf "%s\n" "$?" >"${ts_exit}"
+
+    diff -u "${legacy_out}" "${ts_out}"
+    diff -u "${legacy_err}" "${ts_err}"
+    diff -u "${legacy_exit}" "${ts_exit}"
+  '
+  assert_success
+}
+
+@test "ts mode allowlisted version --help --unknown-flag matches legacy output and exit" {
+  run bash -c '
+    set -euo pipefail
+    npm run build >/dev/null
+    legacy_out="$(mktemp)"
+    legacy_err="$(mktemp)"
+    legacy_exit="$(mktemp)"
+    ts_out="$(mktemp)"
+    ts_err="$(mktemp)"
+    ts_exit="$(mktemp)"
+    trap "rm -f \"${legacy_out}\" \"${legacy_err}\" \"${legacy_exit}\" \"${ts_out}\" \"${ts_err}\" \"${ts_exit}\"" EXIT
+
+    HERMES_FLY_IMPL_MODE=legacy "${PROJECT_ROOT}/hermes-fly" version --help --unknown-flag >"${legacy_out}" 2>"${legacy_err}"
+    printf "%s\n" "$?" >"${legacy_exit}"
+    HERMES_FLY_IMPL_MODE=ts HERMES_FLY_TS_COMMANDS=version "${PROJECT_ROOT}/hermes-fly" version --help --unknown-flag >"${ts_out}" 2>"${ts_err}"
+    printf "%s\n" "$?" >"${ts_exit}"
+
+    diff -u "${legacy_out}" "${ts_out}"
+    diff -u "${legacy_err}" "${ts_err}"
+    diff -u "${legacy_exit}" "${ts_exit}"
+  '
+  assert_success
+}
+
+@test "ts mode allowlisted version --unknown-flag --help matches legacy output and exit" {
+  run bash -c '
+    set -euo pipefail
+    npm run build >/dev/null
+    legacy_out="$(mktemp)"
+    legacy_err="$(mktemp)"
+    legacy_exit="$(mktemp)"
+    ts_out="$(mktemp)"
+    ts_err="$(mktemp)"
+    ts_exit="$(mktemp)"
+    trap "rm -f \"${legacy_out}\" \"${legacy_err}\" \"${legacy_exit}\" \"${ts_out}\" \"${ts_err}\" \"${ts_exit}\"" EXIT
+
+    HERMES_FLY_IMPL_MODE=legacy "${PROJECT_ROOT}/hermes-fly" version --unknown-flag --help >"${legacy_out}" 2>"${legacy_err}"
+    printf "%s\n" "$?" >"${legacy_exit}"
+    HERMES_FLY_IMPL_MODE=ts HERMES_FLY_TS_COMMANDS=version "${PROJECT_ROOT}/hermes-fly" version --unknown-flag --help >"${ts_out}" 2>"${ts_err}"
+    printf "%s\n" "$?" >"${ts_exit}"
+
+    diff -u "${legacy_out}" "${ts_out}"
+    diff -u "${legacy_err}" "${ts_err}"
+    diff -u "${legacy_exit}" "${ts_exit}"
+  '
+  assert_success
+}
+
 @test "hybrid allowlisted version -h matches legacy output and exit" {
   run bash -c '
     set -euo pipefail

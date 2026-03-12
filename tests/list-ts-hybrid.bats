@@ -107,3 +107,47 @@ teardown() {
     diff -u "${tmp}/legacy-unknown.exit" "${tmp}/ts-unknown.exit"'
   assert_success
 }
+
+@test "legacy list with HOME unset does not emit config warning" {
+  run bash -c 'set -euo pipefail
+    cd "${PROJECT_ROOT}"
+    npm run build >/dev/null
+    tmp="$(mktemp -d)"
+    trap "rm -rf \"${tmp}\"" EXIT
+    mkdir -p "${tmp}/.hermes-fly"
+    printf "%s\n" \
+      "apps:" \
+      "  - name: should-not-be-read-from-relative-path" \
+      "    region: ord" >"${tmp}/.hermes-fly/config.yaml"
+    (
+      cd "${tmp}"
+      env -u HOME -u HERMES_FLY_CONFIG_DIR HERMES_FLY_IMPL_MODE=legacy "${PROJECT_ROOT}/hermes-fly" list >legacy.out 2>legacy.err
+      test "$(cat legacy.out)" = "No deployed agents found. Run: hermes-fly deploy"
+      test ! -s legacy.err
+    )'
+  assert_success
+}
+
+@test "legacy and allowlisted TS list parity holds when HOME is unset" {
+  run bash -c 'set -euo pipefail
+    cd "${PROJECT_ROOT}"
+    npm run build >/dev/null
+    tmp="$(mktemp -d)"
+    trap "rm -rf \"${tmp}\"" EXIT
+    mkdir -p "${tmp}/.hermes-fly"
+    printf "%s\n" \
+      "apps:" \
+      "  - name: should-not-be-read-from-relative-path" \
+      "    region: ord" >"${tmp}/.hermes-fly/config.yaml"
+    (
+      cd "${tmp}"
+      env -u HOME -u HERMES_FLY_CONFIG_DIR HERMES_FLY_IMPL_MODE=legacy "${PROJECT_ROOT}/hermes-fly" list >legacy.out 2>legacy.err
+      printf "%s\n" "$?" >legacy.exit
+      env -u HOME -u HERMES_FLY_CONFIG_DIR HERMES_FLY_IMPL_MODE=hybrid HERMES_FLY_TS_COMMANDS=list "${PROJECT_ROOT}/hermes-fly" list >ts.out 2>ts.err
+      printf "%s\n" "$?" >ts.exit
+      diff -u legacy.out ts.out
+      diff -u legacy.err ts.err
+      diff -u legacy.exit ts.exit
+    )'
+  assert_success
+}
