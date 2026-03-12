@@ -146,6 +146,14 @@ HERMES_FLY_IMPL_MODE=legacy ./hermes-fly version
 HERMES_FLY_IMPL_MODE=hybrid HERMES_FLY_TS_COMMANDS=version ./hermes-fly version
 ```
 
+### Architecture Boundary Check
+
+Run this check to enforce DDD layer boundaries in `src/contexts` during migration.
+
+```bash
+npm run arch:ddd-boundaries
+```
+
 ## License
 
 [MIT](LICENSE)

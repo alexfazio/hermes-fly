@@ -4,12 +4,14 @@
   "type": "module",
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "typecheck": "tsc --noEmit -p tsconfig.json"
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "arch:ddd-boundaries": "depcruise --config dependency-cruiser.cjs src --output-type err-long"
   },
   "dependencies": {
     "commander": "^12.1.0"
   },
   "devDependencies": {
+    "dependency-cruiser": "^16.8.0",
     "typescript": "^5.8.2"
   }
 }
