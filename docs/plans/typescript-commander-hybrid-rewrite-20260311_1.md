@@ -984,68 +984,68 @@ Expected: behavior returns to PR-D1 baseline.
 ## Execution Log
 
 ### Slice 1: package-scripts-pr-d2
-- [ ] S4 ANALYZE_CRITERIA: 4 criteria extracted
-- [ ] S5 WRITE_TEST: missing-script checks for `test:runtime-status`, `test:runtime-logs`, `test:runtime-status-logs`, `verify:pr-d2-status-logs`
-- [ ] S6 CONFIRM_RED: test fails as expected
-- [ ] S7 IMPLEMENT: `package.json`
-- [ ] S8 RUN_TESTS: pass
-- [ ] S9 REFACTOR: no refactoring needed
+- [x] S4 ANALYZE_CRITERIA: 4 criteria extracted
+- [x] S5 WRITE_TEST: `tests/verify-pr-d2-status-logs.bats` (file-existence + script-content checks)
+- [x] S6 CONFIRM_RED: test fails as expected (script did not exist)
+- [x] S7 IMPLEMENT: `package.json` (added `test:runtime-status`, `test:runtime-logs`, `test:runtime-status-logs`, `verify:pr-d2-status-logs`)
+- [x] S8 RUN_TESTS: pass (1 iteration)
+- [x] S9 REFACTOR: no refactoring needed
 - Anomalies: none
 
 ### Slice 2: current-app-resolution-parity
-- [ ] S4 ANALYZE_CRITERIA: 5 criteria extracted
-- [ ] S5 WRITE_TEST: `tests-ts/runtime/show-status.test.ts` (`resolve-app.ts` + `current-app-config.ts`)
-- [ ] S6 CONFIRM_RED: test fails as expected
-- [ ] S7 IMPLEMENT: `src/contexts/runtime/infrastructure/adapters/fly-deployment-registry.ts`, `src/contexts/runtime/infrastructure/adapters/current-app-config.ts`, `src/commands/resolve-app.ts`
-- [ ] S8 RUN_TESTS: pass
-- [ ] S9 REFACTOR: no refactoring needed
+- [x] S4 ANALYZE_CRITERIA: 5 criteria extracted
+- [x] S5 WRITE_TEST: `tests-ts/runtime/show-status.test.ts` (resolve-app + current-app-config suites)
+- [x] S6 CONFIRM_RED: test fails as expected
+- [x] S7 IMPLEMENT: exported `isSafeAppName` from `fly-deployment-registry.ts`; created `src/contexts/runtime/infrastructure/adapters/current-app-config.ts`, `src/commands/resolve-app.ts`
+- [x] S8 RUN_TESTS: pass (1 iteration — 13/13)
+- [x] S9 REFACTOR: no refactoring needed
 - Anomalies: none
 
 ### Slice 3: low-level-flyctl-status-and-logs-adapter
-- [ ] S4 ANALYZE_CRITERIA: 6 criteria extracted
-- [ ] S5 WRITE_TEST: `tests-ts/runtime/show-status.test.ts`, `tests-ts/runtime/show-logs.test.ts` (adapter contracts)
-- [ ] S6 CONFIRM_RED: test fails as expected
-- [ ] S7 IMPLEMENT: `src/adapters/flyctl.ts`, `src/adapters/process.ts`
-- [ ] S8 RUN_TESTS: pass
-- [ ] S9 REFACTOR: no refactoring needed
+- [x] S4 ANALYZE_CRITERIA: 6 criteria extracted
+- [x] S5 WRITE_TEST: `tests-ts/runtime/show-status.test.ts` (FlyctlAdapter.getAppStatus + getAppLogs suites)
+- [x] S6 CONFIRM_RED: test fails as expected
+- [x] S7 IMPLEMENT: extended `FlyctlPort` interface and `FlyctlAdapter` in `src/adapters/flyctl.ts` with `getAppStatus` and `getAppLogs`; added `AppStatusOk`, `AppStatusError`, `AppStatusResult` types
+- [x] S8 RUN_TESTS: pass (1 iteration — 20/20)
+- [x] S9 REFACTOR: no refactoring needed
 - Anomalies: none
 
 ### Slice 4: status-use-case-and-command
-- [ ] S4 ANALYZE_CRITERIA: 8 criteria extracted
-- [ ] S5 WRITE_TEST: `tests-ts/runtime/show-status.test.ts`, `tests/status-ts-hybrid.bats`
-- [ ] S6 CONFIRM_RED: test fails as expected
-- [ ] S7 IMPLEMENT: `src/contexts/runtime/application/ports/status-reader.port.ts`, `src/contexts/runtime/application/use-cases/show-status.ts`, `src/contexts/runtime/infrastructure/adapters/fly-status-reader.ts`, `src/commands/status.ts`, `src/cli.ts`
-- [ ] S8 RUN_TESTS: pass
-- [ ] S9 REFACTOR: no refactoring needed
+- [x] S4 ANALYZE_CRITERIA: 8 criteria extracted
+- [x] S5 WRITE_TEST: `tests-ts/runtime/show-status.test.ts` (ShowStatusUseCase, FlyStatusReader, runStatusCommand); `tests/status-ts-hybrid.bats`
+- [x] S6 CONFIRM_RED: test fails as expected
+- [x] S7 IMPLEMENT: `src/contexts/runtime/application/ports/status-reader.port.ts`, `src/contexts/runtime/application/use-cases/show-status.ts`, `src/contexts/runtime/infrastructure/adapters/fly-status-reader.ts`, `src/commands/status.ts`; wired into `src/cli.ts`
+- [x] S8 RUN_TESTS: pass (1 iteration — 28/28 TS + 5/5 bats)
+- [x] S9 REFACTOR: no refactoring needed
 - Anomalies: none
 
 ### Slice 5: logs-use-case-and-command
-- [ ] S4 ANALYZE_CRITERIA: 7 criteria extracted
-- [ ] S5 WRITE_TEST: `tests-ts/runtime/show-logs.test.ts`, `tests/logs-ts-hybrid.bats`
-- [ ] S6 CONFIRM_RED: test fails as expected
-- [ ] S7 IMPLEMENT: `src/contexts/runtime/application/ports/logs-reader.port.ts`, `src/contexts/runtime/application/use-cases/show-logs.ts`, `src/contexts/runtime/infrastructure/adapters/fly-logs-reader.ts`, `src/commands/logs.ts`, `src/cli.ts`
-- [ ] S8 RUN_TESTS: pass
-- [ ] S9 REFACTOR: no refactoring needed
+- [x] S4 ANALYZE_CRITERIA: 7 criteria extracted
+- [x] S5 WRITE_TEST: `tests-ts/runtime/show-logs.test.ts`; `tests/logs-ts-hybrid.bats`
+- [x] S6 CONFIRM_RED: test fails as expected
+- [x] S7 IMPLEMENT: `src/contexts/runtime/application/ports/logs-reader.port.ts`, `src/contexts/runtime/application/use-cases/show-logs.ts`, `src/contexts/runtime/infrastructure/adapters/fly-logs-reader.ts`, `src/commands/logs.ts`; wired into `src/cli.ts`
+- [x] S8 RUN_TESTS: pass (1 iteration — 11/11 TS + 5/5 bats)
+- [x] S9 REFACTOR: no refactoring needed
 - Anomalies: none
 
 ### Slice 6: hybrid-dispatch-regression-lock
-- [ ] S4 ANALYZE_CRITERIA: 5 criteria extracted
-- [ ] S5 WRITE_TEST: `tests/hybrid-dispatch.bats`
-- [ ] S6 CONFIRM_RED: test fails as expected
-- [ ] S7 IMPLEMENT: `tests/hybrid-dispatch.bats`, `src/cli.ts`
-- [ ] S8 RUN_TESTS: pass
-- [ ] S9 REFACTOR: no refactoring needed
-- Anomalies: none
+- [x] S4 ANALYZE_CRITERIA: 5 criteria extracted
+- [x] S5 WRITE_TEST: PR-D2 tests appended to `tests/hybrid-dispatch.bats` (status/logs routing, argument parity); `tests/status-ts-hybrid.bats`, `tests/logs-ts-hybrid.bats`
+- [x] S6 CONFIRM_RED: test fails as expected
+- [x] S7 IMPLEMENT: bats tests in `tests/hybrid-dispatch.bats`; git submodules initialized (`git submodule update --init --recursive`)
+- [x] S8 RUN_TESTS: pass (2 iterations — `|| true` removal fix on iteration 2; 67/67 bats)
+- [x] S9 REFACTOR: no refactoring needed
+- Anomalies: S8a — `|| true` before `printf "%s\n" "$?"` was masking exit codes in inner bash; fix was to remove `|| true` entirely since inner bash does not inherit `set -e`
 
 ### Slice 7: pr-d2-verifier-script
-- [ ] S4 ANALYZE_CRITERIA: 7 criteria extracted
-- [ ] S5 WRITE_TEST: `tests/verify-pr-d2-status-logs.bats`
-- [ ] S6 CONFIRM_RED: test fails as expected
-- [ ] S7 IMPLEMENT: `scripts/verify-pr-d2-status-logs.sh`
-- [ ] S8 RUN_TESTS: pass
-- [ ] S9 REFACTOR: no refactoring needed
-- Anomalies: none
+- [x] S4 ANALYZE_CRITERIA: 7 criteria extracted
+- [x] S5 WRITE_TEST: `tests/verify-pr-d2-status-logs.bats` (9 tests: file existence, script exit/output, structural grep checks)
+- [x] S6 CONFIRM_RED: test fails as expected (script did not exist)
+- [x] S7 IMPLEMENT: `scripts/verify-pr-d2-status-logs.sh` (executable; file checks, npm build/typecheck/arch/test, bats suite, direct parity assertions, current-app fallback, no-app errors, mock-fail errors, dist-missing fallback, PR-D1 regression guard)
+- [x] S8 RUN_TESTS: pass (1 iteration — 9/9 bats)
+- [x] S9 REFACTOR: no refactoring needed
+- Anomalies: `tests/verify-pr-d2-status-logs.bats` excluded from the script's own bats run to avoid infinite recursion (the bats file's test 2 calls the script)
 
 ### VERIFY_ALL
-- Test suite: [pass/fail]
-- Criteria walk: [all satisfied / list of fixes applied]
+- Test suite: pass (1 iteration — 28 TS status tests + 11 TS logs tests + 67 bats hybrid/dispatch + 9 bats verifier; full verifier script exits 0)
+- Criteria walk: all satisfied — `bash scripts/verify-pr-d2-status-logs.sh` exits 0 and prints "PR-D2 status/logs verification passed."

@@ -1,5 +1,7 @@
 import { Command } from "commander";
 import { runListCommand } from "./commands/list.js";
+import { runStatusCommand } from "./commands/status.js";
+import { runLogsCommand } from "./commands/logs.js";
 import { HERMES_FLY_TS_VERSION } from "./version.js";
 
 export function buildProgram(): Command {
@@ -27,6 +29,26 @@ export function buildProgram(): Command {
     .allowExcessArguments(true)
     .action(async () => {
       process.exitCode = await runListCommand();
+    });
+
+  program
+    .command("status")
+    .description("Show status of a deployed agent")
+    .helpOption(false)
+    .allowUnknownOption(true)
+    .allowExcessArguments(true)
+    .action(async (_, cmd: Command) => {
+      process.exitCode = await runStatusCommand(cmd.args);
+    });
+
+  program
+    .command("logs")
+    .description("Show logs for a deployed agent")
+    .helpOption(false)
+    .allowUnknownOption(true)
+    .allowExcessArguments(true)
+    .action(async (_, cmd: Command) => {
+      process.exitCode = await runLogsCommand(cmd.args);
     });
 
   return program;

@@ -110,7 +110,7 @@ function parseConfigEntries(configContent: string): ConfigEntry[] {
   return entries;
 }
 
-function isSafeAppName(value: string): boolean {
+export function isSafeAppName(value: string): boolean {
   return /^[a-zA-Z0-9._-]+$/.test(value);
 }
 

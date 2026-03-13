@@ -11,7 +11,11 @@
     "parity:capture": "bash scripts/parity-capture.sh --out-dir tests/parity/current",
     "parity:compare": "bash scripts/parity-compare.sh --baseline tests/parity/baseline --candidate tests/parity/current",
     "parity:check": "npm run parity:capture && npm run parity:compare",
-    "verify:pr-d1-list-command": "bash scripts/verify-pr-d1-list-command.sh"
+    "verify:pr-d1-list-command": "bash scripts/verify-pr-d1-list-command.sh",
+    "test:runtime-status": "tsx --test tests-ts/runtime/show-status.test.ts",
+    "test:runtime-logs": "tsx --test tests-ts/runtime/show-logs.test.ts",
+    "test:runtime-status-logs": "npm run test:runtime-status && npm run test:runtime-logs",
+    "verify:pr-d2-status-logs": "bash scripts/verify-pr-d2-status-logs.sh"
   },
   "dependencies": {
     "commander": "^12.1.0"
