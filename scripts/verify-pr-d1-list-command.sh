@@ -1,8 +1,27 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+require_bats_binary() {
+  local repo_path="$1"
+  local bats_bin="${repo_path}/tests/bats/bin/bats"
+  if [[ -x "${bats_bin}" ]]; then
+    return 0
+  fi
+
+  cat >&2 <<EOF
+error: test runner not found: ${bats_bin}
+Initialize git submodules first:
+  git submodule update --init --recursive
+Then rerun bootstrap:
+  make bootstrap
+EOF
+  exit 1
+}
+
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${PROJECT_ROOT}"
+
+require_bats_binary "${PROJECT_ROOT}"
 
 required_files=(
   "src/adapters/process.ts"
