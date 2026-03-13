@@ -715,7 +715,10 @@ teardown() {
       '"'"'
     # Legacy output goes to stderr as [info] lines — no [marker] TS line
     grep -F "[info] App:" "${tmp}/err"
-    grep -qvF "[marker] TS runtime invoked" "${tmp}/err" || true'
+    if grep -qF "[marker] TS runtime invoked" "${tmp}/err"; then
+      printf "UNEXPECTED: TS runtime invoked marker found in stderr\n" >&2
+      exit 1
+    fi'
   assert_success
 }
 
@@ -735,7 +738,10 @@ teardown() {
           ./hermes-fly status -a test-app >"${TMP_ROOT}/out" 2>"${TMP_ROOT}/err"
       '"'"'
     # Should not print TS fallback warning
-    grep -qvF "Warning: TS implementation unavailable for command" "${tmp}/err" || true
+    if grep -qF "Warning: TS implementation unavailable for command" "${tmp}/err"; then
+      printf "UNEXPECTED: fallback warning found in stderr\n" >&2
+      exit 1
+    fi
     # Should produce legacy [info] output
     grep -F "[info] App:" "${tmp}/err"'
   assert_success
@@ -797,7 +803,10 @@ teardown() {
       '"'"'
     # Legacy log output goes to stdout
     grep -F "Hermes gateway started" "${tmp}/out"
-    grep -qvF "[marker] TS runtime invoked" "${tmp}/err" || true'
+    if grep -qF "[marker] TS runtime invoked" "${tmp}/err"; then
+      printf "UNEXPECTED: TS runtime invoked marker found in stderr\n" >&2
+      exit 1
+    fi'
   assert_success
 }
 
@@ -816,7 +825,10 @@ teardown() {
         HERMES_FLY_IMPL_MODE=hybrid HERMES_FLY_TS_COMMANDS=status \
           ./hermes-fly logs -a test-app >"${TMP_ROOT}/out" 2>"${TMP_ROOT}/err"
       '"'"'
-    grep -qvF "Warning: TS implementation unavailable for command" "${tmp}/err" || true
+    if grep -qF "Warning: TS implementation unavailable for command" "${tmp}/err"; then
+      printf "UNEXPECTED: fallback warning found in stderr\n" >&2
+      exit 1
+    fi
     grep -F "Hermes gateway started" "${tmp}/out"'
   assert_success
 }
