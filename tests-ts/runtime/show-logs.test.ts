@@ -18,11 +18,8 @@ import { runLogsCommand } from "../../src/commands/logs.ts";
 describe("ShowLogsUseCase", () => {
   it("success path returns raw stdout, stderr, and exit 0", async () => {
     const reader: LogsReaderPort = {
-      getLogs: async () => ({
-        stdout: "log line 1\nlog line 2\n",
-        stderr: "",
-        exitCode: 0
-      })
+      getLogs: async () => ({ stdout: "log line 1\nlog line 2\n", stderr: "", exitCode: 0 }),
+      streamLogs: async () => ({ exitCode: 0 })
     };
 
     const useCase = new ShowLogsUseCase(reader);
@@ -35,11 +32,8 @@ describe("ShowLogsUseCase", () => {
 
   it("failure path preserves non-zero exit code", async () => {
     const reader: LogsReaderPort = {
-      getLogs: async () => ({
-        stdout: "",
-        stderr: "Error: app not found\n",
-        exitCode: 1
-      })
+      getLogs: async () => ({ stdout: "", stderr: "Error: app not found\n", exitCode: 1 }),
+      streamLogs: async () => ({ exitCode: 1 })
     };
 
     const useCase = new ShowLogsUseCase(reader);
@@ -81,11 +75,12 @@ describe("FlyLogsReader", () => {
 describe("runLogsCommand", () => {
   it("writes raw stdout and stderr passthrough and returns 0 on success", async () => {
     const reader: LogsReaderPort = {
-      getLogs: async () => ({
-        stdout: "log line 1\nlog line 2\n",
-        stderr: "some warning\n",
-        exitCode: 0
-      })
+      getLogs: async () => ({ stdout: "log line 1\nlog line 2\n", stderr: "some warning\n", exitCode: 0 }),
+      streamLogs: async (_app, opts) => {
+        opts?.onStdoutChunk?.("log line 1\nlog line 2\n");
+        opts?.onStderrChunk?.("some warning\n");
+        return { exitCode: 0 };
+      }
     };
 
     const outChunks: string[] = [];
@@ -107,11 +102,8 @@ describe("runLogsCommand", () => {
 
   it("writes failure contract line to stderr and returns 1 on exitCode=1", async () => {
     const reader: LogsReaderPort = {
-      getLogs: async () => ({
-        stdout: "",
-        stderr: "Error: app not found\n",
-        exitCode: 1
-      })
+      getLogs: async () => ({ stdout: "", stderr: "Error: app not found\n", exitCode: 1 }),
+      streamLogs: async () => ({ exitCode: 1 })
     };
 
     const outChunks: string[] = [];
@@ -140,7 +132,8 @@ describe("runLogsCommand", () => {
       const stdout = { write: (s: string) => { outChunks.push(s); } };
 
       const reader: LogsReaderPort = {
-        getLogs: async () => ({ stdout: "", stderr: "", exitCode: 0 })
+        getLogs: async () => ({ stdout: "", stderr: "", exitCode: 0 }),
+        streamLogs: async () => ({ exitCode: 0 })
       };
 
       const code = await runLogsCommand([], {
@@ -160,11 +153,11 @@ describe("runLogsCommand", () => {
 
   it("ignores unknown args and only uses -a APP", async () => {
     const reader: LogsReaderPort = {
-      getLogs: async (app: string) => ({
-        stdout: `logs for ${app}\n`,
-        stderr: "",
-        exitCode: 0
-      })
+      getLogs: async (app: string) => ({ stdout: `logs for ${app}\n`, stderr: "", exitCode: 0 }),
+      streamLogs: async (app, opts) => {
+        opts?.onStdoutChunk?.(`logs for ${app}\n`);
+        return { exitCode: 0 };
+      }
     };
 
     const outChunks: string[] = [];
@@ -192,11 +185,11 @@ describe("runLogsCommand", () => {
       );
 
       const reader: LogsReaderPort = {
-        getLogs: async (app: string) => ({
-          stdout: `logs for ${app}\n`,
-          stderr: "",
-          exitCode: 0
-        })
+        getLogs: async (app: string) => ({ stdout: `logs for ${app}\n`, stderr: "", exitCode: 0 }),
+        streamLogs: async (app, opts) => {
+          opts?.onStdoutChunk?.(`logs for ${app}\n`);
+          return { exitCode: 0 };
+        }
       };
 
       const outChunks: string[] = [];
@@ -219,11 +212,11 @@ describe("runLogsCommand", () => {
 
   it("repeated -a uses last value", async () => {
     const reader: LogsReaderPort = {
-      getLogs: async (app: string) => ({
-        stdout: `logs for ${app}\n`,
-        stderr: "",
-        exitCode: 0
-      })
+      getLogs: async (app: string) => ({ stdout: `logs for ${app}\n`, stderr: "", exitCode: 0 }),
+      streamLogs: async (app, opts) => {
+        opts?.onStdoutChunk?.(`logs for ${app}\n`);
+        return { exitCode: 0 };
+      }
     };
 
     const outChunks: string[] = [];
@@ -242,11 +235,12 @@ describe("runLogsCommand", () => {
 
   it("success with non-empty stderr passes through when exitCode is 0", async () => {
     const reader: LogsReaderPort = {
-      getLogs: async () => ({
-        stdout: "log output\n",
-        stderr: "warning line\n",
-        exitCode: 0
-      })
+      getLogs: async () => ({ stdout: "log output\n", stderr: "warning line\n", exitCode: 0 }),
+      streamLogs: async (_app, opts) => {
+        opts?.onStdoutChunk?.("log output\n");
+        opts?.onStderrChunk?.("warning line\n");
+        return { exitCode: 0 };
+      }
     };
 
     const outChunks: string[] = [];
@@ -267,11 +261,11 @@ describe("runLogsCommand", () => {
 
   it("failure case with exitCode=1 and non-empty stderr prints failure line only", async () => {
     const reader: LogsReaderPort = {
-      getLogs: async () => ({
-        stdout: "",
-        stderr: "some fly error\n",
-        exitCode: 1
-      })
+      getLogs: async () => ({ stdout: "", stderr: "some fly error\n", exitCode: 1 }),
+      streamLogs: async (_app, opts) => {
+        opts?.onStderrChunk?.("some fly error\n");
+        return { exitCode: 1 };
+      }
     };
 
     const outChunks: string[] = [];
@@ -287,6 +281,149 @@ describe("runLogsCommand", () => {
 
     assert.equal(code, 1);
     assert.equal(outChunks.join(""), "");
+    assert.equal(errChunks.join(""), "[error] Failed to fetch logs for app 'bad-app'\n");
+  });
+});
+
+// ---------------------------------------------------------------
+// runLogsCommand resolve-app edge cases (Slice B: PR-D2 Review-2)
+// ---------------------------------------------------------------
+
+describe("runLogsCommand resolve-app edge cases", () => {
+  it("runLogsCommand with trailing -a after valid value uses no-app error when no fallback", async () => {
+    const root = await mkdtemp(join(tmpdir(), "hermes-logs-trail-a-"));
+    try {
+      await mkdir(join(root, "config"), { recursive: true });
+      const errChunks: string[] = [];
+      const outChunks: string[] = [];
+      const stderr = { write: (s: string) => { errChunks.push(s); } };
+      const stdout = { write: (s: string) => { outChunks.push(s); } };
+
+      const reader: LogsReaderPort = {
+        getLogs: async () => ({ stdout: "", stderr: "", exitCode: 0 }),
+        streamLogs: async () => ({ exitCode: 0 })
+      };
+
+      const code = await runLogsCommand(["-a", "first", "-a"], {
+        useCase: new ShowLogsUseCase(reader),
+        stderr,
+        stdout,
+        env: { ...process.env, HERMES_FLY_CONFIG_DIR: join(root, "config") }
+      });
+
+      assert.equal(code, 1);
+      assert.equal(outChunks.join(""), "");
+      assert.equal(errChunks.join(""), "[error] No app specified. Use -a APP or run 'hermes-fly deploy' first.\n");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+});
+
+// ---------------------------------------------------------------
+// runLogsCommand streaming path (Slice A: PR-D2 Review-2)
+// ---------------------------------------------------------------
+
+describe("runLogsCommand streaming path", () => {
+  it("spawn/runner rejection in logs path -> exit 1, stderr exactly contract failure", async () => {
+    const reader = {
+      getLogs: async () => ({ stdout: "", stderr: "", exitCode: 0 }),
+      streamLogs: async (_appName: string, _opts?: unknown) => {
+        throw new Error("spawn ENOENT");
+      }
+    } as unknown as LogsReaderPort;
+
+    const errChunks: string[] = [];
+    const outChunks: string[] = [];
+    const stderr = { write: (s: string) => { errChunks.push(s); } };
+    const stdout = { write: (s: string) => { outChunks.push(s); } };
+
+    const code = await runLogsCommand(["-a", "bad-app"], {
+      useCase: new ShowLogsUseCase(reader),
+      stdout,
+      stderr
+    });
+
+    assert.equal(code, 1);
+    assert.equal(outChunks.join(""), "");
+    assert.equal(errChunks.join(""), "[error] Failed to fetch logs for app 'bad-app'\n");
+  });
+
+  it("callbacks receive chunks in order; output sink receives chunk order unchanged", async () => {
+    const reader = {
+      getLogs: async () => ({ stdout: "", stderr: "", exitCode: 0 }),
+      streamLogs: async (_appName: string, opts?: { onStdoutChunk?: (s: string) => void }) => {
+        opts?.onStdoutChunk?.("chunk-1");
+        opts?.onStdoutChunk?.("chunk-2");
+        opts?.onStdoutChunk?.("chunk-3");
+        return { exitCode: 0 };
+      }
+    } as unknown as LogsReaderPort;
+
+    const outChunks: string[] = [];
+    const stdout = { write: (s: string) => { outChunks.push(s); } };
+    const stderr = { write: () => {} };
+
+    const code = await runLogsCommand(["-a", "test-app"], {
+      useCase: new ShowLogsUseCase(reader),
+      stdout,
+      stderr
+    });
+
+    assert.equal(code, 0);
+    assert.deepEqual(outChunks, ["chunk-1", "chunk-2", "chunk-3"]);
+  });
+
+  it("success path with non-empty stderr still passes through on exitCode=0", async () => {
+    const reader = {
+      getLogs: async () => ({ stdout: "", stderr: "", exitCode: 0 }),
+      streamLogs: async (_appName: string, opts?: { onStdoutChunk?: (s: string) => void; onStderrChunk?: (s: string) => void }) => {
+        opts?.onStdoutChunk?.("log output\n");
+        opts?.onStderrChunk?.("warning line\n");
+        return { exitCode: 0 };
+      }
+    } as unknown as LogsReaderPort;
+
+    const outChunks: string[] = [];
+    const errChunks: string[] = [];
+    const stdout = { write: (s: string) => { outChunks.push(s); } };
+    const stderr = { write: (s: string) => { errChunks.push(s); } };
+
+    const code = await runLogsCommand(["-a", "test-app"], {
+      useCase: new ShowLogsUseCase(reader),
+      stdout,
+      stderr
+    });
+
+    assert.equal(code, 0);
+    assert.equal(outChunks.join(""), "log output\n");
+    assert.equal(errChunks.join(""), "warning line\n");
+  });
+
+  it("non-zero exit after stdout chunks: stdout contains chunks, buffered stderr omitted, contract failure line emitted", async () => {
+    const reader = {
+      getLogs: async () => ({ stdout: "", stderr: "", exitCode: 0 }),
+      streamLogs: async (_appName: string, opts?: { onStdoutChunk?: (s: string) => void; onStderrChunk?: (s: string) => void }) => {
+        opts?.onStdoutChunk?.("log chunk before failure\n");
+        opts?.onStderrChunk?.("raw fly error output\n");
+        return { exitCode: 1 };
+      }
+    } as unknown as LogsReaderPort;
+
+    const outChunks: string[] = [];
+    const errChunks: string[] = [];
+    const stdout = { write: (s: string) => { outChunks.push(s); } };
+    const stderr = { write: (s: string) => { errChunks.push(s); } };
+
+    const code = await runLogsCommand(["-a", "bad-app"], {
+      useCase: new ShowLogsUseCase(reader),
+      stdout,
+      stderr
+    });
+
+    assert.equal(code, 1);
+    assert.equal(outChunks.join(""), "log chunk before failure\n");
+    assert.ok(!errChunks.join("").includes("raw fly error output"), "buffered stderr should not appear on non-zero exit");
     assert.equal(errChunks.join(""), "[error] Failed to fetch logs for app 'bad-app'\n");
   });
 });

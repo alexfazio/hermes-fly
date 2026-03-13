@@ -110,6 +110,55 @@ describe("resolve-app", () => {
       await rm(root, { recursive: true, force: true });
     }
   });
+
+  it("resolveApp([\"-a\", \"first\", \"-a\"], envWithCurrentApp) falls back to current app", async () => {
+    const root = await mkdtemp(join(tmpdir(), "hermes-resolve-app-trail-"));
+    try {
+      await mkdir(join(root, "config"), { recursive: true });
+      await writeFile(
+        join(root, "config", "config.yaml"),
+        "current_app: fallback-app\n",
+        "utf8"
+      );
+      const app = await resolveApp(["-a", "first", "-a"], {
+        env: { ...process.env, HERMES_FLY_CONFIG_DIR: join(root, "config") }
+      });
+      assert.equal(app, "fallback-app");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("resolveApp([\"-a\", \"--unknown-flag\"], envWithCurrentApp) falls back to current app", async () => {
+    const root = await mkdtemp(join(tmpdir(), "hermes-resolve-app-flag-"));
+    try {
+      await mkdir(join(root, "config"), { recursive: true });
+      await writeFile(
+        join(root, "config", "config.yaml"),
+        "current_app: fallback-app\n",
+        "utf8"
+      );
+      const app = await resolveApp(["-a", "--unknown-flag"], {
+        env: { ...process.env, HERMES_FLY_CONFIG_DIR: join(root, "config") }
+      });
+      assert.equal(app, "fallback-app");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("resolveApp([\"-a\", \"first\", \"-a\"], envWithoutCurrentApp) returns null", async () => {
+    const root = await mkdtemp(join(tmpdir(), "hermes-resolve-app-noapp-"));
+    try {
+      await mkdir(join(root, "config"), { recursive: true });
+      const app = await resolveApp(["-a", "first", "-a"], {
+        env: { ...process.env, HERMES_FLY_CONFIG_DIR: join(root, "config") }
+      });
+      assert.equal(app, null);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
 });
 
 // ---------------------------------------------------------------
