@@ -1,847 +1,1051 @@
-# Hermes-Fly TypeScript Rewrite Plan (Commander.js, Hybrid Rollout)
+# PR-D2 Execution Plan: TypeScript `status` + `logs` Command Migration + Hybrid Parity Gate
 
-Date: 2026-03-11
-Scope: `/Users/alex/Documents/GitHub/hermes-fly` only
-Status: Ready for implementation (revalidated on 2026-03-12; execution not started)
+Date: 2026-03-13  
+Parent plan: `docs/plans/typescript-commander-hybrid-rewrite-pr-d1-list-command-20260312.md`  
+Parent phase: Phase 3 (Migrate `status`, `logs`)  
+Timebox: 120 minutes (single session)  
+Assignee profile: Junior developer  
+Target branch: `feat/ts-pr-d2-status-logs` (recommended)
 
-## Objective
+## Implementation Status
 
-Rewrite `hermes-fly` from bash modules to TypeScript + Commander.js without stopping release cadence, by shipping a hybrid implementation that routes command-by-command and always preserves a safe bash fallback.
+Status: Ready for implementation  
+Evidence report (to create after implementation): `docs/plans/typescript-commander-hybrid-rewrite-pr-d2-status-logs-implementation-report.md`
 
-## Core Decision
+---
 
-Yes, the rewrite will be modular and releaseable throughout:
+## 1) Issue Summary (Jira/Linear style)
 
-- Keep existing `hermes-fly` bash entrypoint as public contract during migration.
-- Add a dispatcher that can invoke TypeScript command handlers per-command.
-- Keep unmigrated commands on bash.
-- Allow hard fallback to bash on runtime errors or missing Node runtime.
-- Promote commands to TypeScript only after deterministic parity gates pass.
+Implement the next hybrid migration slice by porting the existing app-scoped `status` and `logs` commands to TypeScript, wiring both into Commander, and proving deterministic parity against the committed `status` and `logs` baseline snapshots while keeping safe bash fallback behavior.
 
-## Hard Constraints (Do Not Break)
+This PR migrates two commands only: `status` and `logs`.
 
-1. Existing install flow (`scripts/install.sh`) must continue to produce a working CLI on macOS and Linux.
-2. Existing command surface and semantics must remain stable:
-- `deploy`
-- `resume`
+Important contract clarification:
+
+1. `status` is not a multi-app summary command. It is a single-app status view.
+2. `logs` is not a structured table command. It is a direct log-stream/log-fetch wrapper for one app.
+3. This PR must preserve those current public contracts exactly. Do not redesign them.
+
+---
+
+## 2) Scope
+
+### In scope (must ship in this PR)
+
+1. Extend the existing TS runtime to support app-scoped `status` and `logs`.
+2. Reuse the existing PR-D1 TypeScript patterns:
+- `src/adapters/process.ts`
+- `src/adapters/flyctl.ts`
+- `src/commands/list.ts`
+- `src/contexts/runtime/infrastructure/adapters/fly-deployment-registry.ts`
+3. Add exact app-resolution parity for `status` and `logs`:
+- `-a APP` when provided
+- otherwise `current_app` from `config.yaml`
+- otherwise the existing no-app error
+4. Add TS `status` and `logs` command handlers and wire them in `src/cli.ts`.
+5. Add runtime tests, hybrid bats tests, and hybrid-dispatch regression tests.
+6. Add a deterministic verifier script for PR-D2.
+7. Preserve PR-D1 verifier behavior unchanged.
+
+### Out of scope (do not do in this PR)
+
+1. No migration of `deploy`, `resume`, `doctor`, `destroy`, `help`, or `version`.
+2. No multi-app `status` redesign.
+3. No new shared table helper. `status` and `logs` must preserve their legacy rendering contracts.
+4. No new CLI flags or option redesign for `status`/`logs`.
+5. No default TS promotion changes. `status` and `logs` remain opt-in via allowlist.
+6. No changes to parity baseline snapshot files:
+- `tests/parity/baseline/status.*.snap`
+- `tests/parity/baseline/logs.*.snap`
+7. No changes to:
+- `scripts/install.sh`
+- `scripts/release-guard.sh`
+- `tests/parity/scenarios/non_destructive_commands.list`
+
+---
+
+## 3) Preconditions (must be true before coding)
+
+Run from repo root:
+
+```bash
+cd /Users/alex/Documents/GitHub/hermes-fly
+```
+
+Confirm anchors before edits:
+
+1. Hybrid dispatcher and TS allowlist gates exist:
+- `hermes-fly:96-158`
+- `hermes-fly:160-227`
+
+2. The dispatcher already defines the current public `status`/`logs` contract:
+- `hermes-fly:204-227`
+
+3. TypeScript CLI currently wires only `version` and `list`:
+- `src/cli.ts:1-32`
+
+4. Existing TS runtime files to extend are present:
+- `src/adapters/process.ts:1-53`
+- `src/adapters/flyctl.ts:1-49`
+- `src/contexts/runtime/infrastructure/adapters/fly-deployment-registry.ts:20-182`
+- `src/commands/list.ts:1-47`
+
+5. Legacy `status` contract exists:
+- `lib/status.sh:52-90`
+- `tests/status.bats:18-30`
+
+6. Legacy `logs` contract exists:
+- `lib/logs.sh:22-32`
+- `tests/logs.bats:18-27`
+
+7. App-resolution contract exists and must be mirrored exactly:
+- `lib/config.sh:107-147`
+- `lib/config.sh:235-264`
+
+8. Existing parity manifest already captures the exact public command forms for this PR:
+- `tests/parity/scenarios/non_destructive_commands.list:1-5`
+
+9. Existing parity baselines already exist and are committed:
+- `tests/parity/baseline/status.stdout.snap`
+- `tests/parity/baseline/status.stderr.snap`
+- `tests/parity/baseline/status.exit.snap`
+- `tests/parity/baseline/logs.stdout.snap`
+- `tests/parity/baseline/logs.stderr.snap`
+- `tests/parity/baseline/logs.exit.snap`
+
+10. Existing quality gates pass before starting:
+
+```bash
+npm run parity:check
+npm run typecheck
+npm run arch:ddd-boundaries
+npm run test:domain-primitives
+npm run verify:pr-d1-list-command
+tests/bats/bin/bats tests/status.bats tests/logs.bats tests/list-ts-hybrid.bats tests/hybrid-dispatch.bats tests/parity-harness.bats tests/integration.bats
+```
+
+If these are not true, resolve drift first.
+
+---
+
+## 4) Exact File Changes
+
+Follow the slices in the order below. Do not invent additional architecture or rename files.
+
+## 4.1 Update `package.json` scripts for PR-D2 test surface
+
+Path: `package.json` (scripts block).  
+Action: modify.
+
+Required changes:
+
+1. Add script:
+- `"test:runtime-status": "tsx --test tests-ts/runtime/show-status.test.ts"`
+
+2. Add script:
+- `"test:runtime-logs": "tsx --test tests-ts/runtime/show-logs.test.ts"`
+
+3. Add script:
+- `"test:runtime-status-logs": "npm run test:runtime-status && npm run test:runtime-logs"`
+
+4. Add script:
+- `"verify:pr-d2-status-logs": "bash scripts/verify-pr-d2-status-logs.sh"`
+
+5. Keep existing scripts unchanged:
+- `build`
+- `typecheck`
+- `arch:ddd-boundaries`
+- `test:domain-primitives`
+- `test:runtime-list`
+- `verify:pr-d1-list-command`
+- `parity:capture`
+- `parity:compare`
+- `parity:check`
+
+## 4.2 Reuse PR-D1 config-dir logic and add current-app resolution helper
+
+Update:
+
+1. `src/contexts/runtime/infrastructure/adapters/fly-deployment-registry.ts`
+
+Create:
+
+1. `src/contexts/runtime/infrastructure/adapters/current-app-config.ts`
+2. `src/commands/resolve-app.ts`
+
+Required changes:
+
+### `src/contexts/runtime/infrastructure/adapters/fly-deployment-registry.ts`
+
+1. Keep `list` behavior unchanged.
+2. Export the existing config-dir helper so this PR reuses the same path resolution semantics instead of duplicating them:
+- `resolveConfigDir`
+3. Export the existing safe app-name validator so this PR reuses the same validation semantics instead of duplicating them:
+- `isSafeAppName`
+4. Do not change list output formatting or ordering in this PR.
+
+### `src/contexts/runtime/infrastructure/adapters/current-app-config.ts`
+
+1. Read `current_app:` from `${configDir}/config.yaml`, using the exported `resolveConfigDir`.
+2. Validate `current_app` with the exported `isSafeAppName`.
+3. Return `null` when:
+- config file is missing
+- `current_app:` is missing
+- `current_app:` is empty
+- `current_app:` fails validation
+4. Do not write to config in this PR.
+
+### `src/commands/resolve-app.ts`
+
+1. Export a helper that mirrors bash `config_resolve_app` semantics exactly for `status` and `logs`.
+2. Resolution order must be:
+- `-a APP` from command args when present
+- otherwise `current_app` from `current-app-config.ts`
+- otherwise `null`
+3. While scanning args:
+- only `-a` is recognized
+- all other args and flags are ignored
+4. If `-a` is present without a value, treat it as unresolved and continue to the `current_app` fallback.
+5. If `-a` appears multiple times, use the last parsed `-a` value to match legacy tolerance.
+6. Do not introduce new option parsing rules in this file.
+
+## 4.3 Extend low-level adapters for `status` and `logs`
+
+Update:
+
+1. `src/adapters/flyctl.ts`
+2. `src/adapters/process.ts`
+
+Required changes:
+
+### `src/adapters/flyctl.ts`
+
+1. Keep existing `getMachineState(appName)` behavior unchanged for PR-D1 `list`.
+2. Extend `FlyctlPort` with:
+- `getAppStatus(appName: string): Promise<{ ok: true; appName: string; status: string | null; hostname: string | null; machineState: string | null; region: string | null } | { ok: false; error: string }>`
+- `getAppLogs(appName: string): Promise<{ stdout: string; stderr: string; exitCode: number }>`
+3. `getAppStatus(appName)` must:
+- run `fly status --app <app> --json`
+- parse `app.name`
+- parse `app.status`
+- parse `app.hostname`
+- parse the first machine `state`
+- parse the first machine `region`
+- return `{ ok: false, error: <message> }` on process error, non-zero exit, or JSON parse failure
+4. Error message rules for `getAppStatus(appName)`:
+- prefer raw `stderr.trim()` when non-empty
+- otherwise use `stdout.trim()` when non-empty
+- otherwise use `unknown error`
+5. `getAppLogs(appName)` must:
+- run `fly logs --app <app>`
+- return raw `stdout`, `stderr`, and `exitCode`
+- not parse, colorize, trim, or reformat output
+
+### `src/adapters/process.ts`
+
+1. Keep `ProcessResult` unchanged.
+2. Preserve UTF-8 capture semantics exactly.
+3. Do not normalize newlines or strip trailing newlines.
+4. Do not print directly to the console.
+
+## 4.4 Add status runtime port, use-case, and command handler
+
+Create:
+
+1. `src/contexts/runtime/application/ports/status-reader.port.ts`
+2. `src/contexts/runtime/application/use-cases/show-status.ts`
+3. `src/contexts/runtime/infrastructure/adapters/fly-status-reader.ts`
+4. `src/commands/status.ts`
+
+Update:
+
+1. `src/cli.ts`
+
+Required behavior:
+
+### `src/contexts/runtime/application/ports/status-reader.port.ts`
+
+1. Export:
+- `StatusDetails`
+- `StatusReaderPort`
+2. `StatusDetails` fields must be exactly:
+- `appName`
 - `status`
-- `logs`
-- `doctor`
-- `list`
-- `destroy`
-- `help`
-- `version`
-3. Existing release process (`scripts/release-guard.sh`, semver tags, GitHub Releases) must remain usable in every migration phase.
-4. No regressions in secret handling (do not print keys/tokens to stdout/stderr or logs).
-5. Existing bash implementation remains the source of truth fallback until each command is promoted.
+- `machine`
+- `region`
+- `hostname`
 
-## Implementation Audit Update (2026-03-12)
+### `src/contexts/runtime/infrastructure/adapters/fly-status-reader.ts`
 
-This section records plan-vs-codebase audit findings without changing the intended migration design below.
+1. Implement `StatusReaderPort` using `FlyctlAdapter`.
+2. Placeholder mapping must mirror `lib/status.sh:84-87`:
+- missing app name -> use the requested app name
+- missing status -> `unknown`
+- missing machine state -> `unknown`
+- missing region -> `unknown`
+- missing hostname -> `null`
+3. On fly/runtime failure, return an error result carrying the exact error message string from `getAppStatus`.
 
-### Snapshot conclusion
+### `src/contexts/runtime/application/use-cases/show-status.ts`
 
-- Overall completion: not started (pre-PR-A).
-- The plan document exists, but no TypeScript hybrid migration artifacts are present in runtime, test, or CI.
+1. Export `ShowStatusUseCase`.
+2. `execute(appName: string)` must return a discriminated union:
+- `{ kind: "ok"; details: StatusDetails }`
+- `{ kind: "error"; message: string }`
+3. Do not add retries or fallback behavior in the use-case.
 
-### Evidence summary
+### `src/commands/status.ts`
 
-1. Missing TS foundation artifacts:
-- `package.json`
-- `tsconfig.json`
-- `src/` tree (`cli.ts`, `version.ts`, command files, contexts)
-- `dist/cli.js` and `dist/.gitkeep`
-2. Missing hybrid dispatcher wiring in `hermes-fly`:
-- no `HERMES_FLY_IMPL_MODE`
-- no `HERMES_FLY_TS_COMMANDS`
-- no `node` + `dist/cli.js` execution path
-- no TS-to-bash fallback signal handling path
-3. Missing parity harness and migration control artifacts:
-- no `scripts/parity-capture.sh`
-- no `scripts/parity-compare.sh`
-- no `tests/parity/baseline/*.snap`
-- no `data/ts-migration-state.json`
-4. Missing TS/architecture CI jobs:
-- no `test:ts`
-- no `build:ts`
-- no `parity:promoted-commands`
-- no `arch:ddd-boundaries`
-- no repository workflow files implementing these gates
-5. Install/release scripts are still bash-only migration baseline:
-- `scripts/install.sh` does not install `dist/` or migration metadata.
-- `scripts/release-guard.sh` does not validate TS artifact/version parity or parity evidence files.
-
-### Phase completion matrix (audited 2026-03-12)
-
-| Phase | Name | Status |
-| --- | --- | --- |
-| 0 | Foundation and Safety Rails | Not started |
-| 0.5 | DDD Model Bootstrap | Not started |
-| 1 | Command Contract Snapshot (Parity Harness) | Not started |
-| 2 | Migrate `list` | Not started |
-| 3 | Migrate `status` and `logs` | Not started |
-| 4 | Migrate `doctor` | Not started |
-| 5 | Migrate `destroy` | Not started |
-| 6 | Shared Provider/Messaging Libraries in TS | Not started |
-| 7 | Migrate `resume` | Not started |
-| 8 | Incremental `deploy` Rewrite | Not started |
-| 9 | Default Flip to TS for Safe Commands | Not started |
-| 10 | Full Cutover and Legacy Removal | Not started |
-
-### Revalidated immediate execution start (unchanged intent)
-
-Begin with PR A exactly as defined in this plan: TS toolchain + Commander skeleton + hybrid dispatcher scaffolding + boundary checks, with zero user-facing behavior change and full existing bats suite green.
-
-## Current State Inventory (Baseline)
-
-Current entrypoint and modules:
-
-- Entrypoint: `hermes-fly`
-- Bash modules:
-  - `lib/deploy.sh`
-  - `lib/destroy.sh`
-  - `lib/doctor.sh`
-  - `lib/status.sh`
-  - `lib/logs.sh`
-  - `lib/list.sh`
-  - `lib/config.sh`
-  - `lib/prereqs.sh`
-  - `lib/fly-helpers.sh`
-  - `lib/docker-helpers.sh`
-  - `lib/openrouter.sh`
-  - `lib/reasoning.sh`
-  - `lib/messaging.sh`
-  - `lib/ui.sh`
-- Test suites (bats):
-  - `tests/deploy.bats`
-  - `tests/doctor.bats`
-  - `tests/destroy.bats`
-  - `tests/status.bats`
-  - `tests/logs.bats`
-  - `tests/list.bats`
-  - `tests/prereqs*.bats`
-  - `tests/openrouter.bats`
-  - `tests/reasoning.bats`
-  - `tests/messaging.bats`
-  - `tests/integration.bats`
-  - others in `tests/`
-
-## Target Architecture (TypeScript + DDD)
-
-### New top-level layout
+1. Export `runStatusCommand(args: string[], options?: ...)`.
+2. Resolve the app name using `resolve-app.ts`.
+3. If no app can be resolved, write exactly this line to `stderr` and return `1`:
 
 ```text
-src/
-  cli.ts
-  version.ts
-  commands/
-    deploy.ts
-    resume.ts
-    status.ts
-    logs.ts
-    doctor.ts
-    list.ts
-    destroy.ts
-  adapters/
-    flyctl.ts
-    docker.ts
-    git.ts
-    curl.ts
-    process.ts
-    fs.ts
-    env.ts
-    logger.ts
-    prompts.ts
-  shared/
-    core/
-      errors.ts
-      result.ts
-      value-object.ts
-    infra/
-      retry.ts
-      time.ts
-      redaction.ts
-  contexts/
-    deploy/
-      domain/
-        entities/
-        value-objects/
-        services/
-      application/
-        use-cases/
-        ports/
-      infrastructure/
-        adapters/
-      presentation/
-        wizard/
-    diagnostics/
-      domain/
-      application/
-      infrastructure/
-      presentation/
-    messaging/
-      domain/
-      application/
-      infrastructure/
-    release/
-      domain/
-      application/
-      infrastructure/
-    runtime/
-      domain/
-      application/
-      infrastructure/
-  legacy/
-    bash-bridge.ts
-dist/
-  cli.js
+[error] No app specified. Use -a APP or run 'hermes-fly deploy' first.
 ```
 
-### DDD bounded contexts
-
-1. `Deploy`:
-- app provisioning, region/size/storage selection, template generation, provenance metadata.
-2. `Diagnostics`:
-- doctor checks, drift detection, summarized operator findings.
-3. `Messaging`:
-- Telegram/Discord configuration, token validation, allowed user policy.
-4. `Release`:
-- version/tag/release invariants, release guard compatibility checks.
-5. `Runtime`:
-- command execution orchestration and environment capabilities (node availability, fallback policy).
-
-### Ubiquitous language (must be consistent across code + docs)
-
-1. `DeploymentIntent`: normalized user choices before provisioning.
-2. `DeploymentPlan`: resolved, validated plan ready to execute.
-3. `ProvenanceRecord`: persisted channel/ref/policy metadata.
-4. `DriftFinding`: typed diagnostic mismatch result.
-5. `MessagingPolicy`: who can talk to bot (`only_me`, `specific_users`, `anyone`).
-6. `ReleaseContract`: version/tag/artifact consistency rules.
-
-### Layering rules (strict)
-
-1. `domain`:
-- pure logic only, no IO, no CLI rendering, no process execution.
-2. `application`:
-- orchestrates use-cases; depends only on `domain` + `ports`.
-3. `infrastructure`:
-- adapters for flyctl/curl/fs/process/network; implements ports.
-4. `presentation`:
-- Commander handlers and prompt/table formatting only.
-5. Forbidden dependency directions:
-- `domain -> infrastructure` disallowed.
-- `domain -> presentation` disallowed.
-- cross-context calls must go through application ports or an anti-corruption adapter.
-
-### Hybrid anti-corruption layer
-
-The existing bash implementation is treated as an anti-corruption layer during migration:
-
-1. TS command fails closed to typed fallback signal.
-2. Dispatcher executes legacy bash command.
-3. Output includes one concise fallback notice.
-4. No shared mutable state between TS domain objects and sourced bash globals.
-
-### Commander command contract
-
-- Root command: `hermes-fly`
-- Subcommands and flags remain unchanged.
-- Keep existing help text behavior as close as practical for compatibility.
-- Keep exit code behavior consistent with bash commands.
-
-### Hybrid dispatcher contract
-
-`hermes-fly` (bash) routes commands using deterministic policy:
-
-1. Determine implementation mode:
-- `HERMES_FLY_IMPL_MODE=legacy|hybrid|ts` (default `hybrid` during migration).
-2. Determine per-command implementation:
-- `HERMES_FLY_TS_COMMANDS` comma list (for example `list,status,doctor`).
-3. For a command in TS set:
-- If Node runtime + `dist/cli.js` available, execute TS.
-- If missing runtime/artifact or TS exits with fallback-marked error, route to bash and print single-line warning.
-4. For non-TS commands:
-- Always execute existing bash path.
-
-## Runtime Strategy During Hybrid
-
-To avoid breaking existing users:
-
-1. Node is optional during migration.
-2. Default path remains bash for all commands at first.
-3. TS paths are progressively enabled per command after parity.
-4. If TS cannot run (`node` missing, broken artifact), command transparently falls back to bash.
-
-## Version and Release Contract
-
-### Single version source
-
-Keep `HERMES_FLY_VERSION` in `hermes-fly` as canonical version until full cutover.
-
-### Add release guard checks
-
-Extend `scripts/release-guard.sh` to validate:
-
-1. If `dist/cli.js` exists, embedded TS version matches `HERMES_FLY_VERSION`.
-2. If TS command promotion flags are changed, parity evidence file exists for this release.
-3. No dirty worktree.
-
-### Install contract
-
-During hybrid:
-
-- `scripts/install.sh` continues copying `hermes-fly`, `lib/`, `templates/`, `data/`.
-- Add copying `dist/` and minimal runtime metadata (`package.json` optional for diagnostics).
-  - **Finding** [MEDIUM]: `package.json` provides diagnostic metadata for `doctor` checks and release guard version verification at ~1KB overhead. Since `src/version.ts` compiles into `dist/cli.js`, `package.json` serves as a secondary verification source. **Recommendation**: Include `package.json` in install artifacts (change from 'optional' to 'included').
-- No install-time dependency install step.
-- Runtime fallback protects users without Node.
-
-## Migration Phases (Detailed)
-
-## Phase 0: Foundation and Safety Rails
-
-### Scope
-
-1. Introduce TS toolchain and Commander skeleton without changing user behavior.
-2. Add hybrid dispatch plumbing but keep all commands on bash.
-3. Establish DDD package boundaries and lint-enforced dependency rules.
-
-### Files to add/update
-
-1. Add:
-- `package.json`
-- `tsconfig.json`
-- `src/cli.ts`
-- `src/version.ts`
-- `src/legacy/bash-bridge.ts`
-- `src/contexts/` skeleton per bounded context
-- `eslint` import-boundary configuration (or equivalent) to enforce layer rules
-  - **Finding** [HIGH]: Both `eslint-plugin-boundaries` and `dependency-cruiser` are mature tools for DDD layer enforcement. `dependency-cruiser` offers richer regex-based path matching that maps directly to `src/contexts/<context>/<layer>/` structure, standalone CI integration, and cross-context isolation via group matching. `eslint-plugin-boundaries` integrates into ESLint for in-editor feedback but requires more complex config for 5+ bounded contexts ([dependency-cruiser](https://github.com/sverweij/dependency-cruiser), [eslint-plugin-boundaries](https://github.com/javierbrea/eslint-plugin-boundaries)). **Recommendation**: Use `dependency-cruiser` as the primary CI boundary check; optionally add `eslint-plugin-boundaries` for editor-time feedback.
-- `dist/.gitkeep` (or generated artifact policy file)
-2. Update:
-- `hermes-fly` (hybrid dispatch wrapper, defaulting to legacy behavior)
-- `.gitignore` (TS build artifacts policy)
-- `README.md` (developer section only; no user-facing behavioral change)
-
-### Deterministic verification criteria
-
-1. `./hermes-fly --version` output unchanged.
-2. `./hermes-fly help` output unchanged.
-3. All existing bats tests pass unchanged.
-4. `HERMES_FLY_IMPL_MODE=legacy ./hermes-fly <cmd>` equals baseline behavior for every command.
-5. `HERMES_FLY_IMPL_MODE=hybrid` with empty TS command set still executes bash for all commands.
-6. Import-boundary check fails if any domain module imports infrastructure/presentation modules.
-
-## Phase 0.5: DDD Model Bootstrap
-
-### Scope
-
-Define core domain model and invariants before command porting.
-
-### Deliverables
-
-1. Add domain primitives:
-- `DeploymentIntent`
-- `DeploymentPlan`
-- `ProvenanceRecord`
-- `DriftFinding`
-- `MessagingPolicy`
-- `ReleaseContract`
-2. Add context-level port interfaces in `application/ports`.
-3. Add anti-corruption adapter contracts for legacy bash fallback.
-
-### Deterministic verification criteria
-
-1. Domain module tests pass with zero mocks for process/network/fs.
-2. Invalid state construction fails deterministically (for example invalid channel/model policy combos).
-3. Cross-context dependency rule check passes.
-4. Existing CLI behavior remains unchanged (`bats` baseline still green).
-
-## Phase 1: Command Contract Snapshot (Parity Harness)
-
-### Scope
-
-Create machine-checkable contract snapshots for command behavior before migration.
-
-### Deliverables
-
-1. Add parity harness script:
-- `scripts/parity-capture.sh`
-- `scripts/parity-compare.sh`
-2. Add baseline fixtures:
-- `tests/parity/baseline/*.snap`
-3. Add CI job for parity checks on promoted commands.
-
-### Deterministic verification criteria
-
-1. For each command (`list,status,logs,doctor,destroy,resume,deploy`):
-- capture `stdout`, `stderr`, exit code for mocked scenarios.
-2. Re-run capture twice: snapshots must be stable (no nondeterministic drift).
-3. Comparison tool reports exact diff with file + line.
-
-## Phase 2: Migrate `list` (lowest risk)
-
-### Scope
-
-Implement `list` in TS; keep bash fallback.
-
-### Files
-
-1. Add:
-- `src/commands/list.ts`
-- `src/adapters/flyctl.ts`
-- `src/adapters/process.ts`
-- `src/contexts/runtime/application/use-cases/list-deployments.ts`
-- `src/contexts/runtime/application/ports/deployment-registry.port.ts`
-- `src/contexts/runtime/infrastructure/adapters/fly-deployment-registry.ts`
-2. Update:
-- `src/cli.ts`
-- `hermes-fly` (add `list` to pilot TS allowlist only behind env flag)
-
-### Deterministic verification criteria
-
-1. `tests/list.bats` still passes in default mode.
-2. TS path validation:
-- `HERMES_FLY_TS_COMMANDS=list HERMES_FLY_IMPL_MODE=hybrid ./hermes-fly list` matches parity snapshot in mocked environment.
-3. If `node` absent:
-- command falls back to bash with single warning line and same exit code.
-
-### Release gate
-
-`list` can be enabled by default in hybrid mode only after:
-
-1. parity snapshots match in CI for 3 consecutive commits, and
-2. no regression in full bats suite.
-
-## Phase 3: Migrate `status` and `logs`
-
-### Scope
-
-Implement read-only operational commands in TS.
-
-### Files
-
-1. Add:
-- `src/commands/status.ts`
-- `src/commands/logs.ts`
-- shared table renderer in `src/shared/core/` if needed
-  - **Finding** [MEDIUM]: Three commands (`list`, `status`, `doctor`) need tabular output. A shared renderer in `src/shared/core/table.ts` avoids duplication. Recommend adding it during Phase 2 (`list` migration) using either a thin `cli-table3` wrapper or a minimal custom formatter. **Recommendation**: Promote from 'if needed' to planned deliverable in Phase 2.
-- use-cases under `src/contexts/runtime/application/use-cases/`
-2. Update parity fixtures for both commands.
-
-### Deterministic verification criteria
-
-1. `tests/status.bats` and `tests/logs.bats` pass in default path.
-2. TS paths produce equivalent data fields and exit codes.
-3. Streaming behavior for `logs`:
-- CTRL-C handling and process termination tested with mock process.
-
-## Phase 4: Migrate `doctor`
-
-### Scope
-
-Port diagnostics checks and drift checks with strict output contract.
-
-### Key risk
-
-`doctor` contains nuanced logic and user-facing messaging; preserve diagnostic meaning and failure semantics.
-
-### Files
-
-1. Add:
-- `src/commands/doctor.ts`
-- `src/contexts/diagnostics/domain/checks/*.ts`
-- `src/contexts/diagnostics/application/use-cases/run-doctor.ts`
-- `src/contexts/diagnostics/infrastructure/adapters/*.ts`
-2. Map from bash `lib/doctor.sh` check-by-check and encode each finding type as a typed `DriftFinding`.
-
-### Deterministic verification criteria
-
-1. All `tests/doctor.bats` pass with default routing.
-2. TS routing for `doctor` matches:
-- check ordering,
-- failure/success exit code,
-- presence of key diagnostic messages.
-3. Drift-specific checks:
-- missing summary, missing channel, mismatch cases must produce same outcomes.
-4. Domain tests verify check invariant rules independent of shell/process adapters.
-
-## Phase 5: Migrate `destroy`
-
-### Scope
-
-Port teardown flow including confirmations and Telegram cleanup behavior.
-
-### Files
-
-1. Add:
-- `src/contexts/deploy/application/use-cases/destroy-deployment.ts`
-- `src/contexts/messaging/application/use-cases/revoke-telegram-session.ts`
-- relevant infrastructure adapters in both contexts.
-
-### Deterministic verification criteria
-
-1. `tests/destroy.bats` pass.
-2. `--force` behavior identical.
-3. No secret leakage in logs for token-related operations.
-4. TS fallback path handles partial failures without orphaning local config state.
-
-## Phase 6: Shared Provider/Messaging Libraries in TS
-
-### Scope
-
-Extract provider/model/messaging logic into TS modules before full `deploy` migration.
-
-### Deliverables
-
-1. Add modules:
-- `src/contexts/deploy/infrastructure/adapters/openrouter-catalog.ts`
-- `src/contexts/messaging/infrastructure/adapters/telegram-api.ts`
-- ~~`src/contexts/messaging/infrastructure/adapters/discord-api.ts`~~ (not applicable -- Discord was removed from `lib/messaging.sh`; only backward-compat secret bridging remains in `templates/entrypoint.sh`)
-  - **Finding** [HIGH]: Codebase confirms Discord fully removed from messaging module. No Discord setup flow, validation, or behavior exists to port. Only `DISCORD_BOT_TOKEN`/`DISCORD_ALLOWED_USERS` env bridging remains in entrypoint template for backward compat. **Recommendation**: Drop this adapter from Phase 6 scope.
-2. Add domain/application modules:
-- `src/contexts/messaging/domain/*`
-- `src/contexts/messaging/application/use-cases/*`
-- `src/contexts/deploy/application/use-cases/select-model.ts`
-2. Reuse existing contract behavior from:
-- `lib/openrouter.sh`
-- `lib/messaging.sh`
-- `lib/reasoning.sh`
-
-### Deterministic verification criteria
-
-1. Port corresponding unit/behavior tests (new TS tests + existing bats coverage preserved).
-2. Telegram token validation and poll-conflict detection behavior preserved.
-3. Model selection and reasoning compatibility decisions match existing fixtures.
-
-## Phase 7: Migrate `resume`
-
-### Scope
-
-Port `resume` functionality (post-interruption recovery checks) to TS using shared deploy state contracts.
-
-### Files
-
-1. Add:
-- `src/contexts/deploy/application/use-cases/resume-deployment.ts`
-- `src/contexts/deploy/domain/entities/deployment-journal.ts`
-- `src/contexts/deploy/infrastructure/adapters/deployment-journal-fs.ts`
-
-### Deterministic verification criteria
-
-1. Existing integration scenarios for interrupted deploy are reproducible with TS resume path.
-2. Exit code and user guidance messages match existing contract.
-
-## Phase 8: Incremental `deploy` Rewrite (Sub-Phases)
-
-`deploy` is highest complexity; migrate by internal steps with strict gates.
-
-### Phase 8.1: Non-interactive deploy primitives
-
-1. Fly app creation wrapper
-2. Volume creation wrapper
-3. Secret setting wrapper
-4. Deploy command wrapper
-5. `DeploymentPlan` aggregate execution in application layer (no direct Commander logic).
-
-Verification:
-
-1. Unit tests for command construction.
-2. Mocked integration test verifies order and retry policy.
-
-### Phase 8.2: Interactive wizard framework
-
-1. Prompt adapter abstraction
-2. Table rendering and default selection behavior
-3. Input validation parity
-4. Map prompt outputs into `DeploymentIntent` value objects.
-
-Verification:
-
-1. Snapshot tests for prompt text where deterministic.
-2. Behavior tests for invalid input re-prompt loops.
-
-### Phase 8.3: Provider and model selection
-
-1. OpenRouter key verification
-2. Provider list loading and model menu rendering
-3. Failure handling (timeouts/network errors)
-4. `ModelSelectionPolicy` domain service for compatibility gating and channel constraints.
-
-Verification:
-
-1. Existing provider selection edge cases covered by migrated tests.
-2. Timeout/retry behavior deterministic.
-
-### Phase 8.4: Messaging setup flows
-
-1. Telegram setup, token verification, conflict detection
-2. Access policy prompts and home channel prompts
-3. `MessagingPolicy` domain validation and anti-corruption mapping to legacy env keys.
-
-Verification:
-
-1. `tests/messaging.bats` equivalent behavior retained via parity harness and TS tests.
-
-### Phase 8.5: Scaffold generation and config writing
-
-1. Dockerfile and fly.toml generation
-2. Deploy summary persistence
-3. Channel/provenance metadata persistence
-4. `ProvenanceRecord` generation from `DeploymentPlan` and release context.
-
-Verification:
-
-1. Generated files diff identical (or intentionally normalized with approved diff map).
-2. `doctor` reads TS-generated metadata without regression.
-
-### Phase 8.6: End-to-end deploy orchestration
-
-1. Preflight checks
-2. Resource provisioning
-3. Deployment verification and success summary
-4. Resume-token/operation journal for interrupted sessions
-5. Domain-event-style result objects (no shell-global side effects).
-
-Verification:
-
-1. Integration suite passes for happy path + interruption path + recovery.
-2. Failure messages actionable and not generic.
-
-## Phase 9: Default Flip to TS for Safe Commands
-
-### Scope
-
-Enable TS by default for low/medium-risk commands while keeping fallback and override.
-
-### Target order
-
-1. `list`, `status`, `logs`
-2. `doctor`
-3. `destroy`, `resume`
-4. `deploy` last
-
-### Deterministic verification criteria
-
-1. Canary period per command with release notes annotation.
-2. Error rate thresholds met (no increase in failed command invocations in telemetry if available, else issue-based gate).
-3. `HERMES_FLY_IMPL_MODE=legacy` emergency switch documented and tested.
-
-## Phase 10: Full Cutover and Legacy Removal
-
-### Preconditions
-
-1. All commands have passed parity gates.
-2. At least two stable releases with TS default for all commands and no critical regressions.
-
-### Scope
-
-1. Switch `hermes-fly` to exec TS CLI directly (or keep thin bash shim).
-2. Archive/remove legacy bash modules from runtime path (optionally move to `legacy/` for one release).
-  - **Finding** [MEDIUM]: The plan's own rollback mechanism (`HERMES_FLY_IMPL_MODE=legacy`) requires bash modules in the runtime path. Moving to `legacy/` (not removing) preserves rollback during the deprecation window. Full removal should follow one release after the deprecation window closes. **Recommendation**: Commit to 'move to `legacy/`' for at least one release rather than leaving it optional; schedule full removal for the subsequent release.
-3. Simplify release/install scripts around new runtime contract.
-
-### Deterministic verification criteria
-
-1. Full CI green (bats legacy compatibility + TS suites).
-2. Install from latest release works on clean Linux and macOS test hosts.
-3. `--version` and command help outputs remain consistent with docs.
-
-## Test Strategy
-
-## 1. Preserve existing bats as compatibility net
-
-- Keep all existing bats tests until full cutover is complete.
-- For migrated commands, run tests in both modes:
-  - legacy (`HERMES_FLY_IMPL_MODE=legacy`)
-  - hybrid+TS (`HERMES_FLY_IMPL_MODE=hybrid`, command in TS set)
-
-## 2. Add TS unit/integration tests
-
-Recommended stack:
-
-- Test runner: `vitest`
-- Mocking: built-in + process wrapper mocks
-- Snapshot assertions for deterministic text/table outputs
-
-DDD-specific requirements:
-
-1. Domain tests per bounded context:
-- no process/network/fs mocks in domain tests,
-- invariant tests for entities/value objects/services.
-2. Application tests:
-- mock only application ports, verify orchestration behavior and error mapping.
-3. Infrastructure tests:
-- adapter contract tests against mocked fly/curl/fs/process boundaries.
-
-## 3. Add parity test matrix in CI
-
-For each promoted command:
-
-1. Run bash path and capture tuple `(stdout, stderr, exit_code)`.
-2. Run TS path and capture same tuple.
-3. Compare with normalization rules:
-- strip ANSI color when `NO_COLOR=1`
-- allow known timestamp fields only if normalized
-
-Fail CI on mismatch unless explicitly approved in a parity exception file.
-
-## 4. Enforce architecture constraints in CI
-
-1. Add dependency-boundary check (eslint/import rules or dependency-cruiser):
-- fail on forbidden imports (`domain -> infrastructure`, `domain -> presentation`).
-2. Add context-isolation check:
-- fail on direct cross-context infrastructure coupling.
-3. Add anti-corruption check:
-- only `legacy/bash-bridge.ts` may directly execute legacy command wrappers in TS mode.
-
-## CI/CD Updates
-
-Add jobs:
-
-1. `test:bats` (existing)
-2. `test:ts` (new)
-3. `parity:promoted-commands` (new)
-4. `build:ts` (new)
-5. `arch:ddd-boundaries` (new)
-
-Merge gate:
-
-- No PR may promote a command to TS default without:
-  - passing parity job
-  - updated command migration checklist item
-  - release note entry
-
-## Migration Control File
-
-Add a tracked control file:
-
-- `data/ts-migration-state.json`
-
-Suggested schema:
-
-```json
-{
-  "impl_mode_default": "hybrid",
-  "ts_default_commands": [],
-  "ts_canary_commands": ["list"],
-  "parity_baseline_version": "0.1.19"
-}
+4. On success, write output to `stderr` only, with exact line content and spacing matching the existing success contract:
+
+```text
+[info] App:     test-app
+[info] Status:  started
+[info] Machine: started
+[info] Region:  ord
+✓ URL:     https://test-app.fly.dev
 ```
 
-Purpose:
+5. URL line rules:
+- include the `✓ URL:     ...` line only when hostname is non-null and non-empty
+- omit the line completely when hostname is missing
+6. On status-read failure, write exactly this error pattern to `stderr` and return `1`:
 
-1. explicit promoted/canary command inventory,
-2. reproducible release behavior,
-3. auditable command promotion history.
+```text
+[error] Failed to get status for app '<app>': <error>
+```
 
-## Security and Reliability Requirements
+7. Successful `status` writes nothing to `stdout` and returns `0`.
 
-1. Never include secrets in thrown errors or logs.
-2. Process adapter must support explicit timeout and cancellation.
-3. All network operations must classify failures:
-- auth error
-- connectivity error
-- rate limit
-- unknown
-4. Interactive prompts must be interrupt-safe (CTRL-C cleanup).
-5. Fallback to bash must not recurse infinitely (guard by env var, for example `HERMES_FLY_FALLBACK_DEPTH`).
+### `src/cli.ts`
 
-## Rollback Plan
+1. Register `status` as a subcommand.
+2. For `status`, set:
+- `.helpOption(false)`
+- `.allowUnknownOption(true)`
+- `.allowExcessArguments(true)`
+3. Delegate all raw post-command args to `runStatusCommand(args)`.
+4. Do not change the existing `version` or `list` command behavior.
 
-Rollback must be possible in <5 minutes for a bad release.
+## 4.5 Add logs runtime port, use-case, and command handler
 
-### Rollback mechanisms
+Create:
 
-1. Operational:
-- set `HERMES_FLY_IMPL_MODE=legacy` to force bash path.
-2. Release:
-- cut patch release reverting command promotions.
-3. Emergency:
-- remove TS command from `data/ts-migration-state.json` and republish patch.
+1. `src/contexts/runtime/application/ports/logs-reader.port.ts`
+2. `src/contexts/runtime/application/use-cases/show-logs.ts`
+3. `src/contexts/runtime/infrastructure/adapters/fly-logs-reader.ts`
+4. `src/commands/logs.ts`
 
-### Deterministic rollback verification
+Update:
 
-1. On latest release artifact:
-- `HERMES_FLY_IMPL_MODE=legacy ./hermes-fly deploy` works.
-2. Release guard passes post-rollback.
-3. Install script still validates version correctly after rollback tag.
+1. `src/cli.ts`
 
-## Proposed PR Breakdown
+Required behavior:
 
-1. PR A: TS foundation + hybrid dispatcher + DDD boundaries (no behavior change)
-2. PR B: DDD model bootstrap (`DeploymentIntent`, `DeploymentPlan`, `ProvenanceRecord`, `DriftFinding`, `MessagingPolicy`, `ReleaseContract`)
-3. PR C: Parity harness + baseline snapshots
-4. PR D: TS `list` in `runtime` context
-5. PR E: TS `status` + `logs` in `runtime` context
-6. PR F: TS `doctor` in `diagnostics` context
-7. PR G: TS `destroy` in `deploy` + `messaging` contexts
-8. PR H: provider/messaging infrastructure adapters and domain services
-9. PR I: TS `resume` in `deploy` context
-10. PR J-M: TS `deploy` sub-phases (8.1-8.6)
-11. PR N: default promotion and cleanup
+### `src/contexts/runtime/application/ports/logs-reader.port.ts`
 
-Each PR must include:
+1. Export:
+- `LogsReadResult`
+- `LogsReaderPort`
+2. `LogsReadResult` fields must be exactly:
+- `stdout`
+- `stderr`
+- `exitCode`
 
-1. explicit migration scope statement,
-2. parity evidence for affected command(s),
-3. fallback behavior test(s),
-4. release note snippet.
+### `src/contexts/runtime/infrastructure/adapters/fly-logs-reader.ts`
 
-## Estimated Timeline (1 Engineer)
+1. Implement `LogsReaderPort` using `FlyctlAdapter.getAppLogs(appName)`.
+2. Do not parse or reformat log lines.
+3. Return the raw process result unchanged.
 
-1. Foundation + DDD boundaries + parity harness: 1.5 to 2 weeks
-2. Read-only commands: 1 week
-3. Doctor + destroy + resume: 1.5 to 2 weeks
-4. Deploy sub-phases: 2.5 to 3.5 weeks
-5. Stabilization + default flip: 1 week
+### `src/contexts/runtime/application/use-cases/show-logs.ts`
 
-Total: ~7 to 9.5 weeks depending on deploy wizard complexity and parity deltas.
+1. Export `ShowLogsUseCase`.
+2. `execute(appName: string)` must return the raw `LogsReadResult`.
+3. Do not add retries, parsing, or synthetic log records.
 
-## Acceptance Criteria (Project Complete)
+### `src/commands/logs.ts`
 
-1. All user commands run in TS by default.
-2. Legacy mode remains available for one deprecation window (at least one minor release).
-3. Full test suite green, including parity checks.
-4. Installer and release guard enforce consistent versioning and artifact integrity.
-5. No open P0/P1 regressions attributable to migration after two stable releases.
-6. Architecture boundary checks pass: no forbidden DDD layer dependencies.
-7. Core invariants are covered by domain tests in each bounded context.
+1. Export `runLogsCommand(args: string[], options?: ...)`.
+2. Resolve the app name using `resolve-app.ts`.
+3. If no app can be resolved, write exactly this line to `stderr` and return `1`:
 
-## Definition of Done Per Command Migration
+```text
+[error] No app specified. Use -a APP or run 'hermes-fly deploy' first.
+```
 
-Command migration is considered complete only when all are true:
+4. On success:
+- write raw `stdout` exactly as returned by `LogsReaderPort`
+- write raw `stderr` exactly as returned by `LogsReaderPort`
+  (important: preserve non-empty stderr on success so legacy warning/info lines are not dropped)
+- return `0`
+5. On fly/log retrieval failure:
+- define failure strictly as `exitCode !== 0` from `LogsReaderPort`
+- do not forward the fly stderr text
+- write exactly this line to `stderr`
 
-1. Command implemented in TS.
-2. Command wired in hybrid dispatcher.
-3. Legacy fallback path tested.
-4. Parity snapshot approved.
-5. Existing bats command tests pass.
-6. New TS tests added for command-specific logic.
-7. Release note updated.
-8. DDD boundary checks pass for touched contexts.
+```text
+[error] Failed to fetch logs for app '<app>'
+```
 
-## Immediate Next Step (Execution Start)
+- return `1`
+6. Ignore all args except `-a APP`, matching the dispatcher-compatible legacy contract.
 
-Start with PR A (foundation):
+### `src/cli.ts`
 
-1. Add TS toolchain and Commander skeleton.
-2. Add hybrid dispatch logic to `hermes-fly` with default legacy behavior.
-3. Add `HERMES_FLY_IMPL_MODE` and `HERMES_FLY_TS_COMMANDS` docs in README developer section.
-4. Add DDD folder skeleton + import-boundary lint rules.
-5. Prove zero user-facing behavior change via full existing bats suite.
+1. Register `logs` as a subcommand.
+2. For `logs`, set:
+- `.helpOption(false)`
+- `.allowUnknownOption(true)`
+- `.allowExcessArguments(true)`
+3. Delegate all raw post-command args to `runLogsCommand(args)`.
+4. Do not change the existing `version`, `list`, or `status` command behavior.
+
+## 4.6 Add runtime, hybrid, and dispatch tests for PR-D2
+
+Create:
+
+1. `tests-ts/runtime/show-status.test.ts`
+2. `tests-ts/runtime/show-logs.test.ts`
+3. `tests/status-ts-hybrid.bats`
+4. `tests/logs-ts-hybrid.bats`
+5. `tests/verify-pr-d2-status-logs.bats`
+
+Update:
+
+1. `tests/hybrid-dispatch.bats`
+
+Required tests:
+
+### `tests-ts/runtime/show-status.test.ts`
+
+1. Status reader/use-case returns:
+- requested app name
+- `unknown` placeholders for missing status, machine, region
+- `null` hostname when missing
+2. Status reader/use-case preserves the exact fly error string for failure results.
+3. `resolve-app.ts` parity cases:
+- `-a APP` wins over current app
+- current app is used when `-a` is absent
+- unrelated args are ignored
+- `-a` without a value falls back to current app
+- unresolved app returns `null`
+
+### `tests-ts/runtime/show-logs.test.ts`
+
+1. Success path returns raw `stdout`, raw `stderr`, and exit `0` exactly as returned by the port.
+2. Failure path preserves non-zero exit code from the adapter.
+3. `runLogsCommand` writes the legacy failure line:
+- `[error] Failed to fetch logs for app 'bad-app'`
+4. `runLogsCommand` ignores unknown args and only uses `-a APP`.
+5. `-a` without value falls back to current app.
+6. repeated `-a` uses the last value.
+7. Success with non-empty stderr must still be passthrough if `exitCode` is `0`.
+8. Failure case where adapter returns `exitCode=1` and stderr non-empty must return `1` and print the failure contract line.
+
+### `tests/status-ts-hybrid.bats`
+
+1. Allowlisted TS `status -a test-app` path matches committed parity baseline files exactly:
+- stdout == `tests/parity/baseline/status.stdout.snap`
+- stderr == `tests/parity/baseline/status.stderr.snap`
+- exit == `tests/parity/baseline/status.exit.snap`
+2. Current-app fallback case matches the same baseline:
+- seed with `config_save_app "test-app" "ord"`
+- run `./hermes-fly status`
+3. Missing app selection case:
+- empty config
+- run `./hermes-fly status`
+- exit `1`
+- stdout empty
+- stderr exactly:
+
+```text
+[error] No app specified. Use -a APP or run 'hermes-fly deploy' first.
+```
+
+4. Fly failure case:
+- `MOCK_FLY_STATUS=fail`
+- run `./hermes-fly status -a bad-app`
+- exit `1`
+- stdout empty
+- stderr exactly:
+
+```text
+[error] Failed to get status for app 'bad-app': Error: app not found
+```
+
+5. Dist-missing fallback still works for allowlisted `status` with:
+- exit `0`
+- first stderr line:
+
+```text
+Warning: TS implementation unavailable for command 'status'; falling back to legacy
+```
+
+- remaining stderr/stdout/exit match legacy status output for the same fixture
+
+### `tests/logs-ts-hybrid.bats`
+
+1. Allowlisted TS `logs -a test-app` path matches committed parity baseline files exactly:
+- stdout == `tests/parity/baseline/logs.stdout.snap`
+- stderr == `tests/parity/baseline/logs.stderr.snap`
+- exit == `tests/parity/baseline/logs.exit.snap`
+2. Current-app fallback case matches the same baseline:
+- seed with `config_save_app "test-app" "ord"`
+- run `./hermes-fly logs`
+3. Missing app selection case:
+- empty config
+- run `./hermes-fly logs`
+- exit `1`
+- stdout empty
+- stderr exactly:
+
+```text
+[error] No app specified. Use -a APP or run 'hermes-fly deploy' first.
+```
+
+4. Fly failure case:
+- `MOCK_FLY_LOGS=fail`
+- run `./hermes-fly logs -a bad-app`
+- exit `1`
+- stdout empty
+- stderr exactly:
+
+```text
+[error] Failed to fetch logs for app 'bad-app'
+```
+
+5. Dist-missing fallback still works for allowlisted `logs` with:
+- exit `0`
+- first stderr line:
+
+```text
+Warning: TS implementation unavailable for command 'logs'; falling back to legacy
+```
+
+- remaining stdout/stderr/exit match legacy logs output for the same fixture
+
+### `tests/hybrid-dispatch.bats`
+
+1. Add direct routing checks for `status`:
+- hybrid mode with `HERMES_FLY_TS_COMMANDS=status` uses dist runtime (proved with temporary shim replacement of `dist/cli.js` that prints `[marker] TS runtime invoked` and exits `0`)
+- keep legacy output parity check with the real `dist/cli.js` present in a separate step
+- hybrid mode with `HERMES_FLY_TS_COMMANDS=logs` keeps `status` on legacy
+- prove the non-allowlisted legacy path by removing `dist/cli.js` and asserting:
+  - no TS fallback warning is printed
+  - output still matches the legacy `status` contract
+2. Add direct routing checks for `logs`:
+- hybrid mode with `HERMES_FLY_TS_COMMANDS=logs` uses dist runtime (proved with temporary shim replacement of `dist/cli.js` that prints `[marker] TS runtime invoked` and exits `0`)
+- keep legacy output parity check with the real `dist/cli.js` present in a separate step
+- hybrid mode with `HERMES_FLY_TS_COMMANDS=status` keeps `logs` on legacy
+- prove the non-allowlisted legacy path by removing `dist/cli.js` and asserting:
+  - no TS fallback warning is printed
+  - output still matches the legacy `logs` contract
+3. Add argument-parity checks proving that TS mode ignores unknown args the same way legacy does for:
+- `status --unknown-flag -a test-app`
+- `logs --unknown-flag -a test-app`
+- `status -a test-app --help`
+- `logs -a test-app --help`
+- `status -h`
+- `status -V`
+- `logs -h`
+- `logs -V`
+
+### `tests/verify-pr-d2-status-logs.bats`
+
+1. Assert all required files for PR-D2 exist.
+2. Assert `./scripts/verify-pr-d2-status-logs.sh` exits `0` and prints:
+
+```text
+PR-D2 status/logs verification passed.
+```
+
+3. Assert the verifier script includes checks for:
+- `status -a test-app`
+- `logs -a test-app`
+- current-app fallback for both commands
+- missing-app error for both commands
+- dist-missing fallback for both commands
+- script-level assertions are structural, not just string presence; assert each listed item appears as an executed assertion.
+- In the test file, check for concrete commands such as:
+  - `if ! diff -u ...status.stdout.snap ...; then` and `if ! diff -u ...status.stderr.snap ...; then`
+  - `if ! diff -u ...logs.stdout.snap ...; then` and `if ! diff -u ...logs.stderr.snap ...; then`
+  - `if ! grep -q` checks for both success and failure messages for:
+    - `status` missing app
+    - `logs` missing app
+    - `status -a bad-app` with `MOCK_FLY_STATUS=fail`
+    - `logs -a bad-app` with `MOCK_FLY_LOGS=fail`
+  - `if ! diff -u` checks using temp files captured from:
+    - full status command output (stdout and stderr) under dist-missing fallback
+    - full logs command output (stdout and stderr) under dist-missing fallback
+
+## 4.7 Add deterministic verifier script for PR-D2
+
+Create:
+
+1. `scripts/verify-pr-d2-status-logs.sh` (executable)
+
+Script steps:
+
+1. Verify all required new and modified files exist.
+2. Run:
+- `npm run build`
+- `npm run typecheck`
+- `npm run arch:ddd-boundaries`
+- `npm run test:domain-primitives`
+- `npm run test:runtime-status-logs`
+3. Run:
+- `tests/bats/bin/bats tests/status-ts-hybrid.bats tests/logs-ts-hybrid.bats tests/verify-pr-d2-status-logs.bats tests/hybrid-dispatch.bats tests/status.bats tests/logs.bats`
+4. Run direct deterministic parity assertions for the allowlisted TS success paths:
+- `status -a test-app`
+- `logs -a test-app`
+5. Run direct deterministic parity assertions for current-app fallback:
+- `status`
+- `logs`
+after seeding `current_app` via `config_save_app "test-app" "ord"`.
+6. Run direct error assertions for:
+- `status` with no app available
+- `logs` with no app available
+- `status -a bad-app` with `MOCK_FLY_STATUS=fail`
+- `logs -a bad-app` with `MOCK_FLY_LOGS=fail`
+7. Run dist-missing fallback assertions for:
+- `status`
+- `logs`
+8. Run:
+- `npm run verify:pr-d1-list-command`
+9. Print `PR-D2 status/logs verification passed.` only on success.
+
+---
+
+## 5) Deterministic Verification Criteria
+
+All checks are required.
+
+## 5.1 File-level checks
+
+Run:
+
+```bash
+test -f src/contexts/runtime/infrastructure/adapters/current-app-config.ts
+test -f src/commands/resolve-app.ts
+test -f src/contexts/runtime/application/ports/status-reader.port.ts
+test -f src/contexts/runtime/application/use-cases/show-status.ts
+test -f src/contexts/runtime/infrastructure/adapters/fly-status-reader.ts
+test -f src/commands/status.ts
+test -f src/contexts/runtime/application/ports/logs-reader.port.ts
+test -f src/contexts/runtime/application/use-cases/show-logs.ts
+test -f src/contexts/runtime/infrastructure/adapters/fly-logs-reader.ts
+test -f src/commands/logs.ts
+test -f tests-ts/runtime/show-status.test.ts
+test -f tests-ts/runtime/show-logs.test.ts
+test -f tests/status-ts-hybrid.bats
+test -f tests/logs-ts-hybrid.bats
+test -f tests/verify-pr-d2-status-logs.bats
+test -f scripts/verify-pr-d2-status-logs.sh
+```
+
+Expected: all exit `0`.
+
+## 5.2 TypeScript build and architecture checks
+
+Run:
+
+```bash
+npm run build
+npm run typecheck
+npm run arch:ddd-boundaries
+```
+
+Expected: all exit `0`.
+
+## 5.3 Runtime unit tests
+
+Run:
+
+```bash
+npm run test:runtime-status
+npm run test:runtime-logs
+```
+
+Expected: exit `0` and all test cases pass.
+
+## 5.4 Hybrid TS `status` parity against committed baseline
+
+Run:
+
+```bash
+npm run build
+tmp="$(mktemp -d)"
+mkdir -p "${tmp}/config" "${tmp}/logs"
+PATH="tests/mocks:${PATH}" HERMES_FLY_CONFIG_DIR="${tmp}/config" HERMES_FLY_LOG_DIR="${tmp}/logs" TMP_ROOT="${tmp}" \
+  bash -c 'source ./lib/config.sh; config_save_app "test-app" "ord"; \
+    HERMES_FLY_IMPL_MODE=hybrid HERMES_FLY_TS_COMMANDS=status ./hermes-fly status -a test-app >"${TMP_ROOT}/out" 2>"${TMP_ROOT}/err"; \
+    printf "%s\n" "$?" >"${TMP_ROOT}/exit"'
+diff -u tests/parity/baseline/status.stdout.snap "${tmp}/out"
+diff -u tests/parity/baseline/status.stderr.snap "${tmp}/err"
+diff -u tests/parity/baseline/status.exit.snap "${tmp}/exit"
+```
+
+Expected: all diffs exit `0`.
+
+## 5.5 Hybrid TS `logs` parity against committed baseline
+
+Run:
+
+```bash
+npm run build
+tmp="$(mktemp -d)"
+mkdir -p "${tmp}/config" "${tmp}/logs"
+PATH="tests/mocks:${PATH}" HERMES_FLY_CONFIG_DIR="${tmp}/config" HERMES_FLY_LOG_DIR="${tmp}/logs" TMP_ROOT="${tmp}" \
+  bash -c 'source ./lib/config.sh; config_save_app "test-app" "ord"; \
+    HERMES_FLY_IMPL_MODE=hybrid HERMES_FLY_TS_COMMANDS=logs ./hermes-fly logs -a test-app >"${TMP_ROOT}/out" 2>"${TMP_ROOT}/err"; \
+    printf "%s\n" "$?" >"${TMP_ROOT}/exit"'
+diff -u tests/parity/baseline/logs.stdout.snap "${tmp}/out"
+diff -u tests/parity/baseline/logs.stderr.snap "${tmp}/err"
+diff -u tests/parity/baseline/logs.exit.snap "${tmp}/exit"
+```
+
+Expected: all diffs exit `0`.
+
+## 5.6 Current-app fallback parity (positive and edge cases)
+
+Run:
+
+```bash
+npm run build
+tmp="$(mktemp -d)"
+mkdir -p "${tmp}/config" "${tmp}/logs"
+PATH="tests/mocks:${PATH}" HERMES_FLY_CONFIG_DIR="${tmp}/config" HERMES_FLY_LOG_DIR="${tmp}/logs" TMP_ROOT="${tmp}" \
+  bash -c 'source ./lib/config.sh; config_save_app "test-app" "ord"; \
+    HERMES_FLY_IMPL_MODE=hybrid HERMES_FLY_TS_COMMANDS=status ./hermes-fly status >"${TMP_ROOT}/status.out" 2>"${TMP_ROOT}/status.err"; \
+    printf "%s\n" "$?" >"${TMP_ROOT}/status.exit"; \
+    HERMES_FLY_IMPL_MODE=hybrid HERMES_FLY_TS_COMMANDS=logs ./hermes-fly logs >"${TMP_ROOT}/logs.out" 2>"${TMP_ROOT}/logs.err"; \
+    printf "%s\n" "$?" >"${TMP_ROOT}/logs.exit"'
+diff -u tests/parity/baseline/status.stdout.snap "${tmp}/status.out"
+diff -u tests/parity/baseline/status.stderr.snap "${tmp}/status.err"
+diff -u tests/parity/baseline/status.exit.snap "${tmp}/status.exit"
+diff -u tests/parity/baseline/logs.stdout.snap "${tmp}/logs.out"
+diff -u tests/parity/baseline/logs.stderr.snap "${tmp}/logs.err"
+diff -u tests/parity/baseline/logs.exit.snap "${tmp}/logs.exit"
+```
+
+Expected: all checks exit `0`.
+
+## 5.6a Current-app edge-case resolution (canonical no-app matrix)
+
+Run:
+
+```bash
+tmp="$(mktemp -d)"
+mkdir -p "${tmp}/config" "${tmp}/logs"
+PATH="tests/mocks:${PATH}" HERMES_FLY_CONFIG_DIR="${tmp}/config" HERMES_FLY_LOG_DIR="${tmp}/logs" TMP_ROOT="${tmp}" \
+  bash -c 'source ./lib/config.sh; \
+    printf "" >"${TMP_ROOT}/config/config.yaml"; \
+    HERMES_FLY_IMPL_MODE=hybrid HERMES_FLY_TS_COMMANDS=status ./hermes-fly status >"${TMP_ROOT}/empty_status.out" 2>"${TMP_ROOT}/empty_status.err"; \
+    printf "%s\n" "$?" >"${TMP_ROOT}/empty_status.exit"; \
+    HERMES_FLY_IMPL_MODE=hybrid HERMES_FLY_TS_COMMANDS=logs ./hermes-fly logs >"${TMP_ROOT}/empty_logs.out" 2>"${TMP_ROOT}/empty_logs.err"; \
+    printf "%s\n" "$?" >"${TMP_ROOT}/empty_logs.exit"; \
+    printf "current_app: bad name\n" >"${TMP_ROOT}/config/config.yaml"; \
+    HERMES_FLY_IMPL_MODE=hybrid HERMES_FLY_TS_COMMANDS=status ./hermes-fly status >"${TMP_ROOT}/badname_status.out" 2>"${TMP_ROOT}/badname_status.err"; \
+    printf "%s\n" "$?" >"${TMP_ROOT}/badname_status.exit"; \
+    HERMES_FLY_IMPL_MODE=hybrid HERMES_FLY_TS_COMMANDS=logs ./hermes-fly logs >"${TMP_ROOT}/badname_logs.out" 2>"${TMP_ROOT}/badname_logs.err"; \
+    printf "%s\n" "$?" >"${TMP_ROOT}/badname_logs.exit"; \
+    rm -f "${TMP_ROOT}/config/config.yaml"; \
+    HERMES_FLY_IMPL_MODE=hybrid HERMES_FLY_TS_COMMANDS=status ./hermes-fly status >"${TMP_ROOT}/missing_file_status.out" 2>"${TMP_ROOT}/missing_file_status.err"; \
+    printf "%s\n" "$?" >"${TMP_ROOT}/missing_file_status.exit"; \
+    HERMES_FLY_IMPL_MODE=hybrid HERMES_FLY_TS_COMMANDS=logs ./hermes-fly logs >"${TMP_ROOT}/missing_file_logs.out" 2>"${TMP_ROOT}/missing_file_logs.err"; \
+    printf "%s\n" "$?" >"${TMP_ROOT}/missing_file_logs.exit"'
+test "$(cat "${tmp}/empty_status.exit")" = "1"
+test "$(cat "${tmp}/empty_logs.exit")" = "1"
+test "$(cat "${tmp}/badname_status.exit")" = "1"
+test "$(cat "${tmp}/badname_logs.exit")" = "1"
+test "$(cat "${tmp}/missing_file_status.exit")" = "1"
+test "$(cat "${tmp}/missing_file_logs.exit")" = "1"
+for artifact in empty_status empty_logs badname_status badname_logs missing_file_status missing_file_logs; do
+  test -z "$(cat "${tmp}/${artifact}.out")"
+done
+test "$(cat "${tmp}/empty_status.err")" = "[error] No app specified. Use -a APP or run 'hermes-fly deploy' first."
+test "$(cat "${tmp}/empty_logs.err")" = "[error] No app specified. Use -a APP or run 'hermes-fly deploy' first."
+test "$(cat "${tmp}/badname_status.err")" = "[error] No app specified. Use -a APP or run 'hermes-fly deploy' first."
+test "$(cat "${tmp}/badname_logs.err")" = "[error] No app specified. Use -a APP or run 'hermes-fly deploy' first."
+test "$(cat "${tmp}/missing_file_status.err")" = "[error] No app specified. Use -a APP or run 'hermes-fly deploy' first."
+test "$(cat "${tmp}/missing_file_logs.err")" = "[error] No app specified. Use -a APP or run 'hermes-fly deploy' first."
+```
+
+Expected: all checks exit `0`.
+
+## 5.7 No-app smoke parity
+
+Run:
+
+```bash
+npm run build
+tmp="$(mktemp -d)"
+mkdir -p "${tmp}/config" "${tmp}/logs"
+PATH="tests/mocks:${PATH}" HERMES_FLY_CONFIG_DIR="${tmp}/config" HERMES_FLY_LOG_DIR="${tmp}/logs" TMP_ROOT="${tmp}" \
+  bash -c 'HERMES_FLY_IMPL_MODE=hybrid HERMES_FLY_TS_COMMANDS=status ./hermes-fly status >"${TMP_ROOT}/status.out" 2>"${TMP_ROOT}/status.err"; \
+    printf "%s\n" "$?" >"${TMP_ROOT}/status.exit"; \
+    HERMES_FLY_IMPL_MODE=hybrid HERMES_FLY_TS_COMMANDS=logs ./hermes-fly logs >"${TMP_ROOT}/logs.out" 2>"${TMP_ROOT}/logs.err"; \
+    printf "%s\n" "$?" >"${TMP_ROOT}/logs.exit"'
+test ! -s "${tmp}/status.out"
+test ! -s "${tmp}/logs.out"
+test "$(cat "${tmp}/status.exit")" = "1"
+test "$(cat "${tmp}/logs.exit")" = "1"
+test "$(cat "${tmp}/status.err")" = "[error] No app specified. Use -a APP or run 'hermes-fly deploy' first."
+test "$(cat "${tmp}/logs.err")" = "[error] No app specified. Use -a APP or run 'hermes-fly deploy' first."
+```
+
+Expected: all checks exit `0`.
+
+Implementation note:
+
+- This is a compact smoke check complementary to `5.6a` and should not replace the canonical matrix there.
+
+## 5.8 Fly failure error parity
+
+Run:
+
+```bash
+npm run build
+tmp="$(mktemp -d)"
+mkdir -p "${tmp}/config" "${tmp}/logs"
+PATH="tests/mocks:${PATH}" HERMES_FLY_CONFIG_DIR="${tmp}/config" HERMES_FLY_LOG_DIR="${tmp}/logs" TMP_ROOT="${tmp}" \
+  bash -c 'MOCK_FLY_STATUS=fail HERMES_FLY_IMPL_MODE=hybrid HERMES_FLY_TS_COMMANDS=status ./hermes-fly status -a bad-app >"${TMP_ROOT}/status.out" 2>"${TMP_ROOT}/status.err"; \
+    printf "%s\n" "$?" >"${TMP_ROOT}/status.exit"; \
+    MOCK_FLY_LOGS=fail HERMES_FLY_IMPL_MODE=hybrid HERMES_FLY_TS_COMMANDS=logs ./hermes-fly logs -a bad-app >"${TMP_ROOT}/logs.out" 2>"${TMP_ROOT}/logs.err"; \
+    printf "%s\n" "$?" >"${TMP_ROOT}/logs.exit"'
+test ! -s "${tmp}/status.out"
+test ! -s "${tmp}/logs.out"
+test "$(cat "${tmp}/status.exit")" = "1"
+test "$(cat "${tmp}/logs.exit")" = "1"
+test "$(cat "${tmp}/status.err")" = "[error] Failed to get status for app 'bad-app': Error: app not found"
+test "$(cat "${tmp}/logs.err")" = "[error] Failed to fetch logs for app 'bad-app'"
+```
+
+Expected: all checks exit `0`.
+
+## 5.9 Allowlisted fallback when artifact missing
+
+Run:
+
+```bash
+tmp="$(mktemp -d)"
+mkdir -p "${tmp}/config" "${tmp}/logs"
+PATH="tests/mocks:${PATH}" HERMES_FLY_CONFIG_DIR="${tmp}/config" HERMES_FLY_LOG_DIR="${tmp}/logs" TMP_ROOT="${tmp}" \
+  bash -c 'source ./lib/config.sh; config_save_app "test-app" "ord"; rm -f dist/cli.js; \
+    HERMES_FLY_IMPL_MODE=hybrid HERMES_FLY_TS_COMMANDS=status ./hermes-fly status -a test-app >"${TMP_ROOT}/status.out" 2>"${TMP_ROOT}/status.err"; \
+    printf "%s\n" "$?" >"${TMP_ROOT}/status.exit"; \
+    HERMES_FLY_IMPL_MODE=hybrid HERMES_FLY_TS_COMMANDS=logs ./hermes-fly logs -a test-app >"${TMP_ROOT}/logs.out" 2>"${TMP_ROOT}/logs.err"; \
+    printf "%s\n" "$?" >"${TMP_ROOT}/logs.exit"'
+head -n 1 "${tmp}/status.err"
+head -n 1 "${tmp}/logs.err"
+test "$(cat "${tmp}/status.exit")" = "0"
+test "$(cat "${tmp}/logs.exit")" = "0"
+test "$(head -n 1 "${tmp}/status.err")" = "Warning: TS implementation unavailable for command 'status'; falling back to legacy"
+test "$(head -n 1 "${tmp}/logs.err")" = "Warning: TS implementation unavailable for command 'logs'; falling back to legacy"
+diff -u tests/parity/baseline/status.stdout.snap "${tmp}/status.out"
+tail -n +2 "${tmp}/status.err" > "${tmp}/status.err.rest"
+diff -u tests/parity/baseline/status.stderr.snap "${tmp}/status.err.rest"
+diff -u tests/parity/baseline/logs.stdout.snap "${tmp}/logs.out"
+tail -n +2 "${tmp}/logs.err" > "${tmp}/logs.err.rest"
+diff -u tests/parity/baseline/logs.stderr.snap "${tmp}/logs.err.rest"
+```
+
+Expected: all checks exit `0`.
+
+## 5.10 Hybrid dispatch regression checks
+
+Run:
+
+```bash
+tests/bats/bin/bats tests/hybrid-dispatch.bats
+```
+
+Expected:
+
+1. `status` only uses TS when allowlisted.
+2. `logs` only uses TS when allowlisted.
+3. Non-allowlisted `status` and `logs` do not print fallback warnings when `dist/cli.js` is missing, proving they stayed on legacy.
+4. Unknown args do not cause Commander parsing regressions for `status` or `logs`.
+
+## 5.11 One-command verifier
+
+Run:
+
+```bash
+./scripts/verify-pr-d2-status-logs.sh
+```
+
+Expected: exit `0`, prints `PR-D2 status/logs verification passed.`
+
+## 5.12 Regression guard for prior gate
+
+Run:
+
+```bash
+npm run verify:pr-d1-list-command
+```
+
+Expected: exit `0`, prints `PR-D1 verification passed.`
+
+---
+
+## 6) Definition of Done (PR acceptance)
+
+PR is done only when all are true:
+
+1. `status` is implemented in TS as a single-app status command.
+2. `logs` is implemented in TS as a single-app raw log command.
+3. `status -a test-app` matches the committed `status` parity baseline exactly.
+4. `logs -a test-app` matches the committed `logs` parity baseline exactly.
+5. `status` with current-app fallback matches the same success baseline.
+6. `logs` with current-app fallback matches the same success baseline.
+7. Missing-app errors for both commands match the current legacy error line exactly.
+8. Fly failure errors for both commands match the current legacy error line exactly.
+9. Dist-missing fallback for both commands remains one-warning plus legacy output.
+10. Existing PR-D1 `list` verifier remains green.
+11. Existing CLI behavior remains unchanged outside allowlisted `status` and `logs`.
+12. No changes in:
+- `scripts/install.sh`
+- `scripts/release-guard.sh`
+- `tests/parity/scenarios/non_destructive_commands.list`
+- `tests/parity/baseline/status.*.snap`
+- `tests/parity/baseline/logs.*.snap`
+
+---
+
+## 7) Commit and PR Metadata
+
+Recommended commit message:
+
+```text
+PR-D2: migrate status and logs commands to TypeScript runtime with parity gate
+```
+
+Recommended PR title:
+
+```text
+PR-D2 Phase 3: TypeScript status and logs commands + hybrid parity verification
+```
+
+Recommended PR checklist text:
+
+1. Ran `npm run build`
+2. Ran `npm run typecheck`
+3. Ran `npm run arch:ddd-boundaries`
+4. Ran `npm run test:domain-primitives`
+5. Ran `npm run test:runtime-status`
+6. Ran `npm run test:runtime-logs`
+7. Verified hybrid TS `status -a test-app` output matches `tests/parity/baseline/status.*.snap`
+8. Verified hybrid TS `logs -a test-app` output matches `tests/parity/baseline/logs.*.snap`
+9. Verified current-app fallback parity for both commands
+10. Verified missing-app and fly-failure error strings for both commands
+11. Verified allowlisted fallback path when `dist/cli.js` is missing
+12. Ran `tests/bats/bin/bats tests/status-ts-hybrid.bats tests/logs-ts-hybrid.bats tests/verify-pr-d2-status-logs.bats tests/hybrid-dispatch.bats tests/status.bats tests/logs.bats`
+13. Ran `./scripts/verify-pr-d2-status-logs.sh`
+14. Ran `npm run verify:pr-d1-list-command`
+
+---
+
+## 8) Rollback
+
+If regressions are found:
+
+1. Revert the PR-D2 commit.
+2. Re-run:
+
+```bash
+npm run typecheck
+npm run arch:ddd-boundaries
+npm run test:domain-primitives
+npm run verify:pr-d1-list-command
+tests/bats/bin/bats tests/status.bats tests/logs.bats tests/list-ts-hybrid.bats tests/hybrid-dispatch.bats tests/parity-harness.bats tests/integration.bats
+```
+
+Expected: behavior returns to PR-D1 baseline.
 
 ---
 
 ## References
 
-- [dependency-cruiser GitHub repository](https://github.com/sverweij/dependency-cruiser)
-- [eslint-plugin-boundaries GitHub repository](https://github.com/javierbrea/eslint-plugin-boundaries)
-- [dependency-cruiser rules reference (DDD patterns)](https://github.com/sverweij/dependency-cruiser/blob/main/doc/rules-reference.md)
-- [eslint-plugin-boundaries element-types rule docs](https://github.com/javierbrea/eslint-plugin-boundaries/blob/master/docs/rules/element-types.md)
-- [Jest vs Vitest comparison (2025)](https://medium.com/@ruverd/jest-vs-vitest-which-test-runner-should-you-use-in-2025-5c85e4f2bda9)
-- [Vitest official comparisons page](https://vitest.dev/guide/comparisons)
-- [Enforcing DDD Bounded Contexts with boundaries enforcement (Medium)](https://medium.com/@sergioausin1993/boundaries-enforcement-in-ts-e2597c65bc4d)
-- [Three Ways to Enforce Module Boundaries (Nx comparison)](https://www.stefanos-lignos.dev/posts/nx-module-boundaries)
-- [Modern Node.js Patterns for 2025](https://kashv1n.com/blog/nodejs-2025/)
+- [Commander.js documentation](https://github.com/tj/commander.js)
+- [Node.js child_process documentation](https://nodejs.org/api/child_process.html)
+- [Bats-core documentation](https://bats-core.readthedocs.io/)
+- [GNU diffutils manual](https://www.gnu.org/software/diffutils/manual/)
+
+## Execution Log
+
+### Slice 1: package-scripts-pr-d2
+- [ ] S4 ANALYZE_CRITERIA: 4 criteria extracted
+- [ ] S5 WRITE_TEST: missing-script checks for `test:runtime-status`, `test:runtime-logs`, `test:runtime-status-logs`, `verify:pr-d2-status-logs`
+- [ ] S6 CONFIRM_RED: test fails as expected
+- [ ] S7 IMPLEMENT: `package.json`
+- [ ] S8 RUN_TESTS: pass
+- [ ] S9 REFACTOR: no refactoring needed
+- Anomalies: none
+
+### Slice 2: current-app-resolution-parity
+- [ ] S4 ANALYZE_CRITERIA: 5 criteria extracted
+- [ ] S5 WRITE_TEST: `tests-ts/runtime/show-status.test.ts` (`resolve-app.ts` + `current-app-config.ts`)
+- [ ] S6 CONFIRM_RED: test fails as expected
+- [ ] S7 IMPLEMENT: `src/contexts/runtime/infrastructure/adapters/fly-deployment-registry.ts`, `src/contexts/runtime/infrastructure/adapters/current-app-config.ts`, `src/commands/resolve-app.ts`
+- [ ] S8 RUN_TESTS: pass
+- [ ] S9 REFACTOR: no refactoring needed
+- Anomalies: none
+
+### Slice 3: low-level-flyctl-status-and-logs-adapter
+- [ ] S4 ANALYZE_CRITERIA: 6 criteria extracted
+- [ ] S5 WRITE_TEST: `tests-ts/runtime/show-status.test.ts`, `tests-ts/runtime/show-logs.test.ts` (adapter contracts)
+- [ ] S6 CONFIRM_RED: test fails as expected
+- [ ] S7 IMPLEMENT: `src/adapters/flyctl.ts`, `src/adapters/process.ts`
+- [ ] S8 RUN_TESTS: pass
+- [ ] S9 REFACTOR: no refactoring needed
+- Anomalies: none
+
+### Slice 4: status-use-case-and-command
+- [ ] S4 ANALYZE_CRITERIA: 8 criteria extracted
+- [ ] S5 WRITE_TEST: `tests-ts/runtime/show-status.test.ts`, `tests/status-ts-hybrid.bats`
+- [ ] S6 CONFIRM_RED: test fails as expected
+- [ ] S7 IMPLEMENT: `src/contexts/runtime/application/ports/status-reader.port.ts`, `src/contexts/runtime/application/use-cases/show-status.ts`, `src/contexts/runtime/infrastructure/adapters/fly-status-reader.ts`, `src/commands/status.ts`, `src/cli.ts`
+- [ ] S8 RUN_TESTS: pass
+- [ ] S9 REFACTOR: no refactoring needed
+- Anomalies: none
+
+### Slice 5: logs-use-case-and-command
+- [ ] S4 ANALYZE_CRITERIA: 7 criteria extracted
+- [ ] S5 WRITE_TEST: `tests-ts/runtime/show-logs.test.ts`, `tests/logs-ts-hybrid.bats`
+- [ ] S6 CONFIRM_RED: test fails as expected
+- [ ] S7 IMPLEMENT: `src/contexts/runtime/application/ports/logs-reader.port.ts`, `src/contexts/runtime/application/use-cases/show-logs.ts`, `src/contexts/runtime/infrastructure/adapters/fly-logs-reader.ts`, `src/commands/logs.ts`, `src/cli.ts`
+- [ ] S8 RUN_TESTS: pass
+- [ ] S9 REFACTOR: no refactoring needed
+- Anomalies: none
+
+### Slice 6: hybrid-dispatch-regression-lock
+- [ ] S4 ANALYZE_CRITERIA: 5 criteria extracted
+- [ ] S5 WRITE_TEST: `tests/hybrid-dispatch.bats`
+- [ ] S6 CONFIRM_RED: test fails as expected
+- [ ] S7 IMPLEMENT: `tests/hybrid-dispatch.bats`, `src/cli.ts`
+- [ ] S8 RUN_TESTS: pass
+- [ ] S9 REFACTOR: no refactoring needed
+- Anomalies: none
+
+### Slice 7: pr-d2-verifier-script
+- [ ] S4 ANALYZE_CRITERIA: 7 criteria extracted
+- [ ] S5 WRITE_TEST: `tests/verify-pr-d2-status-logs.bats`
+- [ ] S6 CONFIRM_RED: test fails as expected
+- [ ] S7 IMPLEMENT: `scripts/verify-pr-d2-status-logs.sh`
+- [ ] S8 RUN_TESTS: pass
+- [ ] S9 REFACTOR: no refactoring needed
+- Anomalies: none
+
+### VERIFY_ALL
+- Test suite: [pass/fail]
+- Criteria walk: [all satisfied / list of fixes applied]
