@@ -37,6 +37,9 @@ teardown() {
 }
 
 @test "verify-pr-d2-status-logs.sh exits 0 and prints success message" {
+  if [[ "${HERMES_FLY_PR_D2_VERIFIER_REENTRANT:-}" == "1" ]]; then
+    skip "skipping verifier self-invocation in re-entrant mode"
+  fi
   run bash -c '
     set -euo pipefail
     out_file="$(mktemp)"
@@ -59,7 +62,7 @@ teardown() {
     set -euo pipefail
     script="${PROJECT_ROOT}/scripts/verify-pr-d2-status-logs.sh"
     count="$(grep -c "verify-pr-d2-status-logs.bats" "${script}")"
-    if ! printf "%s\n" "${count}" | grep -q "[2-9]"; then
+    if (( count < 2 )); then
       echo "MISSING: verify-pr-d2-status-logs.bats appears only once (not in bats invocation)"
       exit 1
     fi
@@ -115,7 +118,11 @@ teardown() {
   run bash -c '
     set -euo pipefail
     script="${PROJECT_ROOT}/scripts/verify-pr-d2-status-logs.sh"
-    grep -c "No app specified" "${script}" | grep -q "[2-9]"
+    count="$(grep -c "No app specified" "${script}")"
+    if (( count < 2 )); then
+      echo "MISSING: No app specified appears fewer than 2 times"
+      exit 1
+    fi
   '
   assert_success
 }

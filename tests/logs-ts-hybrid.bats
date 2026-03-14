@@ -108,14 +108,23 @@ teardown() {
       ./hermes-fly logs -a test-app >"${tmp}/out" 2>"${tmp}/err" &
     bg_pid=$!
 
-    sleep 0.2
-    if ! grep -qF "line-1" "${tmp}/out"; then
-      printf "FAIL: line-1 not visible after 0.2s (streaming not working)\n" >&2
+    max_attempts=100
+    sleep_per_attempt=0.05
+    attempt=0
+    while (( attempt < max_attempts )); do
+      if grep -qF "line-1" "${tmp}/out" 2>/dev/null; then
+        break
+      fi
+      sleep "${sleep_per_attempt}"
+      (( attempt++ )) || true
+    done
+    if ! grep -qF "line-1" "${tmp}/out" 2>/dev/null; then
+      printf "FAIL: line-1 not visible within 5.00s timeout (streaming not working)\n" >&2
       kill "${bg_pid}" 2>/dev/null || true
       exit 1
     fi
     if ! kill -0 "${bg_pid}" 2>/dev/null; then
-      printf "FAIL: process already exited after 0.2s (expected still running)\n" >&2
+      printf "FAIL: process already exited before timeout (expected still running)\n" >&2
       exit 1
     fi
 

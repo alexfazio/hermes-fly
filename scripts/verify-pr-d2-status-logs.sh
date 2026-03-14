@@ -36,7 +36,7 @@ npm run arch:ddd-boundaries
 npm run test:domain-primitives
 npm run test:runtime-status-logs
 
-tests/bats/bin/bats \
+HERMES_FLY_PR_D2_VERIFIER_REENTRANT=1 tests/bats/bin/bats \
   tests/status-ts-hybrid.bats \
   tests/logs-ts-hybrid.bats \
   tests/status.bats \
