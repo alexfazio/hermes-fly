@@ -205,10 +205,21 @@ install_files() {
   _run mkdir -p "$dest_dir"
   _run cp "$src_dir/hermes-fly" "$dest_dir/"
   _run chmod +x "$dest_dir/hermes-fly"
-  _run cp -r "$src_dir/lib" "$dest_dir/"
-  _run cp -r "$src_dir/templates" "$dest_dir/"
+  if [[ -d "$src_dir/lib" ]]; then
+    _run cp -r "$src_dir/lib" "$dest_dir/"
+  fi
+  if [[ -d "$src_dir/templates" ]]; then
+    _run cp -r "$src_dir/templates" "$dest_dir/"
+  fi
   if [[ -d "$src_dir/data" ]]; then
     _run cp -r "$src_dir/data" "$dest_dir/"
+  fi
+  # TS runtime artifacts
+  if [[ -d "$src_dir/dist" ]]; then
+    _run cp -r "$src_dir/dist" "$dest_dir/"
+  fi
+  if [[ -f "$src_dir/package.json" ]]; then
+    _run cp "$src_dir/package.json" "$dest_dir/"
   fi
 
   # Symlink into PATH

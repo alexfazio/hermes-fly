@@ -72,6 +72,23 @@ teardown() {
   assert [ -L "${bin}/hermes-fly" ]
 }
 
+@test "install_files copies dist/ for TS runtime" {
+  # Create a fake project layout with dist/
+  local src="${TEST_TEMP_DIR}/src"
+  mkdir -p "$src/dist" "$src/lib" "$src/templates"
+  echo '#!/usr/bin/env bash' > "$src/hermes-fly"
+  chmod +x "$src/hermes-fly"
+  echo '// compiled cli' > "$src/dist/cli.js"
+  echo '{"type":"module"}' > "$src/package.json"
+
+  local dest="${TEST_TEMP_DIR}/hermes-home"
+  local bin="${TEST_TEMP_DIR}/bin"
+  run install_files "$src" "$dest" "$bin"
+  assert_success
+  assert [ -f "${dest}/dist/cli.js" ]
+  assert [ -f "${dest}/package.json" ]
+}
+
 # --- release resolution ---
 
 @test "resolve_install_channel defaults to stable" {

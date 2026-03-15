@@ -29,16 +29,16 @@ if [[ ! "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
 fi
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-entrypoint="${repo_root}/hermes-fly"
+ts_version_file="${repo_root}/src/version.ts"
 expected="${tag#v}"
 
 version="$(
-  sed -n 's/^HERMES_FLY_VERSION="\([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\)"$/\1/p' \
-    "$entrypoint" | head -1
+  grep -oE 'HERMES_FLY_TS_VERSION\s*=\s*"[0-9]+\.[0-9]+\.[0-9]+"' "$ts_version_file" \
+    | grep -oE '"[0-9]+\.[0-9]+\.[0-9]+"' | tr -d '"' | head -1
 )"
 
 if [[ -z "$version" ]]; then
-  echo "Error: could not parse HERMES_FLY_VERSION from ${entrypoint}" >&2
+  echo "Error: could not parse HERMES_FLY_TS_VERSION from ${ts_version_file}" >&2
   exit 1
 fi
 
@@ -46,8 +46,8 @@ if [[ "$version" != "$expected" ]]; then
   echo "Error: version mismatch" >&2
   echo "  Tag:               ${tag}" >&2
   echo "  Expected version:  ${expected}" >&2
-  echo "  hermes-fly version:${version}" >&2
-  echo "Fix: update HERMES_FLY_VERSION in hermes-fly before tagging." >&2
+  echo "  src/version.ts version: ${version}" >&2
+  echo "Fix: update HERMES_FLY_TS_VERSION in src/version.ts before tagging." >&2
   exit 1
 fi
 

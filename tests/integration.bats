@@ -83,10 +83,14 @@ teardown() {
 }
 
 @test "hermes-fly resume with -a flag runs deploy resume checks" {
-  run "${PROJECT_ROOT}/hermes-fly" resume -a test-app
+  run bash -c '
+    PATH="'"${BATS_TEST_DIRNAME}/mocks:${PATH}"'" \
+      HERMES_FLY_CONFIG_DIR="${HERMES_FLY_CONFIG_DIR}" \
+      "${PROJECT_ROOT}/hermes-fly" resume -a test-app 2>&1
+  '
   assert_success
   assert_output --partial "Resuming deployment checks"
-  assert_output --partial "App is running"
+  assert_output --partial "Resume complete"
 }
 
 # --- Deploy with --no-auto-install flag ---
@@ -98,10 +102,13 @@ teardown() {
 }
 
 @test "hermes-fly deploy --no-auto-install skips install when fly not on PATH" {
-  export PATH="/usr/bin:/bin"  # exclude mocks
-  export HERMES_FLY_TEST_MODE=1
-  run "${PROJECT_ROOT}/hermes-fly" deploy --no-auto-install 2>&1
-  # Should show error about missing prerequisites with auto-install disabled
+  run bash -c '
+    # Keep node but strip fly from PATH
+    NODE_DIR="$(dirname "$(command -v node)")"
+    PATH="${NODE_DIR}:/usr/bin:/bin" \
+      "${PROJECT_ROOT}/hermes-fly" deploy --no-auto-install 2>&1
+  '
+  assert_failure
   assert_output --partial "auto-install disabled"
 }
 

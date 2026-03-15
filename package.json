@@ -7,6 +7,9 @@
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "arch:ddd-boundaries": "depcruise --config dependency-cruiser.cjs src --output-type err-long",
     "test:domain-primitives": "tsx --test tests-ts/domain/primitives.test.ts",
+    "test:runtime-cli-contracts": "tsx --test tests-ts/runtime/cli-root-contracts.test.ts",
+    "test:runtime-resolve-app-parity": "tsx --test tests-ts/runtime/resolve-app-parity.test.ts",
+    "test:deploy-resolve-target-app": "tsx --test tests-ts/deploy/resolve-target-app.test.ts",
     "test:runtime-list": "tsx --test tests-ts/runtime/list-deployments.test.ts",
     "parity:capture": "bash scripts/parity-capture.sh --out-dir tests/parity/current",
     "parity:compare": "bash scripts/parity-compare.sh --baseline tests/parity/baseline --candidate tests/parity/current",
@@ -15,7 +18,18 @@
     "test:runtime-status": "tsx --test tests-ts/runtime/show-status.test.ts",
     "test:runtime-logs": "tsx --test tests-ts/runtime/show-logs.test.ts",
     "test:runtime-status-logs": "npm run test:runtime-status && npm run test:runtime-logs",
-    "verify:pr-d2-status-logs": "bash scripts/verify-pr-d2-status-logs.sh"
+    "verify:pr-d2-status-logs": "bash scripts/verify-pr-d2-status-logs.sh",
+    "test:diagnostics-run-doctor": "tsx --test tests-ts/diagnostics/run-doctor.test.ts",
+    "test:runtime-doctor-command": "tsx --test tests-ts/runtime/doctor-command.test.ts",
+    "test:release-destroy-deployment": "tsx --test tests-ts/release/destroy-deployment.test.ts",
+    "test:runtime-destroy-command": "tsx --test tests-ts/runtime/destroy-command.test.ts",
+    "test:deploy-resume-deployment-checks": "tsx --test tests-ts/deploy/resume-deployment-checks.test.ts",
+    "test:runtime-resume": "tsx --test tests-ts/runtime/resume-command.test.ts",
+    "test:deploy-run-wizard": "tsx --test tests-ts/deploy/run-deploy-wizard.test.ts",
+    "test:deploy-provision": "tsx --test tests-ts/deploy/provision-deployment.test.ts",
+    "test:runtime-deploy": "tsx --test tests-ts/runtime/deploy-command.test.ts",
+    "test:runtime-doctor": "tsx --test tests-ts/runtime/doctor-command.test.ts",
+    "test:runtime-destroy": "tsx --test tests-ts/runtime/destroy-command.test.ts"
   },
   "dependencies": {
     "commander": "^12.1.0"
