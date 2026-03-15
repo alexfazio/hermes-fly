@@ -77,7 +77,7 @@ diff -u tests/parity/baseline/logs.exit.snap "${tmp}/logs.exit"
 # status current-app fallback
 PATH="tests/mocks:${PATH}" HERMES_FLY_CONFIG_DIR="${tmp}/config" HERMES_FLY_LOG_DIR="${tmp}/logs" \
   TMP_DIR="${tmp}" bash -c '
-    source ./lib/config.sh
+    source ./lib/archive/config.sh
     config_save_app "test-app" "ord"
     HERMES_FLY_IMPL_MODE=hybrid HERMES_FLY_TS_COMMANDS=status \
       ./hermes-fly status >"${TMP_DIR}/cur-status.out" 2>"${TMP_DIR}/cur-status.err"
@@ -91,7 +91,7 @@ diff -u tests/parity/baseline/status.exit.snap "${tmp}/cur-status.exit"
 # logs current-app fallback
 PATH="tests/mocks:${PATH}" HERMES_FLY_CONFIG_DIR="${tmp}/config" HERMES_FLY_LOG_DIR="${tmp}/logs" \
   TMP_DIR="${tmp}" bash -c '
-    source ./lib/config.sh
+    source ./lib/archive/config.sh
     config_save_app "test-app" "ord"
     HERMES_FLY_IMPL_MODE=hybrid HERMES_FLY_TS_COMMANDS=logs \
       ./hermes-fly logs >"${TMP_DIR}/cur-logs.out" 2>"${TMP_DIR}/cur-logs.err"
@@ -259,7 +259,7 @@ fi
 
   PATH="tests/mocks:${PATH}" HERMES_FLY_CONFIG_DIR="${dist_missing_tmp}/config" HERMES_FLY_LOG_DIR="${dist_missing_tmp}/logs" \
     TMP_DIR="${dist_missing_tmp}" bash -c '
-      source ./lib/config.sh
+      source ./lib/archive/config.sh
       config_save_app "test-app" "ord"
       HERMES_FLY_IMPL_MODE=hybrid HERMES_FLY_TS_COMMANDS=status \
         ./hermes-fly status -a test-app >"${TMP_DIR}/out" 2>"${TMP_DIR}/err"
@@ -292,7 +292,7 @@ npm run build
 
   PATH="tests/mocks:${PATH}" HERMES_FLY_CONFIG_DIR="${dist_missing_tmp}/config" HERMES_FLY_LOG_DIR="${dist_missing_tmp}/logs" \
     TMP_DIR="${dist_missing_tmp}" bash -c '
-      source ./lib/config.sh
+      source ./lib/archive/config.sh
       config_save_app "test-app" "ord"
       HERMES_FLY_IMPL_MODE=hybrid HERMES_FLY_TS_COMMANDS=logs \
         ./hermes-fly logs -a test-app >"${TMP_DIR}/out" 2>"${TMP_DIR}/err"

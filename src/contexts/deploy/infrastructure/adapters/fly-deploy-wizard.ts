@@ -27,6 +27,11 @@ export class FlyDeployWizard implements DeployWizardPort {
   }
 
   async checkPrerequisites(opts: { autoInstall: boolean }): Promise<{ ok: boolean; missing?: string; autoInstallDisabled?: boolean }> {
+    const env = this.env ?? process.env;
+    const apiKey = (env.OPENROUTER_API_KEY ?? "").trim();
+    if (!apiKey) {
+      return { ok: false, missing: "OPENROUTER_API_KEY" };
+    }
     const result = await this.process.run("which", ["fly"], { env: this.env });
     if (result.exitCode !== 0) {
       if (!opts.autoInstall) {
@@ -109,13 +114,19 @@ export class FlyDeployWizard implements DeployWizardPort {
   }
 
   async saveApp(appName: string, region: string): Promise<void> {
-    const { writeFile, mkdir } = await import("node:fs/promises");
+    const { readFile, writeFile, mkdir } = await import("node:fs/promises");
     const { join: pathJoin } = await import("node:path");
     const configDir = (this.env ?? process.env).HERMES_FLY_CONFIG_DIR
       ?? `${(this.env ?? process.env).HOME ?? process.env.HOME}/.hermes-fly`;
     await mkdir(configDir, { recursive: true });
     const configPath = pathJoin(configDir, "config.yaml");
-    const entry = `app: ${appName}\nregion: ${region}\n`;
-    await writeFile(configPath, entry, "utf8");
+
+    let existing = "";
+    try { existing = await readFile(configPath, "utf8"); } catch { /* file may not exist */ }
+
+    const lines = existing.split(/\r?\n/).filter(l => !/^current_app:/.test(l));
+    lines.push(`current_app: ${appName}`);
+    const content = lines.filter(l => l.trim() !== "").join("\n") + "\n";
+    await writeFile(configPath, content, "utf8");
   }
 }

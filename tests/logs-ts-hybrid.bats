@@ -41,7 +41,7 @@ teardown() {
     mkdir -p "${tmp}/config" "${tmp}/logs"
     PATH="tests/mocks:${PATH}" HERMES_FLY_CONFIG_DIR="${tmp}/config" HERMES_FLY_LOG_DIR="${tmp}/logs" \
       TMP_DIR="${tmp}" bash -c '"'"'
-        source ./lib/config.sh
+        source ./lib/archive/config.sh
         config_save_app "test-app" "ord"
         HERMES_FLY_IMPL_MODE=hybrid HERMES_FLY_TS_COMMANDS=logs \
           ./hermes-fly logs >"${TMP_DIR}/out" 2>"${TMP_DIR}/err"
@@ -151,7 +151,7 @@ teardown() {
     mkdir -p "${tmp}/config" "${tmp}/logs"
     PATH="tests/mocks:${PATH}" HERMES_FLY_CONFIG_DIR="${tmp}/config" HERMES_FLY_LOG_DIR="${tmp}/logs" \
       TMP_DIR="${tmp}" bash -c '"'"'
-        source ./lib/config.sh
+        source ./lib/archive/config.sh
         config_save_app "test-app" "ord"
         rm -f dist/cli.js
         HERMES_FLY_IMPL_MODE=hybrid HERMES_FLY_TS_COMMANDS=logs \

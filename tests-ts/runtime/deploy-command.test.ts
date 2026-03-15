@@ -106,6 +106,19 @@ describe("runDeployCommand - no-auto-install flag", () => {
   });
 });
 
+describe("runDeployCommand - missing OPENROUTER_API_KEY", () => {
+  it("returns 1 when OPENROUTER_API_KEY is reported missing by wizard", async () => {
+    const io = makeIO();
+    const code = await runDeployCommand([], {
+      wizard: makeWizardPort({
+        checkPrerequisites: async () => ({ ok: false, missing: "OPENROUTER_API_KEY" })
+      }),
+      stderr: io.stderr
+    });
+    assert.equal(code, 1);
+  });
+});
+
 describe("runDeployCommand - wizard failure", () => {
   it("returns 1 when wizard fails", async () => {
     const io = makeIO();

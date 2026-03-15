@@ -100,7 +100,7 @@ teardown() {
   run bash -c '
     # Keep node but strip fly from PATH
     NODE_DIR="$(dirname "$(command -v node)")"
-    PATH="${NODE_DIR}:/usr/bin:/bin" \
+    OPENROUTER_API_KEY=test-key PATH="${NODE_DIR}:/usr/bin:/bin" \
       "${PROJECT_ROOT}/hermes-fly" deploy --no-auto-install 2>&1
   '
   assert_failure
@@ -121,26 +121,40 @@ teardown() {
   # TS runtime normalizes invalid channel silently; --no-auto-install with no fly gives expected error
   run bash -c '
     NODE_DIR="$(dirname "$(command -v node)")"
-    PATH="${NODE_DIR}:/usr/bin:/bin" \
+    OPENROUTER_API_KEY=test-key PATH="${NODE_DIR}:/usr/bin:/bin" \
       "${PROJECT_ROOT}/hermes-fly" deploy --channel badvalue --no-auto-install 2>&1
   '
   assert_failure
   assert_output --partial "auto-install disabled"
+  refute_output --partial "Unknown option"
+  refute_output --partial "Unknown command"
 }
 
-@test "hermes-fly deploy --channel preview sets HERMES_FLY_CHANNEL=preview before cmd_deploy (PR-05)" {
-  # TS CLI accepts --channel preview without error (help shows it)
-  run "${PROJECT_ROOT}/hermes-fly" deploy --channel preview --help
-  assert_success
-  assert_output --partial "--channel"
+@test "hermes-fly deploy --channel preview uses runtime path without parse errors (PR-05)" {
+  # TS CLI accepts --channel preview and reaches runtime execution path
+  run bash -c '
+    NODE_DIR="$(dirname "$(command -v node)")"
+    OPENROUTER_API_KEY=test-key PATH="${NODE_DIR}:/usr/bin:/bin" \
+      "${PROJECT_ROOT}/hermes-fly" deploy --channel preview --no-auto-install 2>&1
+  '
+  assert_failure
+  assert_output --partial "auto-install disabled"
+  refute_output --partial "Unknown option"
+  refute_output --partial "Unknown command"
 }
 
 @test "channel end-to-end matrix resolves expected refs for stable preview edge (PR-05)" {
-  # TS deploy-command test suite validates channel normalization in unit tests.
-  # Entrypoint-visible: all three channel values are accepted by the CLI without parse errors.
+  # All channel values invoke the runtime deploy path without parse errors.
+  local node_dir
+  node_dir="$(dirname "$(command -v node)")"
   for ch in stable preview edge; do
-    run "${PROJECT_ROOT}/hermes-fly" deploy --channel "$ch" --help
-    assert_success
-    assert_output --partial "--channel"
+    run bash -c "
+      OPENROUTER_API_KEY=test-key PATH=\"${node_dir}:/usr/bin:/bin\" \
+        \"${PROJECT_ROOT}/hermes-fly\" deploy --channel ${ch} --no-auto-install 2>&1
+    "
+    assert_failure
+    assert_output --partial "auto-install disabled"
+    refute_output --partial "Unknown option"
+    refute_output --partial "Unknown command"
   done
 }

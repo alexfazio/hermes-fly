@@ -133,6 +133,28 @@ describe("RunDeployWizardUseCase - deploy failure with resume hint", () => {
   });
 });
 
+describe("RunDeployWizardUseCase - missing OPENROUTER_API_KEY", () => {
+  it("returns failed when OPENROUTER_API_KEY is missing", async () => {
+    const io = makeIO();
+    const uc = new RunDeployWizardUseCase(makePort({
+      checkPrerequisites: async () => ({ ok: false, missing: "OPENROUTER_API_KEY" })
+    }));
+    const result = await uc.execute({ autoInstall: true, channel: "stable" }, io.stderr);
+    assert.equal(result.kind, "failed");
+  });
+
+  it("fails before provisioning when OPENROUTER_API_KEY is missing", async () => {
+    const provisioned: boolean[] = [];
+    const io = makeIO();
+    const uc = new RunDeployWizardUseCase(makePort({
+      checkPrerequisites: async () => ({ ok: false, missing: "OPENROUTER_API_KEY" }),
+      provisionResources: async () => { provisioned.push(true); return { ok: true }; }
+    }));
+    await uc.execute({ autoInstall: true, channel: "stable" }, io.stderr);
+    assert.equal(provisioned.length, 0, "provisioning must not run when API key is missing");
+  });
+});
+
 describe("RunDeployWizardUseCase - channel resolution", () => {
   it("passes stable channel to collectConfig", async () => {
     const captured: string[] = [];
