@@ -1114,7 +1114,7 @@ describe("FlyDeployWizard.collectConfig", () => {
 
   it("fails in non-interactive mode when OPENROUTER_API_KEY is missing", async () => {
     const prompts = makePromptPort([], { interactive: false });
-    const wizard = new FlyDeployWizard({}, { prompts });
+    const wizard = new FlyDeployWizard({ HERMES_FLY_ORG: "personal" }, { prompts });
 
     await assert.rejects(
       wizard.collectConfig({ channel: "stable" }),
