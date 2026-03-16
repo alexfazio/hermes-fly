@@ -130,30 +130,37 @@ export class FlyDeployWizard implements DeployWizardPort {
     // Split at apps: header
     const appsIdx = withoutCurrentApp.findIndex(l => /^apps:$/.test(l.trimEnd()));
     const preLines = appsIdx === -1 ? withoutCurrentApp : withoutCurrentApp.slice(0, appsIdx);
-    const appsBodyLines = appsIdx === -1 ? [] : withoutCurrentApp.slice(appsIdx + 1);
+    const appsBodyRaw = appsIdx === -1 ? [] : withoutCurrentApp.slice(appsIdx + 1);
 
-    // Parse existing entries (each starts with "  - name:")
-    const entries: string[][] = [];
-    let current: string[] = [];
-    for (const line of appsBodyLines) {
-      if (/^  - name:/.test(line)) {
-        if (current.length > 0) entries.push(current);
-        current = [line];
-      } else if (current.length > 0) {
-        current.push(line);
+    // Split trailing top-level lines (lines not starting with two spaces)
+    const trailingStartIdx = appsBodyRaw.findIndex(l => !/^  /.test(l));
+    const appsSectionLines = trailingStartIdx === -1 ? appsBodyRaw : appsBodyRaw.slice(0, trailingStartIdx);
+    const trailingTopLevelLines = trailingStartIdx === -1 ? [] : appsBodyRaw.slice(trailingStartIdx);
+
+    // Parse existing entries with normalized names
+    const entries: { name: string; lines: string[] }[] = [];
+    let current: { name: string; lines: string[] } | null = null;
+    for (const line of appsSectionLines) {
+      const m = line.match(/^  - name:[ \t]*(.+)$/);
+      if (m) {
+        if (current !== null) entries.push(current);
+        current = { name: m[1].trim(), lines: [line] };
+      } else if (current !== null) {
+        current.lines.push(line);
       }
     }
-    if (current.length > 0) entries.push(current);
+    if (current !== null) entries.push(current);
 
-    // Dedup: remove existing entry for this appName, then append updated entry
-    const filtered = entries.filter(e => !e.some(l => l === `  - name: ${appName}`));
-    filtered.push([`  - name: ${appName}`, `    region: ${region}`]);
+    // Dedup by normalized name, then append updated entry
+    const filtered = entries.filter(e => e.name !== appName);
+    filtered.push({ name: appName, lines: [`  - name: ${appName}`, `    region: ${region}`] });
 
     const newLines = [
       `current_app: ${appName}`,
       ...preLines,
       "apps:",
-      ...filtered.flat(),
+      ...filtered.flatMap(e => e.lines),
+      ...trailingTopLevelLines,
     ];
     await writeFile(configPath, newLines.join("\n") + "\n", "utf8");
   }

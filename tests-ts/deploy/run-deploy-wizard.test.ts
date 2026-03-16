@@ -219,3 +219,55 @@ describe("FlyDeployWizard.saveApp - persistence contract", () => {
     }
   });
 });
+
+describe("FlyDeployWizard.saveApp - trailing lines preservation", () => {
+  it("saveApp preserves non-target lines after apps section", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "saveapp-trail-"));
+    try {
+      const { writeFile } = await import("node:fs/promises");
+      const seed = [
+        "current_app: old-app",
+        "apps:",
+        "  - name: old-app",
+        "    region: ord",
+        "metadata: keep-me",
+      ].join("\n") + "\n";
+      await writeFile(join(dir, "config.yaml"), seed, "utf8");
+
+      const wizard = new FlyDeployWizard({ HERMES_FLY_CONFIG_DIR: dir, HOME: dir });
+      await wizard.saveApp("my-app", "iad");
+      const content = await readFile(join(dir, "config.yaml"), "utf8");
+      assert.ok(content.includes("metadata: keep-me"), `metadata lost:\n${content}`);
+      assert.ok(content.includes("current_app: my-app"), `current_app wrong:\n${content}`);
+      assert.ok(content.includes("  - name: my-app"), `name entry missing:\n${content}`);
+      assert.ok(content.includes("    region: iad"), `region missing:\n${content}`);
+    } finally {
+      await rm(dir, { recursive: true });
+    }
+  });
+});
+
+describe("FlyDeployWizard.saveApp - whitespace-normalized dedup", () => {
+  it("saveApp dedupes app entries with whitespace-normalized names", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "saveapp-ws-"));
+    try {
+      const { writeFile } = await import("node:fs/promises");
+      const seed = [
+        "current_app: my-app",
+        "apps:",
+        "  - name: my-app   ",
+        "    region: ord",
+      ].join("\n") + "\n";
+      await writeFile(join(dir, "config.yaml"), seed, "utf8");
+
+      const wizard = new FlyDeployWizard({ HERMES_FLY_CONFIG_DIR: dir, HOME: dir });
+      await wizard.saveApp("my-app", "lax");
+      const content = await readFile(join(dir, "config.yaml"), "utf8");
+      const nameMatches = (content.match(/  - name: my-app/g) ?? []).length;
+      assert.equal(nameMatches, 1, `expected exactly 1 name entry, got ${nameMatches} in:\n${content}`);
+      assert.ok(content.includes("region: lax"), `expected region lax in:\n${content}`);
+    } finally {
+      await rm(dir, { recursive: true });
+    }
+  });
+});
