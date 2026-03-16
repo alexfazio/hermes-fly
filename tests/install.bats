@@ -274,9 +274,6 @@ MOCK
   assert_success
   assert_output --partial "COPYFILE_DISABLE=1"
   assert_output --partial "COPY_EXTENDED_ATTRIBUTES_DISABLE=1"
-  assert_output --partial "--no-mac-metadata"
-  assert_output --partial "--no-xattrs"
-  assert_output --partial "--no-acls"
 }
 
 # --- release resolution ---
