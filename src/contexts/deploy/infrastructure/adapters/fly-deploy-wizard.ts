@@ -15,6 +15,11 @@ const DEFAULT_VM_SIZE = "shared-cpu-1x";
 const DEFAULT_VOLUME_SIZE = 1;
 const DEFAULT_MODEL = "anthropic/claude-3-5-sonnet";
 const DEFAULT_CHANNEL = "stable";
+const SAFE_UTF8_LOCALE = "C.UTF-8";
+const OPENROUTER_KEY_URL = "https://openrouter.ai/settings/keys";
+const OPENROUTER_MODELS_URL = "https://openrouter.ai/models";
+const OPENROUTER_KEY_API_URL = "https://openrouter.ai/api/v1/key";
+const OPENROUTER_MODELS_API_URL = "https://openrouter.ai/api/v1/models";
 
 type RegionOption = {
   code: string;
@@ -40,6 +45,11 @@ type ModelOption = {
   value: string;
   label: string;
   bestFor: string;
+};
+
+type OpenRouterModelRecord = {
+  id: string;
+  name: string;
 };
 
 const STATIC_REGIONS: RegionOption[] = [
@@ -120,6 +130,16 @@ const STATIC_MODEL_OPTIONS: ModelOption[] = [
   },
 ];
 
+const PREFERRED_DYNAMIC_MODELS: Array<{ id: string; bestFor: string }> = [
+  { id: "anthropic/claude-sonnet-4", bestFor: "Balanced, recommended" },
+  { id: "openai/gpt-5-mini", bestFor: "Fast, capable, and cost-aware" },
+  { id: "google/gemini-2.5-flash", bestFor: "Fast alternative" },
+  { id: "meta-llama/llama-4-maverick", bestFor: "Open source option" },
+  { id: "anthropic/claude-haiku-4.5", bestFor: "Very fast and affordable" },
+  { id: "openai/gpt-5", bestFor: "Higher capability" },
+  { id: "mistralai/mistral-large", bestFor: "Strong multilingual fallback" },
+];
+
 export interface FlyDeployWizardDeps {
   process?: ForegroundProcessRunner;
   prompts?: DeployPromptPort;
@@ -133,17 +153,16 @@ export class FlyDeployWizard implements DeployWizardPort {
   private readonly prompts: DeployPromptPort;
   private readonly env: NodeJS.ProcessEnv;
   private readonly defaultAppName: string;
+  private readonly modelLabels = new Map<string, string>();
 
   constructor(env?: NodeJS.ProcessEnv, deps: FlyDeployWizardDeps = {}) {
-    this.env = {
-      ...process.env,
-      ...(env ?? {})
-    };
+    this.env = this.buildChildEnv(env);
     this.process = deps.process ?? new NodeProcessRunner();
     this.runner = new FlyDeployRunner(this.process, this.env);
     this.templateWriter = deps.templateWriter ?? new TemplateWriter();
     this.prompts = deps.prompts ?? new ReadlineDeployPrompts();
     this.defaultAppName = this.buildDefaultAppName();
+    this.rememberModelOptions(STATIC_MODEL_OPTIONS);
   }
 
   async checkPlatform(): Promise<{ ok: boolean; error?: string }> {
@@ -229,12 +248,8 @@ export class FlyDeployWizard implements DeployWizardPort {
     const region = await this.collectRegion(env.HERMES_FLY_REGION);
     const vmSize = await this.collectVmSize(env.HERMES_FLY_VM_SIZE);
     const volumeSize = await this.collectVolumeSize(env.HERMES_FLY_VOLUME_SIZE);
-    const apiKey = await this.collectRequiredSecret(
-      "OPENROUTER_API_KEY",
-      "OpenRouter API key",
-      "https://openrouter.ai/settings/keys"
-    );
-    const model = await this.collectModel(env.HERMES_FLY_MODEL);
+    const apiKey = await this.collectOpenRouterApiKey();
+    const model = await this.collectModel(env.HERMES_FLY_MODEL, apiKey);
     const botToken = await this.collectTelegramToken(env.TELEGRAM_BOT_TOKEN);
     const hermesRef = (env.HERMES_FLY_VERSION ?? "latest").trim() || "latest";
 
@@ -469,7 +484,8 @@ export class FlyDeployWizard implements DeployWizardPort {
     return selected.value;
   }
 
-  private async collectRequiredSecret(envKey: string, label: string, helpUrl: string): Promise<string> {
+  private async collectOpenRouterApiKey(): Promise<string> {
+    const envKey = "OPENROUTER_API_KEY";
     const preset = (this.env[envKey] ?? "").trim();
     if (preset.length > 0) {
       return preset;
@@ -478,18 +494,29 @@ export class FlyDeployWizard implements DeployWizardPort {
       throw new Error(`${envKey} is required in non-interactive mode. Run from a terminal to use the guided wizard or export ${envKey} first.`);
     }
 
-    this.prompts.write(`You can create your ${label.toLowerCase()} here: ${helpUrl}\n`);
+    this.prompts.write(`Get your OpenRouter API key at: ${OPENROUTER_KEY_URL}\n`);
     this.prompts.write("This key lets your deployed agent call the AI model you choose.\n\n");
     while (true) {
-      const answer = await this.prompts.askSecret(`${label} (required): `);
-      if (answer.trim().length > 0) {
-        return answer.trim();
+      const answer = await this.prompts.askSecret("OpenRouter API key (required): ");
+      const apiKey = answer.trim();
+      if (apiKey.length === 0) {
+        this.prompts.write(`${envKey} cannot be empty.\n`);
+        continue;
       }
-      this.prompts.write(`${envKey} cannot be empty.\n`);
+
+      const validation = await this.validateOpenRouterKey(apiKey);
+      if (!validation.ok) {
+        this.prompts.write("OpenRouter rejected this key. Check it and try again.\n");
+        continue;
+      }
+      if (validation.warning) {
+        this.prompts.write(`${validation.warning}\n`);
+      }
+      return apiKey;
     }
   }
 
-  private async collectModel(envValue: string | undefined): Promise<string> {
+  private async collectModel(envValue: string | undefined, apiKey: string): Promise<string> {
     const preset = envValue?.trim();
     if (preset && preset.length > 0) {
       return preset;
@@ -498,16 +525,19 @@ export class FlyDeployWizard implements DeployWizardPort {
       return DEFAULT_MODEL;
     }
 
+    const dynamicOptions = await this.fetchCuratedOpenRouterModels(apiKey);
+    const options = dynamicOptions ?? STATIC_MODEL_OPTIONS;
+
     this.prompts.write("Which AI model should your agent use?\n\n");
-    STATIC_MODEL_OPTIONS.forEach((option, index) => {
+    options.forEach((option, index) => {
       this.prompts.write(`  ${String(index + 1).padStart(2, " ")}  ${option.label.padEnd(24, " ")} ${option.bestFor}\n`);
     });
-    const manualIndex = STATIC_MODEL_OPTIONS.length + 1;
+    const manualIndex = options.length + 1;
     this.prompts.write(`  ${String(manualIndex).padStart(2, " ")}  Bring my own model        Enter a model ID manually\n\n`);
 
     const selectedIndex = await this.chooseNumber(`Choose a model [1]: `, manualIndex, 1);
     if (selectedIndex === manualIndex) {
-      this.prompts.write("Find model IDs at https://openrouter.ai/models\n");
+      this.prompts.write(`Find model IDs at ${OPENROUTER_MODELS_URL}\n`);
       this.prompts.write("Example: anthropic/claude-3-5-sonnet\n\n");
       while (true) {
         const answer = (await this.prompts.ask("Model ID: ")).trim();
@@ -518,7 +548,7 @@ export class FlyDeployWizard implements DeployWizardPort {
       }
     }
 
-    return STATIC_MODEL_OPTIONS[selectedIndex - 1].value;
+    return options[selectedIndex - 1].value;
   }
 
   private async collectTelegramToken(envValue: string | undefined): Promise<string> {
@@ -601,8 +631,8 @@ export class FlyDeployWizard implements DeployWizardPort {
   }
 
   private describeModel(model: string): string {
-    const match = STATIC_MODEL_OPTIONS.find((option) => option.value === model);
-    return match ? `${match.label} (${model})` : model;
+    const label = this.modelLabels.get(model);
+    return label ? `${label} (${model})` : model;
   }
 
   private parseVolumeSize(value: string, label: string): number {
@@ -669,6 +699,143 @@ export class FlyDeployWizard implements DeployWizardPort {
       return options.length > 0 ? options : STATIC_VM_OPTIONS;
     } catch {
       return STATIC_VM_OPTIONS;
+    }
+  }
+
+  private async validateOpenRouterKey(apiKey: string): Promise<{ ok: boolean; warning?: string }> {
+    try {
+      const result = await this.process.run(
+        "curl",
+        ["-fsSL", "--max-time", "10", OPENROUTER_KEY_API_URL, "-H", `Authorization: Bearer ${apiKey}`],
+        { env: this.env }
+      );
+      if (result.exitCode !== 0 || result.stdout.trim().length === 0) {
+        return { ok: true };
+      }
+
+      const payload = JSON.parse(result.stdout) as { error?: unknown; data?: { is_free_tier?: boolean; usage?: number } };
+      if (payload.error) {
+        return { ok: false };
+      }
+
+      if (payload.data?.is_free_tier === true && Number(payload.data.usage ?? 0) === 0) {
+        return {
+          ok: true,
+          warning: "OpenRouter shows no paid usage yet. If calls fail later, add credits at https://openrouter.ai/credits"
+        };
+      }
+      return { ok: true };
+    } catch {
+      return { ok: true };
+    }
+  }
+
+  private async fetchCuratedOpenRouterModels(apiKey: string): Promise<ModelOption[] | null> {
+    this.prompts.write("Fetching available models from OpenRouter...\n");
+
+    try {
+      const result = await this.process.run(
+        "curl",
+        ["-fsSL", "--max-time", "10", OPENROUTER_MODELS_API_URL, "-H", `Authorization: Bearer ${apiKey}`],
+        { env: this.env }
+      );
+      if (result.exitCode !== 0 || result.stdout.trim().length === 0) {
+        return this.reportDynamicModelFallback();
+      }
+
+      const payload = JSON.parse(result.stdout) as { data?: Array<Record<string, unknown>> };
+      const models = (payload.data ?? [])
+        .map((entry) => {
+          const id = String(entry.id ?? "").trim();
+          const name = String(entry.name ?? "").trim();
+          if (id.length === 0 || name.length === 0) {
+            return null;
+          }
+          return { id, name };
+        })
+        .filter((entry): entry is OpenRouterModelRecord => entry !== null);
+
+      const curated = this.curateDynamicModelOptions(models);
+      if (curated.length === 0) {
+        return this.reportDynamicModelFallback();
+      }
+      this.rememberModelOptions(curated);
+      return curated;
+    } catch {
+      return this.reportDynamicModelFallback();
+    }
+  }
+
+  private reportDynamicModelFallback(): ModelOption[] {
+    this.prompts.write("I couldn't load the live OpenRouter model list.\n");
+    this.prompts.write(`Browse every available model at: ${OPENROUTER_MODELS_URL}\n`);
+    this.prompts.write("I'll show a starter list instead.\n\n");
+    return STATIC_MODEL_OPTIONS;
+  }
+
+  private curateDynamicModelOptions(models: OpenRouterModelRecord[]): ModelOption[] {
+    const byId = new Map(models.map((model) => [model.id, model]));
+    const selected: ModelOption[] = [];
+    const seen = new Set<string>();
+
+    for (const preferred of PREFERRED_DYNAMIC_MODELS) {
+      const model = byId.get(preferred.id);
+      if (!model) {
+        continue;
+      }
+      selected.push({
+        value: model.id,
+        label: this.cleanModelName(model.name, model.id),
+        bestFor: preferred.bestFor,
+      });
+      seen.add(model.id);
+    }
+
+    const extras = models
+      .filter((model) => this.isSupportedDynamicModel(model.id) && !seen.has(model.id))
+      .sort((left, right) => left.id.localeCompare(right.id))
+      .slice(0, 6)
+      .map((model) => ({
+        value: model.id,
+        label: this.cleanModelName(model.name, model.id),
+        bestFor: `${this.formatProviderName(model.id)} model`,
+      }));
+
+    const options = [...selected, ...extras];
+    return options.length > 0 ? options : [];
+  }
+
+  private cleanModelName(name: string, id: string): string {
+    const trimmed = name.trim();
+    if (trimmed.length > 0) {
+      return trimmed.replace(/^[^:]+:\s*/, "");
+    }
+    const [, fallback = id] = id.split("/", 2);
+    return fallback;
+  }
+
+  private formatProviderName(modelId: string): string {
+    const provider = modelId.split("/", 1)[0] ?? "Model";
+    switch (provider) {
+      case "openai":
+        return "OpenAI";
+      case "meta-llama":
+        return "Meta";
+      default:
+        return provider
+          .split("-")
+          .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+          .join(" ");
+    }
+  }
+
+  private isSupportedDynamicModel(modelId: string): boolean {
+    return /^(anthropic|openai|google|meta-llama|mistralai)\//.test(modelId);
+  }
+
+  private rememberModelOptions(options: ModelOption[]): void {
+    for (const option of options) {
+      this.modelLabels.set(option.value, option.label);
     }
   }
 
@@ -848,5 +1015,14 @@ export class FlyDeployWizard implements DeployWizardPort {
         .join("-");
     }
     return candidate;
+  }
+
+  private buildChildEnv(env?: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+    return {
+      ...process.env,
+      ...(env ?? {}),
+      LANG: SAFE_UTF8_LOCALE,
+      LC_ALL: SAFE_UTF8_LOCALE,
+    };
   }
 }

@@ -49,12 +49,16 @@ function makePort(overrides: Partial<DeployWizardPort> = {}): DeployWizardPort {
 }
 
 function makeProcessRunner(
-  impl: (command: string, args: string[]) => Promise<{ stdout?: string; stderr?: string; exitCode: number }>,
+  impl: (
+    command: string,
+    args: string[],
+    options?: { cwd?: string; env?: NodeJS.ProcessEnv }
+  ) => Promise<{ stdout?: string; stderr?: string; exitCode: number }>,
   foregroundImpl: (command: string, args: string[]) => Promise<{ exitCode: number }> = async () => ({ exitCode: 0 })
 ): ForegroundProcessRunner {
   return {
-    run: async (command, args) => {
-      const result = await impl(command, args);
+    run: async (command, args, options) => {
+      const result = await impl(command, args, options);
       return {
         stdout: result.stdout ?? "",
         stderr: result.stderr ?? "",
@@ -346,6 +350,34 @@ chmod +x "${homeDir}/.fly/bin/fly"`
       await rm(pathDir, { recursive: true, force: true });
     }
   });
+
+  it("forces a safe UTF-8 locale for deploy child processes", async () => {
+    const pathDir = await mkdtemp(join(tmpdir(), "fly-locale-"));
+    let capturedEnv: NodeJS.ProcessEnv | undefined;
+    const runner = makeProcessRunner(async (command, args, options) => {
+      capturedEnv = options?.env;
+      if (command === "bash") {
+        return { exitCode: 1, stderr: "permission denied" };
+      }
+      throw new Error(`unexpected call: ${command} ${args.join(" ")}`);
+    });
+    const prompts = makePromptPort([], { interactive: false });
+    const wizard = new FlyDeployWizard({
+      HOME: "/tmp/home",
+      PATH: pathDir,
+      LANG: "broken-locale",
+      LC_ALL: "broken-locale",
+      HERMES_FLY_FLYCTL_INSTALL_CMD: "echo install-fly"
+    }, { process: runner, prompts });
+
+    try {
+      await wizard.checkPrerequisites({ autoInstall: true });
+      assert.equal(capturedEnv?.LANG, "C.UTF-8");
+      assert.equal(capturedEnv?.LC_ALL, "C.UTF-8");
+    } finally {
+      await rm(pathDir, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("FlyDeployWizard.checkAuth", () => {
@@ -488,9 +520,116 @@ describe("FlyDeployWizard.collectConfig", () => {
     assert.match(guidedCopy, /Where are you \(or most of your users\) located/);
     assert.match(guidedCopy, /How powerful should your agent's server be/);
     assert.match(guidedCopy, /How much storage should your agent have/);
-    assert.match(guidedCopy, /You can create your openrouter api key here/i);
+    assert.match(guidedCopy, /Get your OpenRouter API key at: https:\/\/openrouter\.ai\/settings\/keys/);
     assert.match(guidedCopy, /Do you want to connect Telegram now/);
     assert.match(guidedCopy, /Review your setup/);
+  });
+
+  it("fetches a dynamic curated OpenRouter model list after the API key is entered", async () => {
+    const prompts = makePromptPort([
+      "",
+      "",
+      "",
+      "",
+      "",
+      "sk-live",
+      "2",
+      "",
+      "y"
+    ], { interactive: true });
+    const runner = makeProcessRunner(async (command, args) => {
+      if (command === "fly" && args[0] === "platform" && args[1] === "regions") {
+        return {
+          exitCode: 0,
+          stdout: JSON.stringify([{ code: "iad", name: "Ashburn, Virginia (US)" }])
+        };
+      }
+      if (command === "fly" && args[0] === "platform" && args[1] === "vm-sizes") {
+        return {
+          exitCode: 0,
+          stdout: JSON.stringify([{ name: "shared-cpu-1x", memory_mb: 256 }])
+        };
+      }
+      if (command === "curl" && args.includes("https://openrouter.ai/api/v1/key")) {
+        return {
+          exitCode: 0,
+          stdout: JSON.stringify({ data: { is_free_tier: false, usage: 10 } })
+        };
+      }
+      if (command === "curl" && args.includes("https://openrouter.ai/api/v1/models")) {
+        return {
+          exitCode: 0,
+          stdout: JSON.stringify({
+            data: [
+              { id: "anthropic/claude-sonnet-4", name: "Anthropic: Claude Sonnet 4" },
+              { id: "openai/gpt-5-mini", name: "OpenAI: GPT-5 Mini" },
+              { id: "google/gemini-2.5-flash", name: "Google: Gemini 2.5 Flash" },
+              { id: "meta-llama/llama-4-maverick", name: "Meta: Llama 4 Maverick" }
+            ]
+          })
+        };
+      }
+      return { exitCode: 1 };
+    });
+    const wizard = new FlyDeployWizard({}, { prompts, process: runner });
+
+    const config = await wizard.collectConfig({ channel: "stable" });
+
+    assert.equal(config.model, "openai/gpt-5-mini");
+    const guidedCopy = prompts.writes.join("");
+    assert.match(guidedCopy, /Get your OpenRouter API key at: https:\/\/openrouter\.ai\/settings\/keys/);
+    assert.match(guidedCopy, /Fetching available models from OpenRouter/);
+    assert.match(guidedCopy, /Claude Sonnet 4/);
+    assert.match(guidedCopy, /GPT-5 Mini/);
+  });
+
+  it("falls back to a manual-friendly starter model list when OpenRouter model fetch fails", async () => {
+    const prompts = makePromptPort([
+      "",
+      "",
+      "",
+      "",
+      "",
+      "sk-live",
+      "1",
+      "",
+      "y"
+    ], { interactive: true });
+    const runner = makeProcessRunner(async (command, args) => {
+      if (command === "fly" && args[0] === "platform" && args[1] === "regions") {
+        return {
+          exitCode: 0,
+          stdout: JSON.stringify([{ code: "iad", name: "Ashburn, Virginia (US)" }])
+        };
+      }
+      if (command === "fly" && args[0] === "platform" && args[1] === "vm-sizes") {
+        return {
+          exitCode: 0,
+          stdout: JSON.stringify([{ name: "shared-cpu-1x", memory_mb: 256 }])
+        };
+      }
+      if (command === "curl" && args.includes("https://openrouter.ai/api/v1/key")) {
+        return {
+          exitCode: 0,
+          stdout: JSON.stringify({ data: { is_free_tier: false, usage: 10 } })
+        };
+      }
+      if (command === "curl" && args.includes("https://openrouter.ai/api/v1/models")) {
+        return {
+          exitCode: 28,
+          stderr: "operation timed out"
+        };
+      }
+      return { exitCode: 1 };
+    });
+    const wizard = new FlyDeployWizard({}, { prompts, process: runner });
+
+    const config = await wizard.collectConfig({ channel: "stable" });
+
+    assert.equal(config.model, "anthropic/claude-3-5-sonnet");
+    const guidedCopy = prompts.writes.join("");
+    assert.match(guidedCopy, /I couldn't load the live OpenRouter model list/);
+    assert.match(guidedCopy, /Browse every available model at: https:\/\/openrouter\.ai\/models/);
   });
 
   it("fails in non-interactive mode when OPENROUTER_API_KEY is missing", async () => {
