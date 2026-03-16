@@ -5,7 +5,8 @@ import { NodeProcessRunner, type ProcessRunner } from "../../../../adapters/proc
 import { DeploymentIntent } from "../../domain/deployment-intent.js";
 import { ReadlineDeployPrompts, type DeployPromptPort } from "./deploy-prompts.js";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { constants } from "node:fs";
 
 const DEFAULT_APP_NAME = "hermes-agent";
 const DEFAULT_REGION = "iad";
@@ -24,12 +25,15 @@ export class FlyDeployWizard implements DeployWizardPort {
   private readonly templateWriter: TemplateWriter;
   private readonly process: ProcessRunner;
   private readonly prompts: DeployPromptPort;
-  private readonly env?: NodeJS.ProcessEnv;
+  private readonly env: NodeJS.ProcessEnv;
 
   constructor(env?: NodeJS.ProcessEnv, deps: FlyDeployWizardDeps = {}) {
-    this.env = env;
+    this.env = {
+      ...process.env,
+      ...(env ?? {})
+    };
     this.process = deps.process ?? new NodeProcessRunner();
-    this.runner = new FlyDeployRunner(this.process, env);
+    this.runner = new FlyDeployRunner(this.process, this.env);
     this.templateWriter = deps.templateWriter ?? new TemplateWriter();
     this.prompts = deps.prompts ?? new ReadlineDeployPrompts();
   }
@@ -42,14 +46,33 @@ export class FlyDeployWizard implements DeployWizardPort {
     return { ok: false, error: `Unsupported platform: ${platform}` };
   }
 
-  async checkPrerequisites(opts: { autoInstall: boolean }): Promise<{ ok: boolean; missing?: string; autoInstallDisabled?: boolean }> {
-    const result = await this.process.run("which", ["fly"], { env: this.env });
-    if (result.exitCode !== 0) {
-      if (!opts.autoInstall) {
-        return { ok: false, missing: "fly", autoInstallDisabled: true };
-      }
-      return { ok: false, missing: "fly" };
+  async checkPrerequisites(opts: { autoInstall: boolean }): Promise<{ ok: boolean; missing?: string; autoInstallDisabled?: boolean; error?: string }> {
+    if (await this.ensureFlyAvailable()) {
+      return { ok: true };
     }
+    if (!opts.autoInstall) {
+      return { ok: false, missing: "fly", autoInstallDisabled: true };
+    }
+
+    this.prompts.write("fly CLI not found. Attempting automatic installation...\n");
+    const installResult = await this.installFlyCli();
+    if (!installResult.ok) {
+      return {
+        ok: false,
+        missing: "fly",
+        error: installResult.error ?? "Failed to install fly CLI automatically. Install it from https://fly.io/docs/flyctl/install/ and retry."
+      };
+    }
+
+    if (!(await this.ensureFlyAvailable())) {
+      return {
+        ok: false,
+        missing: "fly",
+        error: "fly CLI installation completed, but the binary is still not available on PATH. Restart your shell or install manually from https://fly.io/docs/flyctl/install/."
+      };
+    }
+
+    this.prompts.write("fly CLI installed successfully.\n");
     return { ok: true };
   }
 
@@ -81,7 +104,7 @@ export class FlyDeployWizard implements DeployWizardPort {
   }
 
   async collectConfig(opts: { channel: "stable" | "preview" | "edge" }): Promise<DeployConfig> {
-    const env = this.env ?? process.env;
+    const env = this.env;
     if (this.prompts.isInteractive()) {
       this.prompts.write("\nHermes Agent Deploy Configuration\n");
       this.prompts.write("Press Enter to accept the default shown in brackets.\n\n");
@@ -172,8 +195,8 @@ export class FlyDeployWizard implements DeployWizardPort {
   async saveApp(appName: string, region: string): Promise<void> {
     const { readFile, writeFile, mkdir } = await import("node:fs/promises");
     const { join: pathJoin } = await import("node:path");
-    const configDir = (this.env ?? process.env).HERMES_FLY_CONFIG_DIR
-      ?? `${(this.env ?? process.env).HOME ?? process.env.HOME}/.hermes-fly`;
+    const configDir = this.env.HERMES_FLY_CONFIG_DIR
+      ?? `${this.env.HOME ?? process.env.HOME}/.hermes-fly`;
     await mkdir(configDir, { recursive: true });
     const configPath = pathJoin(configDir, "config.yaml");
 
@@ -261,7 +284,7 @@ export class FlyDeployWizard implements DeployWizardPort {
   }
 
   private async collectRequiredSecret(envKey: string, label: string, helpUrl: string): Promise<string> {
-    const env = this.env ?? process.env;
+    const env = this.env;
     const preset = (env[envKey] ?? "").trim();
     if (preset.length > 0) {
       return preset;
@@ -281,7 +304,7 @@ export class FlyDeployWizard implements DeployWizardPort {
   }
 
   private async collectOptionalSecret(envKey: string, label: string): Promise<string> {
-    const env = this.env ?? process.env;
+    const env = this.env;
     const preset = (env[envKey] ?? "").trim();
     if (preset.length > 0) {
       return preset;
@@ -298,5 +321,107 @@ export class FlyDeployWizard implements DeployWizardPort {
       throw new Error(`${label} must be a positive integer.`);
     }
     return parsed;
+  }
+
+  private async ensureFlyAvailable(): Promise<boolean> {
+    if (await this.canRunFlyFromPath()) {
+      return true;
+    }
+
+    const flyctlResult = await this.process.run("which", ["flyctl"], { env: this.env });
+    if (flyctlResult.exitCode === 0) {
+      const flyctlPath = flyctlResult.stdout.trim();
+      if (flyctlPath.length > 0) {
+        this.prependPath(dirname(flyctlPath));
+        if (await this.canRunFlyFromPath()) {
+          return true;
+        }
+      }
+    }
+
+    const home = this.env.HOME ?? process.env.HOME;
+    if (home) {
+      const flyPath = join(home, ".fly", "bin", "fly");
+      if (await this.isExecutable(flyPath)) {
+        this.prependPath(dirname(flyPath));
+        if (await this.canRunFlyFromPath()) {
+          return true;
+        }
+      }
+    }
+
+    return false;
+  }
+
+  private async canRunFlyFromPath(): Promise<boolean> {
+    const whichResult = await this.process.run("which", ["fly"], { env: this.env });
+    if (whichResult.exitCode !== 0) {
+      return false;
+    }
+    const versionResult = await this.process.run("fly", ["version"], { env: this.env });
+    return versionResult.exitCode === 0;
+  }
+
+  private prependPath(dir: string): void {
+    const current = this.env.PATH ?? process.env.PATH ?? "";
+    const parts = current.split(":").filter(Boolean);
+    if (!parts.includes(dir)) {
+      this.env.PATH = `${dir}${current.length > 0 ? `:${current}` : ""}`;
+    }
+  }
+
+  private async installFlyCli(): Promise<{ ok: boolean; error?: string }> {
+    const platform = this.env.HERMES_FLY_PLATFORM ?? process.platform;
+    const override = (this.env.HERMES_FLY_FLYCTL_INSTALL_CMD ?? "").trim();
+    const command =
+      override.length > 0
+        ? override
+        : platform === "darwin"
+          ? await this.resolveMacFlyInstallCommand()
+          : platform === "linux"
+            ? "curl -L https://fly.io/install.sh | sh"
+            : "";
+
+    if (command.length === 0) {
+      return {
+        ok: false,
+        error: `Automatic fly installation is unsupported on ${platform}. Install fly manually from https://fly.io/docs/flyctl/install/.`
+      };
+    }
+
+    const shellResult = await this.process.run("bash", ["-lc", command], { env: this.env });
+    if (shellResult.exitCode !== 0) {
+      const details = shellResult.stderr.trim() || shellResult.stdout.trim();
+      return {
+        ok: false,
+        error: details.length > 0
+          ? `Failed to install fly CLI automatically: ${details}`
+          : "Failed to install fly CLI automatically. Install it from https://fly.io/docs/flyctl/install/ and retry."
+      };
+    }
+
+    const home = this.env.HOME ?? process.env.HOME;
+    if (home) {
+      this.prependPath(join(home, ".fly", "bin"));
+    }
+    return { ok: true };
+  }
+
+  private async resolveMacFlyInstallCommand(): Promise<string> {
+    const brewResult = await this.process.run("which", ["brew"], { env: this.env });
+    if (brewResult.exitCode === 0) {
+      return "brew install flyctl";
+    }
+    return "curl -L https://fly.io/install.sh | sh";
+  }
+
+  private async isExecutable(path: string): Promise<boolean> {
+    const { access } = await import("node:fs/promises");
+    try {
+      await access(path, constants.X_OK);
+      return true;
+    } catch {
+      return false;
+    }
   }
 }

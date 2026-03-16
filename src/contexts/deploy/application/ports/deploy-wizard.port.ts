@@ -12,7 +12,7 @@ export interface DeployConfig {
 
 export interface DeployWizardPort {
   checkPlatform(): Promise<{ ok: boolean; error?: string }>;
-  checkPrerequisites(opts: { autoInstall: boolean }): Promise<{ ok: boolean; missing?: string; autoInstallDisabled?: boolean }>;
+  checkPrerequisites(opts: { autoInstall: boolean }): Promise<{ ok: boolean; missing?: string; autoInstallDisabled?: boolean; error?: string }>;
   checkAuth(): Promise<{ ok: boolean; error?: string }>;
   checkConnectivity(): Promise<{ ok: boolean; error?: string }>;
   collectConfig(opts: { channel: "stable" | "preview" | "edge" }): Promise<DeployConfig>;

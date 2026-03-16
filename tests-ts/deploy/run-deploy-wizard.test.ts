@@ -234,9 +234,15 @@ function makePromptPort(
 describe("FlyDeployWizard.checkPrerequisites", () => {
   it("does not require OPENROUTER_API_KEY before entering the wizard", async () => {
     const runner = makeProcessRunner(async (command, args) => {
-      assert.equal(command, "which");
-      assert.deepEqual(args, ["fly"]);
-      return { exitCode: 0, stdout: "/usr/local/bin/fly\n" };
+      if (command === "which") {
+        assert.deepEqual(args, ["fly"]);
+        return { exitCode: 0, stdout: "/usr/local/bin/fly\n" };
+      }
+      if (command === "fly") {
+        assert.deepEqual(args, ["version"]);
+        return { exitCode: 0, stdout: "fly v0.3.52 linux/amd64\n" };
+      }
+      throw new Error(`unexpected call: ${command} ${args.join(" ")}`);
     });
     const prompts = makePromptPort([], { interactive: false });
     const wizard = new FlyDeployWizard({}, { process: runner, prompts });
@@ -244,6 +250,59 @@ describe("FlyDeployWizard.checkPrerequisites", () => {
     const result = await wizard.checkPrerequisites({ autoInstall: true });
 
     assert.deepEqual(result, { ok: true });
+  });
+
+  it("auto-installs fly when missing and auto-install is enabled", async () => {
+    const calls: Array<{ command: string; args: string[] }> = [];
+    const runner = makeProcessRunner(async (command, args) => {
+      calls.push({ command, args });
+      if (command === "which" && args[0] === "fly") {
+        return { exitCode: calls.filter((c) => c.command === "which" && c.args[0] === "fly").length === 1 ? 1 : 0, stdout: "/tmp/home/.fly/bin/fly\n" };
+      }
+      if (command === "which" && args[0] === "flyctl") {
+        return { exitCode: 1 };
+      }
+      if (command === "bash" && args[0] === "-lc") {
+        return { exitCode: 0 };
+      }
+      if (command === "fly" && args[0] === "version") {
+        return { exitCode: 0, stdout: "fly v0.3.52 linux/amd64\n" };
+      }
+      throw new Error(`unexpected call: ${command} ${args.join(" ")}`);
+    });
+    const prompts = makePromptPort([], { interactive: false });
+    const wizard = new FlyDeployWizard({
+      HOME: "/tmp/home",
+      HERMES_FLY_FLYCTL_INSTALL_CMD: "echo install-fly"
+    }, { process: runner, prompts });
+
+    const result = await wizard.checkPrerequisites({ autoInstall: true });
+
+    assert.deepEqual(result, { ok: true });
+    assert.ok(calls.some((call) => call.command === "bash" && call.args[0] === "-lc"));
+  });
+
+  it("returns an install error when fly auto-install fails", async () => {
+    const runner = makeProcessRunner(async (command, args) => {
+      if (command === "which" && (args[0] === "fly" || args[0] === "flyctl")) {
+        return { exitCode: 1 };
+      }
+      if (command === "bash" && args[0] === "-lc") {
+        return { exitCode: 1, stderr: "permission denied" };
+      }
+      throw new Error(`unexpected call: ${command} ${args.join(" ")}`);
+    });
+    const prompts = makePromptPort([], { interactive: false });
+    const wizard = new FlyDeployWizard({
+      HOME: "/tmp/home",
+      HERMES_FLY_FLYCTL_INSTALL_CMD: "echo install-fly"
+    }, { process: runner, prompts });
+
+    const result = await wizard.checkPrerequisites({ autoInstall: true });
+
+    assert.equal(result.ok, false);
+    assert.equal(result.missing, "fly");
+    assert.match(result.error ?? "", /permission denied/);
   });
 });
 

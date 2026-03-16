@@ -32,6 +32,8 @@ export class RunDeployWizardUseCase {
     if (!prereqResult.ok) {
       if (prereqResult.autoInstallDisabled) {
         stderr.write(`[error] '${prereqResult.missing ?? "fly"}' not found (auto-install disabled). Install manually and retry.\n`);
+      } else if (prereqResult.error) {
+        stderr.write(`[error] ${prereqResult.error}\n`);
       } else {
         stderr.write(`[error] Missing prerequisite: ${prereqResult.missing ?? "unknown"}\n`);
       }
