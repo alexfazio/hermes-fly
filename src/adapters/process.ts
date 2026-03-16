@@ -18,7 +18,11 @@ export interface ProcessRunner {
   runStreaming(command: string, args: string[], options?: ProcessRunOptions): Promise<{ exitCode: number }>;
 }
 
-export class NodeProcessRunner implements ProcessRunner {
+export interface ForegroundProcessRunner extends ProcessRunner {
+  runForeground(command: string, args: string[], options?: ProcessRunOptions): Promise<{ exitCode: number }>;
+}
+
+export class NodeProcessRunner implements ForegroundProcessRunner {
   async run(command: string, args: string[], options: ProcessRunOptions = {}): Promise<ProcessResult> {
     return await new Promise<ProcessResult>((resolve, reject) => {
       const child = spawn(command, args, {
@@ -73,6 +77,24 @@ export class NodeProcessRunner implements ProcessRunner {
       child.stderr.setEncoding("utf8");
       child.stderr.on("data", (chunk: string) => {
         options.onStderrChunk?.(chunk);
+      });
+
+      child.on("error", reject);
+      child.on("close", (code) => {
+        resolve({ exitCode: typeof code === "number" ? code : 1 });
+      });
+    });
+  }
+
+  async runForeground(command: string, args: string[], options: ProcessRunOptions = {}): Promise<{ exitCode: number }> {
+    return new Promise<{ exitCode: number }>((resolve, reject) => {
+      const child = spawn(command, args, {
+        cwd: options.cwd,
+        env: {
+          ...process.env,
+          ...options.env
+        },
+        stdio: "inherit"
       });
 
       child.on("error", reject);

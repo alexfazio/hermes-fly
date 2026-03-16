@@ -42,7 +42,11 @@ export class RunDeployWizardUseCase {
 
     const authResult = await this.port.checkAuth();
     if (!authResult.ok) {
-      stderr.write(`[error] Not authenticated. Run: fly auth login\n`);
+      if (authResult.error && authResult.error !== "not authenticated") {
+        stderr.write(`[error] ${authResult.error}\n`);
+      } else {
+        stderr.write(`[error] Not authenticated. Run: fly auth login\n`);
+      }
       return { kind: "failed", error: authResult.error ?? "not authenticated" };
     }
 

@@ -1,7 +1,7 @@
 import type { DeployConfig, DeployWizardPort } from "../../application/ports/deploy-wizard.port.js";
 import { FlyDeployRunner } from "./fly-deploy-runner.js";
 import { TemplateWriter } from "./template-writer.js";
-import { NodeProcessRunner, type ProcessRunner } from "../../../../adapters/process.js";
+import { NodeProcessRunner, type ForegroundProcessRunner } from "../../../../adapters/process.js";
 import { DeploymentIntent } from "../../domain/deployment-intent.js";
 import { ReadlineDeployPrompts, type DeployPromptPort } from "./deploy-prompts.js";
 import { tmpdir } from "node:os";
@@ -15,7 +15,7 @@ const DEFAULT_VOLUME_SIZE = 1;
 const DEFAULT_MODEL = "anthropic/claude-3-5-sonnet";
 
 export interface FlyDeployWizardDeps {
-  process?: ProcessRunner;
+  process?: ForegroundProcessRunner;
   prompts?: DeployPromptPort;
   templateWriter?: TemplateWriter;
 }
@@ -23,7 +23,7 @@ export interface FlyDeployWizardDeps {
 export class FlyDeployWizard implements DeployWizardPort {
   private readonly runner: FlyDeployRunner;
   private readonly templateWriter: TemplateWriter;
-  private readonly process: ProcessRunner;
+  private readonly process: ForegroundProcessRunner;
   private readonly prompts: DeployPromptPort;
   private readonly env: NodeJS.ProcessEnv;
 
@@ -86,12 +86,17 @@ export class FlyDeployWizard implements DeployWizardPort {
       return { ok: false, error: "not authenticated" };
     }
 
-    this.prompts.write("Not authenticated with Fly.io. Please run 'fly auth login' in another terminal.\n");
-    await this.prompts.pause("Press Enter when ready to retry: ");
+    this.prompts.write("Not authenticated with Fly.io. Launching 'fly auth login' now...\n");
+    const loginResult = await this.process.runForeground("fly", ["auth", "login"], { env: this.env });
+    if (loginResult.exitCode !== 0) {
+      return { ok: false, error: "Fly.io authentication did not complete successfully." };
+    }
+
     result = await this.process.run("fly", ["auth", "whoami"], { env: this.env });
     if (result.exitCode !== 0) {
-      return { ok: false, error: "not authenticated" };
+      return { ok: false, error: "Fly.io authentication completed, but no active Fly.io session is available." };
     }
+    this.prompts.write("Fly.io authentication complete.\n");
     return { ok: true };
   }
 

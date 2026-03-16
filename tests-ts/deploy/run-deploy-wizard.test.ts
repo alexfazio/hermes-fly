@@ -3,7 +3,7 @@ import { describe, it } from "node:test";
 
 import { RunDeployWizardUseCase } from "../../src/contexts/deploy/application/use-cases/run-deploy-wizard.ts";
 import type { DeployWizardPort, DeployConfig } from "../../src/contexts/deploy/application/ports/deploy-wizard.port.ts";
-import type { ProcessRunner } from "../../src/adapters/process.ts";
+import type { ForegroundProcessRunner } from "../../src/adapters/process.ts";
 import type { DeployPromptPort } from "../../src/contexts/deploy/infrastructure/adapters/deploy-prompts.ts";
 
 function makeIO() {
@@ -90,6 +90,15 @@ describe("RunDeployWizardUseCase - preflight failure", () => {
     }));
     await uc.execute({ autoInstall: false, channel: "stable" }, io.stderr);
     assert.ok(io.text.includes("auto-install disabled") || io.text.includes("fly"), `got: ${io.text}`);
+  });
+
+  it("surfaces the exact authentication error when interactive login fails", async () => {
+    const io = makeIO();
+    const uc = new RunDeployWizardUseCase(makePort({
+      checkAuth: async () => ({ ok: false, error: "Fly.io authentication did not complete successfully." })
+    }));
+    await uc.execute({ autoInstall: true, channel: "stable" }, io.stderr);
+    assert.match(io.text, /Fly\.io authentication did not complete successfully\./);
   });
 });
 
@@ -195,8 +204,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 function makeProcessRunner(
-  impl: (command: string, args: string[]) => Promise<{ stdout?: string; stderr?: string; exitCode: number }>
-): ProcessRunner {
+  impl: (command: string, args: string[]) => Promise<{ stdout?: string; stderr?: string; exitCode: number }>,
+  foregroundImpl: (command: string, args: string[]) => Promise<{ exitCode: number }> = async () => ({ exitCode: 0 })
+): ForegroundProcessRunner {
   return {
     run: async (command, args) => {
       const result = await impl(command, args);
@@ -206,7 +216,8 @@ function makeProcessRunner(
         exitCode: result.exitCode
       };
     },
-    runStreaming: async () => ({ exitCode: 0 })
+    runStreaming: async () => ({ exitCode: 0 }),
+    runForeground: async (command, args) => foregroundImpl(command, args)
   };
 }
 
@@ -307,13 +318,20 @@ describe("FlyDeployWizard.checkPrerequisites", () => {
 });
 
 describe("FlyDeployWizard.checkAuth", () => {
-  it("retries once interactively after prompting for fly auth login", async () => {
-    let calls = 0;
+  it("runs fly auth login in the current terminal and retries auth", async () => {
+    const calls: Array<{ command: string; args: string[] }> = [];
     const runner = makeProcessRunner(async (command, args) => {
+      calls.push({ command, args });
       assert.equal(command, "fly");
       assert.deepEqual(args, ["auth", "whoami"]);
-      calls += 1;
-      return { exitCode: calls === 1 ? 1 : 0 };
+      return {
+        exitCode: calls.filter((call) => call.command === "fly" && call.args[0] === "auth" && call.args[1] === "whoami").length === 1 ? 1 : 0
+      };
+    }, async (command, args) => {
+      calls.push({ command, args });
+      assert.equal(command, "fly");
+      assert.deepEqual(args, ["auth", "login"]);
+      return { exitCode: 0 };
     });
     const prompts = makePromptPort([], { interactive: true });
     const wizard = new FlyDeployWizard({}, { process: runner, prompts });
@@ -321,8 +339,38 @@ describe("FlyDeployWizard.checkAuth", () => {
     const result = await wizard.checkAuth();
 
     assert.deepEqual(result, { ok: true });
-    assert.equal(calls, 2);
-    assert.equal(prompts.pauses.length, 1);
+    assert.deepEqual(calls, [
+      { command: "fly", args: ["auth", "whoami"] },
+      { command: "fly", args: ["auth", "login"] },
+      { command: "fly", args: ["auth", "whoami"] }
+    ]);
+    assert.equal(prompts.pauses.length, 0);
+  });
+
+  it("returns a targeted error when interactive fly auth login fails", async () => {
+    const calls: Array<{ command: string; args: string[] }> = [];
+    const runner = makeProcessRunner(async (command, args) => {
+      calls.push({ command, args });
+      assert.equal(command, "fly");
+      assert.deepEqual(args, ["auth", "whoami"]);
+      return { exitCode: 1 };
+    }, async (command, args) => {
+      calls.push({ command, args });
+      assert.equal(command, "fly");
+      assert.deepEqual(args, ["auth", "login"]);
+      return { exitCode: 1 };
+    });
+    const prompts = makePromptPort([], { interactive: true });
+    const wizard = new FlyDeployWizard({}, { process: runner, prompts });
+
+    const result = await wizard.checkAuth();
+
+    assert.equal(result.ok, false);
+    assert.match(result.error ?? "", /did not complete successfully/);
+    assert.deepEqual(calls, [
+      { command: "fly", args: ["auth", "whoami"] },
+      { command: "fly", args: ["auth", "login"] }
+    ]);
   });
 });
 
