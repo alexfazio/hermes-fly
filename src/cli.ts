@@ -1,4 +1,6 @@
 import { Command } from "commander";
+import { realpathSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { runListCommand } from "./commands/list.js";
 import { runStatusCommand } from "./commands/status.js";
 import { runLogsCommand } from "./commands/logs.js";
@@ -132,7 +134,19 @@ export async function run(argv: string[]): Promise<void> {
   await program.parseAsync(argv);
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+export function isCliEntrypoint(importMetaUrl: string, argv1?: string): boolean {
+  if (!argv1) {
+    return false;
+  }
+
+  try {
+    return realpathSync(fileURLToPath(importMetaUrl)) === realpathSync(argv1);
+  } catch {
+    return fileURLToPath(importMetaUrl) === argv1;
+  }
+}
+
+if (isCliEntrypoint(import.meta.url, process.argv[1])) {
   run(process.argv).catch((error: unknown) => {
     const message = error instanceof Error ? error.message : String(error);
     process.stderr.write(`TS CLI error: ${message}\n`);

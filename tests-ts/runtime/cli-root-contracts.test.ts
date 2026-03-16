@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
+import { mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, it } from "node:test";
-import { buildProgram } from "../../src/cli.ts";
+import { pathToFileURL } from "node:url";
+import { buildProgram, isCliEntrypoint } from "../../src/cli.ts";
 import { runHelpCommand } from "../../src/commands/help.ts";
 import { runVersionCommand } from "../../src/commands/version.ts";
 
@@ -79,6 +83,23 @@ describe("CLI root contracts - version contracts", () => {
     const output = lines.join("");
     assert.ok(output.startsWith("hermes-fly "), `Version output should start with 'hermes-fly ': got '${output}'`);
     assert.match(output, /hermes-fly \d+\.\d+\.\d+/);
+  });
+});
+
+describe("CLI root contracts - entrypoint detection", () => {
+  it("treats symlink and realpath variants as the same entrypoint", () => {
+    const dir = mkdtempSync(join(tmpdir(), "hf-cli-entrypoint-"));
+    try {
+      const actual = join(dir, "actual-cli.js");
+      const alias = join(dir, "alias-cli.js");
+      writeFileSync(actual, "export {};\n", "utf8");
+      symlinkSync(actual, alias);
+
+      const importMetaUrl = pathToFileURL(realpathSync(actual)).href;
+      assert.equal(isCliEntrypoint(importMetaUrl, alias), true);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 
