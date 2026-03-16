@@ -4,6 +4,7 @@ import { TemplateWriter } from "./template-writer.js";
 import { NodeProcessRunner, type ForegroundProcessRunner } from "../../../../adapters/process.js";
 import { DeploymentIntent } from "../../domain/deployment-intent.js";
 import { ReadlineDeployPrompts, type DeployPromptPort } from "./deploy-prompts.js";
+import { TerminalQrCodeRenderer, type QrCodeRendererPort } from "./qr-code.js";
 import { randomBytes } from "node:crypto";
 import { constants } from "node:fs";
 import { tmpdir } from "node:os";
@@ -20,6 +21,7 @@ const OPENROUTER_KEY_URL = "https://openrouter.ai/settings/keys";
 const OPENROUTER_MODELS_URL = "https://openrouter.ai/models";
 const OPENROUTER_KEY_API_URL = "https://openrouter.ai/api/v1/key";
 const OPENROUTER_MODELS_API_URL = "https://openrouter.ai/api/v1/models";
+const TELEGRAM_BOTFATHER_URL = "https://t.me/BotFather";
 
 type RegionOption = {
   code: string;
@@ -195,6 +197,7 @@ export interface FlyDeployWizardDeps {
   process?: ForegroundProcessRunner;
   prompts?: DeployPromptPort;
   templateWriter?: TemplateWriter;
+  qrRenderer?: QrCodeRendererPort;
 }
 
 export class FlyDeployWizard implements DeployWizardPort {
@@ -202,6 +205,7 @@ export class FlyDeployWizard implements DeployWizardPort {
   private readonly templateWriter: TemplateWriter;
   private readonly process: ForegroundProcessRunner;
   private readonly prompts: DeployPromptPort;
+  private readonly qrRenderer: QrCodeRendererPort;
   private readonly env: NodeJS.ProcessEnv;
   private readonly defaultAppName: string;
   private readonly modelLabels = new Map<string, string>();
@@ -214,6 +218,7 @@ export class FlyDeployWizard implements DeployWizardPort {
     this.runner = new FlyDeployRunner(this.process, this.env);
     this.templateWriter = deps.templateWriter ?? new TemplateWriter();
     this.prompts = deps.prompts ?? new ReadlineDeployPrompts();
+    this.qrRenderer = deps.qrRenderer ?? new TerminalQrCodeRenderer();
     this.defaultAppName = this.buildDefaultAppName();
     this.rememberModelOptions(STATIC_MODEL_OPTIONS);
   }
@@ -701,7 +706,15 @@ export class FlyDeployWizard implements DeployWizardPort {
       return "";
     }
 
-    this.prompts.write("Create a Telegram bot with @BotFather, then copy the bot token here.\n");
+    this.prompts.write("Create your Telegram bot with BotFather, then paste the bot token here.\n");
+    this.prompts.write(`Open BotFather directly: ${TELEGRAM_BOTFATHER_URL}\n`);
+    this.prompts.write("Scan this QR code with your phone to open the BotFather chat:\n\n");
+    try {
+      const qr = await this.qrRenderer.render(TELEGRAM_BOTFATHER_URL);
+      this.prompts.write(`${qr}\n`);
+    } catch {
+      this.prompts.write("(QR code unavailable in this terminal. Use the direct link above.)\n\n");
+    }
     this.prompts.write("Guide: https://core.telegram.org/bots#6-botfather\n\n");
     while (true) {
       const answer = await this.prompts.askSecret("Telegram bot token (required): ");

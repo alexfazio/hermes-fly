@@ -11,6 +11,7 @@ import type { DeployConfig, DeployWizardPort } from "../../src/contexts/deploy/a
 import { ReadlineDeployPrompts } from "../../src/contexts/deploy/infrastructure/adapters/deploy-prompts.ts";
 import { FlyDeployWizard } from "../../src/contexts/deploy/infrastructure/adapters/fly-deploy-wizard.ts";
 import type { DeployPromptPort } from "../../src/contexts/deploy/infrastructure/adapters/deploy-prompts.ts";
+import type { QrCodeRendererPort } from "../../src/contexts/deploy/infrastructure/adapters/qr-code.ts";
 
 function makeIO() {
   const lines: string[] = [];
@@ -96,6 +97,12 @@ function makePromptPort(
     pause: async (message: string) => {
       pauses.push(message);
     }
+  };
+}
+
+function makeQrRenderer(output = "[[QR: https://t.me/BotFather]]"): QrCodeRendererPort {
+  return {
+    render: async () => output
   };
 }
 
@@ -554,7 +561,7 @@ describe("FlyDeployWizard.collectConfig", () => {
       }
       return { exitCode: 1 };
     });
-    const wizard = new FlyDeployWizard({}, { prompts, process: runner });
+    const wizard = new FlyDeployWizard({}, { prompts, process: runner, qrRenderer: makeQrRenderer() });
 
     const config = await wizard.collectConfig({ channel: "preview" });
 
@@ -580,6 +587,9 @@ describe("FlyDeployWizard.collectConfig", () => {
     assert.match(guidedCopy, /Which AI provider do you want to use through OpenRouter/);
     assert.match(guidedCopy, /Which OpenAI model should your agent use/);
     assert.match(guidedCopy, /Do you want to connect Telegram now/);
+    assert.match(guidedCopy, /Open BotFather directly: https:\/\/t\.me\/BotFather/);
+    assert.match(guidedCopy, /Scan this QR code with your phone to open the BotFather chat/);
+    assert.match(guidedCopy, /\[\[QR: https:\/\/t\.me\/BotFather\]\]/);
     assert.match(guidedCopy, /Review your setup/);
   });
 
@@ -641,6 +651,63 @@ describe("FlyDeployWizard.collectConfig", () => {
     assert.match(guidedCopy, /GPT-5\s+/);
     assert.match(guidedCopy, /GPT-5 Pro/);
     assert.match(guidedCopy, /GPT-4o/);
+  });
+
+  it("shows a direct BotFather link and renders a QR code when Telegram setup is selected", async () => {
+    const prompts = makePromptPort([
+      "",
+      "",
+      "",
+      "",
+      "",
+      "sk-live",
+      "2",
+      "5",
+      "1",
+      "123:abc",
+      "y"
+    ], { interactive: true });
+    const runner = makeProcessRunner(async (command, args) => {
+      if (command === "fly" && args[0] === "platform" && args[1] === "regions") {
+        return {
+          exitCode: 0,
+          stdout: JSON.stringify([{ code: "iad", name: "Ashburn, Virginia (US)" }])
+        };
+      }
+      if (command === "fly" && args[0] === "platform" && args[1] === "vm-sizes") {
+        return {
+          exitCode: 0,
+          stdout: JSON.stringify([{ name: "shared-cpu-1x", memory_mb: 256 }])
+        };
+      }
+      if (command === "curl" && args.includes("https://openrouter.ai/api/v1/key")) {
+        return {
+          exitCode: 0,
+          stdout: JSON.stringify({ data: { is_free_tier: false, usage: 10 } })
+        };
+      }
+      if (command === "curl" && args.includes("https://openrouter.ai/api/v1/models")) {
+        return {
+          exitCode: 0,
+          stdout: JSON.stringify({ data: liveOpenRouterModelsFixture() })
+        };
+      }
+      return { exitCode: 1 };
+    });
+    const wizard = new FlyDeployWizard({}, {
+      prompts,
+      process: runner,
+      qrRenderer: makeQrRenderer("[[BOTFATHER-QR]]")
+    });
+
+    const config = await wizard.collectConfig({ channel: "stable" });
+
+    assert.equal(config.botToken, "123:abc");
+    const guidedCopy = prompts.writes.join("");
+    assert.match(guidedCopy, /Open BotFather directly: https:\/\/t\.me\/BotFather/);
+    assert.match(guidedCopy, /Scan this QR code with your phone to open the BotFather chat/);
+    assert.match(guidedCopy, /\[\[BOTFATHER-QR\]\]/);
+    assert.match(guidedCopy, /Guide: https:\/\/core\.telegram\.org\/bots#6-botfather/);
   });
 
   it("prompts for Hermes-compatible reasoning effort when the selected model supports it", async () => {

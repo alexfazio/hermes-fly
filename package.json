@@ -27,7 +27,9 @@
     "test:runtime-destroy": "tsx --test tests-ts/runtime/destroy-command.test.ts"
   },
   "dependencies": {
-    "commander": "^12.1.0"
+    "@types/qrcode": "^1.5.6",
+    "commander": "^12.1.0",
+    "qrcode": "^1.5.4"
   },
   "devDependencies": {
     "@types/node": "^25.5.0",
