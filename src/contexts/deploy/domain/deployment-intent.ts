@@ -6,10 +6,12 @@ export interface DeploymentIntentInput {
   vmSize: string;
   provider: string;
   model: string;
+  reasoningEffort?: string;
   channel?: DeployChannel;
 }
 
 const CHANNELS: readonly DeployChannel[] = ["stable", "preview", "edge"];
+const REASONING_EFFORTS = new Set(["low", "medium", "high"]);
 
 export class DeploymentIntent {
   readonly appName: string;
@@ -17,6 +19,7 @@ export class DeploymentIntent {
   readonly vmSize: string;
   readonly provider: string;
   readonly model: string;
+  readonly reasoningEffort: string;
   readonly channel: DeployChannel;
 
   private constructor(input: {
@@ -25,6 +28,7 @@ export class DeploymentIntent {
     vmSize: string;
     provider: string;
     model: string;
+    reasoningEffort: string;
     channel: DeployChannel;
   }) {
     this.appName = input.appName;
@@ -32,6 +36,7 @@ export class DeploymentIntent {
     this.vmSize = input.vmSize;
     this.provider = input.provider;
     this.model = input.model;
+    this.reasoningEffort = input.reasoningEffort;
     this.channel = input.channel;
   }
 
@@ -61,6 +66,11 @@ export class DeploymentIntent {
       throw new Error("DeploymentIntent.model must be non-empty");
     }
 
+    const reasoningEffort = input.reasoningEffort?.trim() ?? "";
+    if (reasoningEffort.length > 0 && !REASONING_EFFORTS.has(reasoningEffort)) {
+      throw new Error("DeploymentIntent.reasoningEffort must be one of low|medium|high");
+    }
+
     const channel = input.channel ?? "stable";
     if (!CHANNELS.includes(channel)) {
       throw new Error("DeploymentIntent.channel must be one of stable|preview|edge");
@@ -72,6 +82,7 @@ export class DeploymentIntent {
       vmSize,
       provider,
       model,
+      reasoningEffort,
       channel,
     });
   }

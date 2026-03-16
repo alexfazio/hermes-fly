@@ -99,6 +99,61 @@ function makePromptPort(
   };
 }
 
+function liveOpenRouterModelsFixture() {
+  return [
+    {
+      id: "anthropic/claude-sonnet-4",
+      name: "Anthropic: Claude Sonnet 4",
+      supported_parameters: ["max_tokens", "temperature"]
+    },
+    {
+      id: "anthropic/claude-haiku-4.5",
+      name: "Anthropic: Claude Haiku 4.5",
+      supported_parameters: ["max_tokens", "temperature"]
+    },
+    {
+      id: "openai/gpt-5-mini",
+      name: "OpenAI: GPT-5 Mini",
+      supported_parameters: ["max_tokens", "temperature", "reasoning", "include_reasoning"]
+    },
+    {
+      id: "openai/gpt-5",
+      name: "OpenAI: GPT-5",
+      supported_parameters: ["max_tokens", "temperature", "reasoning", "include_reasoning"]
+    },
+    {
+      id: "openai/gpt-5-pro",
+      name: "OpenAI: GPT-5 Pro",
+      supported_parameters: ["max_tokens", "reasoning", "include_reasoning"]
+    },
+    {
+      id: "openai/o3",
+      name: "OpenAI: o3",
+      supported_parameters: ["max_tokens", "reasoning", "include_reasoning"]
+    },
+    {
+      id: "openai/gpt-4o",
+      name: "OpenAI: GPT-4o",
+      supported_parameters: ["max_tokens", "temperature"]
+    },
+    {
+      id: "google/gemini-2.5-flash",
+      name: "Google: Gemini 2.5 Flash",
+      supported_parameters: ["max_tokens", "temperature"]
+    },
+    {
+      id: "meta-llama/llama-4-maverick",
+      name: "Meta: Llama 4 Maverick",
+      supported_parameters: ["max_tokens", "temperature"]
+    },
+    {
+      id: "mistralai/mistral-large",
+      name: "Mistral: Mistral Large",
+      supported_parameters: ["max_tokens", "temperature"]
+    }
+  ];
+}
+
 describe("RunDeployWizardUseCase - happy path", () => {
   it("returns ok when all phases pass", async () => {
     const io = makeIO();
@@ -372,8 +427,8 @@ chmod +x "${homeDir}/.fly/bin/fly"`
 
     try {
       await wizard.checkPrerequisites({ autoInstall: true });
-      assert.equal(capturedEnv?.LANG, "C.UTF-8");
-      assert.equal(capturedEnv?.LC_ALL, "C.UTF-8");
+      assert.equal(capturedEnv?.LANG, "C");
+      assert.equal(capturedEnv?.LC_ALL, "C");
     } finally {
       await rm(pathDir, { recursive: true, force: true });
     }
@@ -563,19 +618,7 @@ describe("FlyDeployWizard.collectConfig", () => {
       if (command === "curl" && args.includes("https://openrouter.ai/api/v1/models")) {
         return {
           exitCode: 0,
-          stdout: JSON.stringify({
-            data: [
-              { id: "anthropic/claude-sonnet-4", name: "Anthropic: Claude Sonnet 4" },
-              { id: "anthropic/claude-haiku-4.5", name: "Anthropic: Claude Haiku 4.5" },
-              { id: "openai/gpt-5-mini", name: "OpenAI: GPT-5 Mini" },
-              { id: "openai/gpt-5", name: "OpenAI: GPT-5" },
-              { id: "openai/gpt-5-pro", name: "OpenAI: GPT-5 Pro" },
-              { id: "openai/gpt-4o", name: "OpenAI: GPT-4o" },
-              { id: "google/gemini-2.5-flash", name: "Google: Gemini 2.5 Flash" },
-              { id: "meta-llama/llama-4-maverick", name: "Meta: Llama 4 Maverick" },
-              { id: "mistralai/mistral-large", name: "Mistral: Mistral Large" }
-            ]
-          })
+          stdout: JSON.stringify({ data: liveOpenRouterModelsFixture() })
         };
       }
       return { exitCode: 1 };
@@ -585,6 +628,7 @@ describe("FlyDeployWizard.collectConfig", () => {
     const config = await wizard.collectConfig({ channel: "stable" });
 
     assert.equal(config.model, "openai/gpt-5-pro");
+    assert.equal(config.reasoningEffort, "high");
     const guidedCopy = prompts.writes.join("");
     assert.match(guidedCopy, /Get your OpenRouter API key at: https:\/\/openrouter\.ai\/settings\/keys/);
     assert.match(guidedCopy, /Fetching available models from OpenRouter/);
@@ -597,6 +641,163 @@ describe("FlyDeployWizard.collectConfig", () => {
     assert.match(guidedCopy, /GPT-5\s+/);
     assert.match(guidedCopy, /GPT-5 Pro/);
     assert.match(guidedCopy, /GPT-4o/);
+  });
+
+  it("prompts for Hermes-compatible reasoning effort when the selected model supports it", async () => {
+    const prompts = makePromptPort([
+      "",
+      "",
+      "",
+      "",
+      "",
+      "sk-live",
+      "2",
+      "2",
+      "3",
+      "",
+      "y"
+    ], { interactive: true });
+    const runner = makeProcessRunner(async (command, args) => {
+      if (command === "fly" && args[0] === "platform" && args[1] === "regions") {
+        return {
+          exitCode: 0,
+          stdout: JSON.stringify([{ code: "iad", name: "Ashburn, Virginia (US)" }])
+        };
+      }
+      if (command === "fly" && args[0] === "platform" && args[1] === "vm-sizes") {
+        return {
+          exitCode: 0,
+          stdout: JSON.stringify([{ name: "shared-cpu-1x", memory_mb: 256 }])
+        };
+      }
+      if (command === "curl" && args.includes("https://openrouter.ai/api/v1/key")) {
+        return {
+          exitCode: 0,
+          stdout: JSON.stringify({ data: { is_free_tier: false, usage: 10 } })
+        };
+      }
+      if (command === "curl" && args.includes("https://openrouter.ai/api/v1/models")) {
+        return {
+          exitCode: 0,
+          stdout: JSON.stringify({ data: liveOpenRouterModelsFixture() })
+        };
+      }
+      return { exitCode: 1 };
+    });
+    const wizard = new FlyDeployWizard({}, { prompts, process: runner });
+
+    const config = await wizard.collectConfig({ channel: "stable" });
+
+    assert.equal(config.model, "openai/gpt-5");
+    assert.equal(config.reasoningEffort, "high");
+    const guidedCopy = prompts.writes.join("");
+    assert.match(guidedCopy, /How much extra reasoning effort should Hermes use with this model/);
+    assert.match(guidedCopy, /Lower cost and faster responses/);
+    assert.match(guidedCopy, /Balanced \(recommended\)/);
+    assert.match(guidedCopy, /Higher effort for harder tasks/);
+    assert.match(guidedCopy, /Reasoning:\s+high/);
+  });
+
+  it("auto-selects the only Hermes-compatible reasoning effort when a model has one allowed level", async () => {
+    const prompts = makePromptPort([
+      "",
+      "",
+      "",
+      "",
+      "",
+      "sk-live",
+      "2",
+      "3",
+      "",
+      "y"
+    ], { interactive: true });
+    const runner = makeProcessRunner(async (command, args) => {
+      if (command === "fly" && args[0] === "platform" && args[1] === "regions") {
+        return {
+          exitCode: 0,
+          stdout: JSON.stringify([{ code: "iad", name: "Ashburn, Virginia (US)" }])
+        };
+      }
+      if (command === "fly" && args[0] === "platform" && args[1] === "vm-sizes") {
+        return {
+          exitCode: 0,
+          stdout: JSON.stringify([{ name: "shared-cpu-1x", memory_mb: 256 }])
+        };
+      }
+      if (command === "curl" && args.includes("https://openrouter.ai/api/v1/key")) {
+        return {
+          exitCode: 0,
+          stdout: JSON.stringify({ data: { is_free_tier: false, usage: 10 } })
+        };
+      }
+      if (command === "curl" && args.includes("https://openrouter.ai/api/v1/models")) {
+        return {
+          exitCode: 0,
+          stdout: JSON.stringify({ data: liveOpenRouterModelsFixture() })
+        };
+      }
+      return { exitCode: 1 };
+    });
+    const wizard = new FlyDeployWizard({}, { prompts, process: runner });
+
+    const config = await wizard.collectConfig({ channel: "stable" });
+
+    assert.equal(config.model, "openai/gpt-5-pro");
+    assert.equal(config.reasoningEffort, "high");
+    const guidedCopy = prompts.writes.join("");
+    assert.match(guidedCopy, /Hermes will use the only supported reasoning effort for this model: high\./);
+  });
+
+  it("skips the reasoning step when OpenRouter supports reasoning but Hermes has no compatible policy for that model yet", async () => {
+    const prompts = makePromptPort([
+      "",
+      "",
+      "",
+      "",
+      "",
+      "sk-live",
+      "2",
+      "4",
+      "",
+      "y"
+    ], { interactive: true });
+    const runner = makeProcessRunner(async (command, args) => {
+      if (command === "fly" && args[0] === "platform" && args[1] === "regions") {
+        return {
+          exitCode: 0,
+          stdout: JSON.stringify([{ code: "iad", name: "Ashburn, Virginia (US)" }])
+        };
+      }
+      if (command === "fly" && args[0] === "platform" && args[1] === "vm-sizes") {
+        return {
+          exitCode: 0,
+          stdout: JSON.stringify([{ name: "shared-cpu-1x", memory_mb: 256 }])
+        };
+      }
+      if (command === "curl" && args.includes("https://openrouter.ai/api/v1/key")) {
+        return {
+          exitCode: 0,
+          stdout: JSON.stringify({ data: { is_free_tier: false, usage: 10 } })
+        };
+      }
+      if (command === "curl" && args.includes("https://openrouter.ai/api/v1/models")) {
+        return {
+          exitCode: 0,
+          stdout: JSON.stringify({ data: liveOpenRouterModelsFixture() })
+        };
+      }
+      return { exitCode: 1 };
+    });
+    const wizard = new FlyDeployWizard({}, { prompts, process: runner });
+
+    const config = await wizard.collectConfig({ channel: "stable" });
+
+    assert.equal(config.model, "openai/o3");
+    assert.equal(config.reasoningEffort, undefined);
+    const guidedCopy = prompts.writes.join("");
+    assert.match(guidedCopy, /OpenRouter exposes reasoning controls for this model/);
+    assert.match(guidedCopy, /Hermes Agent does not yet have a tested reasoning-effort policy for it/);
+    assert.doesNotMatch(guidedCopy, /How much extra reasoning effort should Hermes use with this model/);
   });
 
   it("falls back to a provider-first starter catalog when OpenRouter model fetch fails", async () => {

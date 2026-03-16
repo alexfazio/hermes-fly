@@ -64,6 +64,26 @@ describe("ProvisionDeploymentUseCase - happy path", () => {
       HERMES_DEPLOY_CHANNEL: DEFAULT_CONFIG.channel
     });
   });
+
+  it("includes HERMES_REASONING_EFFORT when the deploy config selected one", async () => {
+    let capturedSecrets: Record<string, string> | null = null;
+    const io = makeIO();
+    const uc = new ProvisionDeploymentUseCase(makeRunner({
+      setSecrets: async (_appName, secrets) => {
+        capturedSecrets = secrets;
+        return { ok: true };
+      }
+    }));
+
+    const result = await uc.execute({
+      ...DEFAULT_CONFIG,
+      model: "openai/gpt-5",
+      reasoningEffort: "high"
+    }, io.stderr);
+
+    assert.equal(result.ok, true);
+    assert.equal(capturedSecrets?.HERMES_REASONING_EFFORT, "high");
+  });
 });
 
 describe("ProvisionDeploymentUseCase - create app failure", () => {

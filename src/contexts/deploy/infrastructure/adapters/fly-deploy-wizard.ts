@@ -15,7 +15,7 @@ const DEFAULT_VM_SIZE = "shared-cpu-1x";
 const DEFAULT_VOLUME_SIZE = 1;
 const DEFAULT_MODEL = "anthropic/claude-3-5-sonnet";
 const DEFAULT_CHANNEL = "stable";
-const SAFE_UTF8_LOCALE = "C.UTF-8";
+const SAFE_PROCESS_LOCALE = "C";
 const OPENROUTER_KEY_URL = "https://openrouter.ai/settings/keys";
 const OPENROUTER_MODELS_URL = "https://openrouter.ai/models";
 const OPENROUTER_KEY_API_URL = "https://openrouter.ai/api/v1/key";
@@ -47,17 +47,31 @@ type ModelOption = {
   bestFor: string;
   providerKey: string;
   providerLabel: string;
+  supportsReasoning: boolean;
 };
 
 type OpenRouterModelRecord = {
   id: string;
   name: string;
+  supportedParameters: string[];
 };
 
 type ProviderOption = {
   key: string;
   label: string;
   description: string;
+};
+
+type ReasoningPolicy = {
+  allowedEfforts: string[];
+  defaultEffort: string;
+};
+
+type ReasoningSupport = {
+  supported: boolean;
+  allowedEfforts: string[];
+  defaultEffort?: string;
+  unsupportedMessage?: string;
 };
 
 const STATIC_REGIONS: RegionOption[] = [
@@ -127,6 +141,7 @@ const STATIC_MODEL_OPTIONS: ModelOption[] = [
     bestFor: "Balanced and reliable",
     providerKey: "anthropic",
     providerLabel: "Anthropic",
+    supportsReasoning: false,
   },
   {
     value: "anthropic/claude-3-5-haiku",
@@ -134,6 +149,7 @@ const STATIC_MODEL_OPTIONS: ModelOption[] = [
     bestFor: "Fast and lower cost",
     providerKey: "anthropic",
     providerLabel: "Anthropic",
+    supportsReasoning: false,
   },
   {
     value: "openai/gpt-4.1-mini",
@@ -141,6 +157,7 @@ const STATIC_MODEL_OPTIONS: ModelOption[] = [
     bestFor: "Good general-purpose fallback",
     providerKey: "openai",
     providerLabel: "OpenAI",
+    supportsReasoning: false,
   },
   {
     value: "google/gemini-2.5-flash",
@@ -148,6 +165,7 @@ const STATIC_MODEL_OPTIONS: ModelOption[] = [
     bestFor: "Fast Google option",
     providerKey: "google",
     providerLabel: "Google",
+    supportsReasoning: false,
   },
   {
     value: "meta-llama/llama-4-maverick",
@@ -155,6 +173,7 @@ const STATIC_MODEL_OPTIONS: ModelOption[] = [
     bestFor: "Open source option",
     providerKey: "meta-llama",
     providerLabel: "Meta",
+    supportsReasoning: false,
   },
   {
     value: "mistralai/mistral-large",
@@ -162,10 +181,15 @@ const STATIC_MODEL_OPTIONS: ModelOption[] = [
     bestFor: "Strong multilingual fallback",
     providerKey: "mistralai",
     providerLabel: "Mistral",
+    supportsReasoning: false,
   },
 ];
 
 const PROVIDER_ORDER = ["anthropic", "openai", "google", "meta-llama", "mistralai"];
+const STATIC_REASONING_POLICIES = new Map<string, ReasoningPolicy>([
+  ["gpt-5", { allowedEfforts: ["low", "medium", "high"], defaultEffort: "medium" }],
+  ["gpt-5-pro", { allowedEfforts: ["high"], defaultEffort: "high" }]
+]);
 
 export interface FlyDeployWizardDeps {
   process?: ForegroundProcessRunner;
@@ -181,6 +205,8 @@ export class FlyDeployWizard implements DeployWizardPort {
   private readonly env: NodeJS.ProcessEnv;
   private readonly defaultAppName: string;
   private readonly modelLabels = new Map<string, string>();
+  private readonly modelOptionsById = new Map<string, ModelOption>();
+  private reasoningPolicies?: Map<string, ReasoningPolicy>;
 
   constructor(env?: NodeJS.ProcessEnv, deps: FlyDeployWizardDeps = {}) {
     this.env = this.buildChildEnv(env);
@@ -277,6 +303,7 @@ export class FlyDeployWizard implements DeployWizardPort {
     const volumeSize = await this.collectVolumeSize(env.HERMES_FLY_VOLUME_SIZE);
     const apiKey = await this.collectOpenRouterApiKey();
     const model = await this.collectModel(env.HERMES_FLY_MODEL, apiKey);
+    const reasoningEffort = await this.collectReasoningEffort(env.HERMES_REASONING_EFFORT, model);
     const botToken = await this.collectTelegramToken(env.TELEGRAM_BOT_TOKEN);
     const hermesRef = (env.HERMES_FLY_VERSION ?? "latest").trim() || "latest";
 
@@ -286,6 +313,7 @@ export class FlyDeployWizard implements DeployWizardPort {
       vmSize,
       provider: "openrouter",
       model,
+      reasoningEffort,
       channel: opts.channel
     });
 
@@ -296,6 +324,7 @@ export class FlyDeployWizard implements DeployWizardPort {
       volumeSize,
       apiKey,
       model: intent.model,
+      reasoningEffort: intent.reasoningEffort.length > 0 ? intent.reasoningEffort : undefined,
       channel: intent.channel,
       hermesRef,
       botToken,
@@ -329,6 +358,9 @@ export class FlyDeployWizard implements DeployWizardPort {
       HERMES_LLM_PROVIDER: "openrouter",
       HERMES_APP_NAME: config.appName,
     };
+    if (config.reasoningEffort) {
+      secrets.HERMES_REASONING_EFFORT = config.reasoningEffort;
+    }
     if (config.botToken) {
       secrets.TELEGRAM_BOT_TOKEN = config.botToken;
     }
@@ -546,16 +578,69 @@ export class FlyDeployWizard implements DeployWizardPort {
   private async collectModel(envValue: string | undefined, apiKey: string): Promise<string> {
     const preset = envValue?.trim();
     if (preset && preset.length > 0) {
+      await this.fetchCuratedOpenRouterModels(apiKey, false);
       return preset;
     }
     if (!this.prompts.isInteractive()) {
       return DEFAULT_MODEL;
     }
 
-    const catalog = await this.fetchCuratedOpenRouterModels(apiKey);
+    const catalog = await this.fetchCuratedOpenRouterModels(apiKey, true);
     const provider = await this.collectProviderChoice(catalog);
     const providerModels = catalog.filter((option) => option.providerKey === provider.key);
     return await this.collectProviderModelChoice(provider, providerModels);
+  }
+
+  private async collectReasoningEffort(envValue: string | undefined, modelId: string): Promise<string | undefined> {
+    const preset = envValue?.trim().toLowerCase();
+    const support = await this.resolveReasoningSupport(modelId);
+
+    if (preset && preset.length > 0) {
+      if (!support.supported) {
+        throw new Error(`HERMES_REASONING_EFFORT is not supported for model ${modelId}.`);
+      }
+      if (!support.allowedEfforts.includes(preset)) {
+        throw new Error(
+          `HERMES_REASONING_EFFORT must be one of ${support.allowedEfforts.join("|")} for model ${modelId}.`
+        );
+      }
+      return preset;
+    }
+
+    if (!support.supported) {
+      if (support.unsupportedMessage && this.prompts.isInteractive()) {
+        this.prompts.write(`${support.unsupportedMessage}\n\n`);
+      }
+      return undefined;
+    }
+
+    if (!support.defaultEffort) {
+      return undefined;
+    }
+
+    if (!this.prompts.isInteractive()) {
+      return support.defaultEffort;
+    }
+
+    if (support.allowedEfforts.length === 1) {
+      this.prompts.write(`Hermes will use the only supported reasoning effort for this model: ${support.allowedEfforts[0]}.\n\n`);
+      return support.allowedEfforts[0];
+    }
+
+    const defaultIndex = Math.max(0, support.allowedEfforts.findIndex((effort) => effort === support.defaultEffort));
+    this.prompts.write("How much extra reasoning effort should Hermes use with this model?\n");
+    this.prompts.write("Higher effort can help on harder tasks, but it may respond slower and cost more.\n\n");
+    support.allowedEfforts.forEach((effort, index) => {
+      this.prompts.write(`  ${String(index + 1).padStart(2, " ")}  ${this.describeReasoningEffort(effort)}\n`);
+    });
+    this.prompts.write("\n");
+
+    const selectedIndex = await this.chooseNumber(
+      `Choose a reasoning level [${defaultIndex + 1}]: `,
+      support.allowedEfforts.length,
+      defaultIndex + 1
+    );
+    return support.allowedEfforts[selectedIndex - 1];
   }
 
   private async collectProviderChoice(catalog: ModelOption[]): Promise<ProviderOption> {
@@ -634,6 +719,9 @@ export class FlyDeployWizard implements DeployWizardPort {
     this.prompts.write(`  Server size:     ${this.describeVmSize(config.vmSize)}\n`);
     this.prompts.write(`  Storage:         ${config.volumeSize} GB\n`);
     this.prompts.write(`  AI model:        ${this.describeModel(config.model)}\n`);
+    if (config.reasoningEffort) {
+      this.prompts.write(`  Reasoning:       ${config.reasoningEffort}\n`);
+    }
     this.prompts.write(`  Telegram:        ${config.botToken ? "set up now" : "skip for now"}\n`);
     this.prompts.write(`  Release channel: ${config.channel || DEFAULT_CHANNEL}\n\n`);
 
@@ -776,8 +864,10 @@ export class FlyDeployWizard implements DeployWizardPort {
     }
   }
 
-  private async fetchCuratedOpenRouterModels(apiKey: string): Promise<ModelOption[]> {
-    this.prompts.write("Fetching available models from OpenRouter...\n");
+  private async fetchCuratedOpenRouterModels(apiKey: string, announce = this.prompts.isInteractive()): Promise<ModelOption[]> {
+    if (announce) {
+      this.prompts.write("Fetching available models from OpenRouter...\n");
+    }
 
     try {
       const result = await this.process.run(
@@ -786,7 +876,7 @@ export class FlyDeployWizard implements DeployWizardPort {
         { env: this.env }
       );
       if (result.exitCode !== 0 || result.stdout.trim().length === 0) {
-        return this.reportDynamicModelFallback();
+        return this.reportDynamicModelFallback(announce);
       }
 
       const payload = JSON.parse(result.stdout) as { data?: Array<Record<string, unknown>> };
@@ -797,25 +887,35 @@ export class FlyDeployWizard implements DeployWizardPort {
           if (id.length === 0 || name.length === 0) {
             return null;
           }
-          return { id, name };
+          const rawSupportedParameters = Array.isArray(entry.supported_parameters)
+            ? entry.supported_parameters
+            : Array.isArray(entry.supportedParameters)
+              ? entry.supportedParameters
+              : [];
+          const supportedParameters = rawSupportedParameters
+            .map((value) => String(value ?? "").trim())
+            .filter((value) => value.length > 0);
+          return { id, name, supportedParameters };
         })
         .filter((entry): entry is OpenRouterModelRecord => entry !== null);
 
       const fullCatalog = this.buildDynamicModelOptions(models);
       if (fullCatalog.length === 0) {
-        return this.reportDynamicModelFallback();
+        return this.reportDynamicModelFallback(announce);
       }
       this.rememberModelOptions(fullCatalog);
       return fullCatalog;
     } catch {
-      return this.reportDynamicModelFallback();
+      return this.reportDynamicModelFallback(announce);
     }
   }
 
-  private reportDynamicModelFallback(): ModelOption[] {
-    this.prompts.write("I couldn't load the live OpenRouter model list.\n");
-    this.prompts.write(`Browse every available model at: ${OPENROUTER_MODELS_URL}\n`);
-    this.prompts.write("I'll show a starter list instead.\n\n");
+  private reportDynamicModelFallback(announce: boolean): ModelOption[] {
+    if (announce) {
+      this.prompts.write("I couldn't load the live OpenRouter model list.\n");
+      this.prompts.write(`Browse every available model at: ${OPENROUTER_MODELS_URL}\n`);
+      this.prompts.write("I'll show a starter list instead.\n\n");
+    }
     return STATIC_MODEL_OPTIONS;
   }
 
@@ -834,6 +934,7 @@ export class FlyDeployWizard implements DeployWizardPort {
         bestFor: this.inferDynamicModelNote(model),
         providerKey: this.providerKeyForModel(model.id),
         providerLabel: this.providerLabelForModel(model.id),
+        supportsReasoning: model.supportedParameters.includes("reasoning"),
       });
     }
 
@@ -925,9 +1026,90 @@ export class FlyDeployWizard implements DeployWizardPort {
     });
   }
 
+  private async resolveReasoningSupport(modelId: string): Promise<ReasoningSupport> {
+    const option = this.modelOptionsById.get(modelId);
+    if (!option?.supportsReasoning) {
+      return { supported: false, allowedEfforts: [] };
+    }
+
+    const family = this.normalizeReasoningFamily(modelId);
+    const policies = await this.loadReasoningPolicies();
+    const policy = family ? policies.get(family) : undefined;
+    if (!policy) {
+      return {
+        supported: false,
+        allowedEfforts: [],
+        unsupportedMessage: "OpenRouter exposes reasoning controls for this model, but Hermes Agent does not yet have a tested reasoning-effort policy for it. Hermes will use the model's default reasoning behavior."
+      };
+    }
+
+    return {
+      supported: true,
+      allowedEfforts: [...policy.allowedEfforts],
+      defaultEffort: policy.defaultEffort,
+    };
+  }
+
+  private describeReasoningEffort(effort: string): string {
+    switch (effort) {
+      case "low":
+        return "Low                     Lower cost and faster responses";
+      case "medium":
+        return "Medium                  Balanced (recommended)";
+      case "high":
+        return "High                    Higher effort for harder tasks";
+      default:
+        return effort;
+    }
+  }
+
+  private normalizeReasoningFamily(modelId: string): string | null {
+    const withoutProvider = modelId.includes("/") ? modelId.split("/", 2)[1] ?? modelId : modelId;
+    const normalized = withoutProvider.split(":", 2)[0] ?? withoutProvider;
+
+    if (/^gpt-5-pro(?:[-.].+)?$/i.test(normalized)) {
+      return "gpt-5-pro";
+    }
+    if (/^gpt-5(?:[-.].+)?$/i.test(normalized) || /^gpt-5-(?:mini|nano|codex)(?:[-.].+)?$/i.test(normalized)) {
+      return "gpt-5";
+    }
+    return null;
+  }
+
+  private async loadReasoningPolicies(): Promise<Map<string, ReasoningPolicy>> {
+    if (this.reasoningPolicies) {
+      return this.reasoningPolicies;
+    }
+
+    try {
+      const { readFile } = await import("node:fs/promises");
+      const raw = await readFile(new URL("../../../../../data/reasoning-snapshot.json", import.meta.url), "utf8");
+      const parsed = JSON.parse(raw) as {
+        families?: Record<string, { allowed_efforts?: unknown; default?: unknown }>;
+      };
+      const policies = new Map<string, ReasoningPolicy>();
+      for (const [family, value] of Object.entries(parsed.families ?? {})) {
+        const allowedEfforts = Array.isArray(value.allowed_efforts)
+          ? value.allowed_efforts.map((entry) => String(entry ?? "").trim()).filter((entry) => entry.length > 0)
+          : [];
+        const defaultEffort = String(value.default ?? "").trim();
+        if (allowedEfforts.length === 0 || defaultEffort.length === 0) {
+          throw new Error("invalid reasoning snapshot");
+        }
+        policies.set(family, { allowedEfforts, defaultEffort });
+      }
+      this.reasoningPolicies = policies.size > 0 ? policies : new Map(STATIC_REASONING_POLICIES);
+    } catch {
+      this.reasoningPolicies = new Map(STATIC_REASONING_POLICIES);
+    }
+
+    return this.reasoningPolicies;
+  }
+
   private rememberModelOptions(options: ModelOption[]): void {
     for (const option of options) {
       this.modelLabels.set(option.value, option.label);
+      this.modelOptionsById.set(option.value, option);
     }
   }
 
@@ -1113,8 +1295,8 @@ export class FlyDeployWizard implements DeployWizardPort {
     return {
       ...process.env,
       ...(env ?? {}),
-      LANG: SAFE_UTF8_LOCALE,
-      LC_ALL: SAFE_UTF8_LOCALE,
+      LANG: SAFE_PROCESS_LOCALE,
+      LC_ALL: SAFE_PROCESS_LOCALE,
     };
   }
 }

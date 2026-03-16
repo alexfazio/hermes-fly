@@ -5,6 +5,7 @@ export interface DeployConfig {
   volumeSize: number;
   apiKey: string;
   model: string;
+  reasoningEffort?: string;
   channel: "stable" | "preview" | "edge";
   hermesRef: string;
   botToken: string;

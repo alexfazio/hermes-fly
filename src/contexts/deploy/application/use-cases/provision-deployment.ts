@@ -37,6 +37,9 @@ export class ProvisionDeploymentUseCase {
       HERMES_AGENT_REF: config.hermesRef,
       HERMES_DEPLOY_CHANNEL: config.channel
     };
+    if (config.reasoningEffort) {
+      secrets.HERMES_REASONING_EFFORT = config.reasoningEffort;
+    }
     if (config.botToken) {
       secrets.TELEGRAM_BOT_TOKEN = config.botToken;
     }
