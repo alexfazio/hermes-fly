@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 
 import { resolveApp } from "../../src/commands/resolve-app.ts";
 
-// Parity tests matching Bash lib/config.sh:235-264 behavior
+// Parity tests matching original Bash config module resolve-app behavior
 
 describe("resolve-app parity - explicit -a flag", () => {
   it("-a APP returns the explicit app name", async () => {

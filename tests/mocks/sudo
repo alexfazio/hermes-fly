@@ -1,5 +1,0 @@
-#!/usr/bin/env bash
-# Mock sudo — just pass through to the actual command
-# This allows testing sudo-based commands without requiring authentication
-
-exec "$@"

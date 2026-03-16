@@ -12,7 +12,6 @@ teardown() {
 
 @test "common-setup loads and sets PROJECT_ROOT" {
   [[ -n "${PROJECT_ROOT}" ]]
-  [[ -d "${PROJECT_ROOT}/lib" ]]
   [[ -d "${PROJECT_ROOT}/templates" ]]
 }
 
@@ -27,36 +26,6 @@ teardown() {
   run fly auth whoami
   assert_failure
   assert_output --partial "not logged in"
-}
-
-@test "lib/ui.sh exits 1 when executed directly" {
-  run bash "${PROJECT_ROOT}/lib/ui.sh"
-  assert_failure
-  assert_output --partial "source this file"
-}
-
-@test "lib/fly-helpers.sh exits 1 when executed directly" {
-  run bash "${PROJECT_ROOT}/lib/fly-helpers.sh"
-  assert_failure
-  assert_output --partial "source this file"
-}
-
-@test "lib/docker-helpers.sh exits 1 when executed directly" {
-  run bash "${PROJECT_ROOT}/lib/docker-helpers.sh"
-  assert_failure
-  assert_output --partial "source this file"
-}
-
-@test "lib/config.sh exits 1 when executed directly" {
-  run bash "${PROJECT_ROOT}/lib/config.sh"
-  assert_failure
-  assert_output --partial "source this file"
-}
-
-@test "lib/deploy.sh exits 1 when executed directly" {
-  run bash "${PROJECT_ROOT}/lib/deploy.sh"
-  assert_failure
-  assert_output --partial "source this file"
 }
 
 @test "templates/Dockerfile.template contains HERMES_VERSION placeholder" {
@@ -231,14 +200,6 @@ teardown() {
   assert_output --partial "HERMES_REASONING_EFFORT"
 }
 
-# --- lib/reasoning.sh module guard ---
-
-@test "lib/reasoning.sh exits 1 when executed directly" {
-  run bash "${PROJECT_ROOT}/lib/reasoning.sh"
-  assert_failure
-  assert_output --partial "source this file"
-}
-
 # --- PR-04: Runtime provenance manifest ---
 
 @test "entrypoint.sh writes deploy-manifest.json on boot (PR-04)" {
@@ -306,36 +267,6 @@ teardown() {
   run grep -A 3 "Write deploy provenance manifest" "${PROJECT_ROOT}/templates/entrypoint.sh"
   assert_success
   assert_output --partial "python3"
-}
-
-# ==========================================================================
-# PR-05: Function existence checks
-# ==========================================================================
-
-@test "deploy_resolve_channel function exists in lib/deploy.sh (PR-05)" {
-  source "${PROJECT_ROOT}/lib/ui.sh"
-  source "${PROJECT_ROOT}/lib/fly-helpers.sh"
-  source "${PROJECT_ROOT}/lib/docker-helpers.sh"
-  source "${PROJECT_ROOT}/lib/messaging.sh"
-  source "${PROJECT_ROOT}/lib/config.sh"
-  source "${PROJECT_ROOT}/lib/status.sh"
-  source "${PROJECT_ROOT}/lib/reasoning.sh"
-  source "${PROJECT_ROOT}/lib/deploy.sh"
-  declare -f deploy_resolve_channel >/dev/null 2>&1
-}
-
-@test "doctor_load_deploy_summary function exists in lib/doctor.sh (PR-05)" {
-  source "${PROJECT_ROOT}/lib/ui.sh"
-  source "${PROJECT_ROOT}/lib/fly-helpers.sh"
-  source "${PROJECT_ROOT}/lib/doctor.sh"
-  declare -f doctor_load_deploy_summary >/dev/null 2>&1
-}
-
-@test "doctor_check_drift function exists in lib/doctor.sh (PR-05)" {
-  source "${PROJECT_ROOT}/lib/ui.sh"
-  source "${PROJECT_ROOT}/lib/fly-helpers.sh"
-  source "${PROJECT_ROOT}/lib/doctor.sh"
-  declare -f doctor_check_drift >/dev/null 2>&1
 }
 
 @test "hermes-fly deploy --help mentions --channel (PR-05)" {

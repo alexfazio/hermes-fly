@@ -1,5 +1,0 @@
-version|version
-help|help
-list|list
-status|status -a test-app
-logs|logs -a test-app

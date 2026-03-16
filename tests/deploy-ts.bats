@@ -47,6 +47,7 @@ teardown() {
     NODE_DIR="$(dirname "$(command -v node)")"
     PATH="${NODE_DIR}:/usr/bin:/bin" \
       HERMES_FLY_CONFIG_DIR="${HERMES_FLY_CONFIG_DIR}" \
+      OPENROUTER_API_KEY="sk-test-dummy" \
       node dist/cli.js deploy --no-auto-install 2>&1
   '
   assert_failure

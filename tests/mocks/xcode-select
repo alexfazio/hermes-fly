@@ -1,9 +1,0 @@
-#!/usr/bin/env bash
-# Mock xcode-select — controlled by MOCK_XCODE_SELECT_FAIL env var
-
-if [[ "${MOCK_XCODE_SELECT_FAIL:-false}" == "true" ]]; then
-  echo "xcode-select: error: tool not found" >&2
-  exit 1
-fi
-
-echo "xcode-select: installed"

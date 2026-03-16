@@ -10,20 +10,12 @@ module.exports = {
       to: { path: "^src/contexts/[^/]+/(infrastructure|presentation)/" }
     },
     {
-      name: "no-domain-to-legacy",
-      severity: "error",
-      comment: "Domain modules cannot import legacy bridge/runtime modules.",
-      from: { path: "^src/contexts/[^/]+/domain/" },
-      to: { path: "^src/legacy/" }
-    },
-    {
-      name: "only-bash-bridge-can-import-child-process",
+      name: "only-process-adapter-can-import-child-process",
       severity: "error",
       comment:
-        "Only bash-bridge and process adapter may use child_process directly.",
+        "Only the process adapter may use child_process directly.",
       from: {
-        pathNot:
-          "^(src/legacy/bash-bridge\\.ts|src/adapters/process\\.ts)$"
+        pathNot: "^src/adapters/process\\.ts$"
       },
       to: { path: "^(node:)?child_process$" }
     }
