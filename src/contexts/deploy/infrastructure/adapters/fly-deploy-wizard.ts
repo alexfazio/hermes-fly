@@ -210,6 +210,9 @@ const STATIC_MODEL_OPTIONS: ModelOption[] = [
 ];
 
 const PROVIDER_ORDER = ["anthropic", "openai", "google", "meta-llama", "mistralai"];
+const HERMES_AGENT_DEFAULT_REF = "8eefbef91cd715cfe410bba8c13cfab4eb3040df";
+const HERMES_AGENT_PREVIEW_REF = HERMES_AGENT_DEFAULT_REF;
+const HERMES_AGENT_EDGE_REF = "main";
 const STATIC_REASONING_POLICIES = new Map<string, ReasoningPolicy>([
   ["gpt-5", { allowedEfforts: ["low", "medium", "high"], defaultEffort: "medium" }],
   ["gpt-5-pro", { allowedEfforts: ["high"], defaultEffort: "high" }]
@@ -338,7 +341,7 @@ export class FlyDeployWizard implements DeployWizardPort {
       allowAllUsers: env.GATEWAY_ALLOW_ALL_USERS,
       homeChannel: env.TELEGRAM_HOME_CHANNEL,
     });
-    const hermesRef = (env.HERMES_FLY_VERSION ?? "latest").trim() || "latest";
+    const hermesRef = this.resolveHermesAgentRef(opts.channel);
 
     const intent = DeploymentIntent.create({
       appName,
@@ -503,6 +506,22 @@ export class FlyDeployWizard implements DeployWizardPort {
       } catch (error) {
         this.prompts.write(`${error instanceof Error ? error.message : "Deployment name is invalid."}\n`);
       }
+    }
+  }
+
+  private resolveHermesAgentRef(channel: "stable" | "preview" | "edge"): string {
+    const override = (this.env.HERMES_AGENT_REF ?? "").trim();
+    if (override.length > 0) {
+      return override;
+    }
+
+    switch (channel) {
+      case "edge":
+        return HERMES_AGENT_EDGE_REF;
+      case "preview":
+        return HERMES_AGENT_PREVIEW_REF;
+      default:
+        return HERMES_AGENT_DEFAULT_REF;
     }
   }
 

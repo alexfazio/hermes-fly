@@ -1112,6 +1112,32 @@ describe("FlyDeployWizard.collectConfig", () => {
     assert.match(guidedCopy, /Which Anthropic model should your agent use/);
   });
 
+  it("uses the pinned Hermes Agent ref for stable deployments", async () => {
+    const prompts = makePromptPort([], { interactive: false });
+    const wizard = new FlyDeployWizard({
+      HERMES_FLY_ORG: "personal",
+      OPENROUTER_API_KEY: "sk-test",
+      HERMES_FLY_MODEL: "anthropic/claude-3-5-sonnet"
+    }, { prompts });
+
+    const config = await wizard.collectConfig({ channel: "stable" });
+
+    assert.equal(config.hermesRef, "8eefbef91cd715cfe410bba8c13cfab4eb3040df");
+  });
+
+  it("uses the moving main ref only for edge deployments", async () => {
+    const prompts = makePromptPort([], { interactive: false });
+    const wizard = new FlyDeployWizard({
+      HERMES_FLY_ORG: "personal",
+      OPENROUTER_API_KEY: "sk-test",
+      HERMES_FLY_MODEL: "anthropic/claude-3-5-sonnet"
+    }, { prompts });
+
+    const config = await wizard.collectConfig({ channel: "edge" });
+
+    assert.equal(config.hermesRef, "main");
+  });
+
   it("fails in non-interactive mode when OPENROUTER_API_KEY is missing", async () => {
     const prompts = makePromptPort([], { interactive: false });
     const wizard = new FlyDeployWizard({ HERMES_FLY_ORG: "personal" }, { prompts });

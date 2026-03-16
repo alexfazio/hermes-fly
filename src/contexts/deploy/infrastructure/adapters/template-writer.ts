@@ -1,30 +1,71 @@
 import type { DeployConfig } from "../../application/ports/deploy-wizard.port.js";
 
+const DEFAULT_VM_MEMORY_BY_SIZE: Record<string, string> = {
+  "shared-cpu-1x": "256",
+  "shared-cpu-2x": "512",
+  "performance-1x": "2048",
+  "performance-2x": "4096"
+};
+
 export class TemplateWriter {
   async createBuildContext(config: DeployConfig, buildDir: string): Promise<void> {
-    const { writeFile, mkdir } = await import("node:fs/promises");
-    const { join } = await import("node:path");
+    const { copyFile, mkdir, readFile, writeFile } = await import("node:fs/promises");
+    const { dirname, join } = await import("node:path");
+    const { fileURLToPath } = await import("node:url");
 
     await mkdir(buildDir, { recursive: true });
 
-    const dockerfile = `FROM ghcr.io/anthropics/hermes-agent:${config.hermesRef}
-ENV HERMES_DEPLOY_CHANNEL=${config.channel}
-`;
+    const templateDir = join(dirname(fileURLToPath(import.meta.url)), "../../../../../templates");
+    const dockerfileTemplate = await readFile(join(templateDir, "Dockerfile.template"), "utf8");
+    const flyTomlTemplate = await readFile(join(templateDir, "fly.toml.template"), "utf8");
+    const entrypointTemplate = join(templateDir, "entrypoint.sh");
+    const compatPolicy = await this.readCompatibilityPolicyVersion();
+    const vmMemory = this.resolveVmMemory(config.vmSize);
+
+    const dockerfile = this.replaceAll(dockerfileTemplate, {
+      HERMES_VERSION: config.hermesRef,
+      HERMES_CHANNEL: config.channel,
+      HERMES_COMPAT_POLICY: compatPolicy
+    });
     await writeFile(join(buildDir, "Dockerfile"), dockerfile, "utf8");
 
-    const flyToml = `app = "${config.appName}"
-primary_region = "${config.region}"
-
-[build]
-  dockerfile = "Dockerfile"
-
-[vm]
-  size = "${config.vmSize}"
-
-[mounts]
-  source = "hermes_data"
-  destination = "/data"
-`;
+    const flyToml = this.replaceAll(flyTomlTemplate, {
+      APP_NAME: config.appName,
+      REGION: config.region,
+      VM_SIZE: config.vmSize,
+      VM_MEMORY: vmMemory,
+      VOLUME_NAME: "hermes_data",
+      VOLUME_SIZE: String(config.volumeSize)
+    });
     await writeFile(join(buildDir, "fly.toml"), flyToml, "utf8");
+    await copyFile(entrypointTemplate, join(buildDir, "entrypoint.sh"));
+  }
+
+  private replaceAll(template: string, replacements: Record<string, string>): string {
+    let rendered = template;
+    for (const [key, value] of Object.entries(replacements)) {
+      rendered = rendered.replaceAll(`{{${key}}}`, value);
+    }
+    return rendered;
+  }
+
+  private resolveVmMemory(vmSize: string): string {
+    return DEFAULT_VM_MEMORY_BY_SIZE[vmSize] ?? "512";
+  }
+
+  private async readCompatibilityPolicyVersion(): Promise<string> {
+    const { readFile } = await import("node:fs/promises");
+    const { dirname, join } = await import("node:path");
+    const { fileURLToPath } = await import("node:url");
+
+    const snapshotPath = join(dirname(fileURLToPath(import.meta.url)), "../../../../../data/reasoning-snapshot.json");
+    try {
+      const raw = await readFile(snapshotPath, "utf8");
+      const parsed = JSON.parse(raw) as { policy_version?: unknown };
+      const value = String(parsed.policy_version ?? "").trim();
+      return value.length > 0 ? value : "unknown";
+    } catch {
+      return "unknown";
+    }
   }
 }
