@@ -98,13 +98,17 @@ teardown() {
 
 @test "hermes-fly deploy --no-auto-install skips install when fly not on PATH" {
   run bash -c '
-    # Keep node but strip fly from PATH
     NODE_DIR="$(dirname "$(command -v node)")"
-    OPENROUTER_API_KEY=test-key PATH="${NODE_DIR}:/usr/bin:/bin" \
+    tmp_no_fly="$(mktemp -d)"
+    trap "rm -rf \"${tmp_no_fly}\"" EXIT
+    printf "#!/usr/bin/env bash\nif [[ \"${1:-}\" == \"fly\" ]]; then exit 1; fi\nexec /usr/bin/which \"$@\"\n" > "${tmp_no_fly}/which"
+    chmod +x "${tmp_no_fly}/which"
+    OPENROUTER_API_KEY=test-key PATH="${tmp_no_fly}:${NODE_DIR}:/usr/bin:/bin" \
       "${PROJECT_ROOT}/hermes-fly" deploy --no-auto-install 2>&1
   '
   assert_failure
   assert_output --partial "auto-install disabled"
+  refute_output --partial "Not authenticated"
 }
 
 # ==========================================================================
@@ -118,43 +122,55 @@ teardown() {
 }
 
 @test "hermes-fly deploy --channel invalid falls back to stable (PR-05)" {
-  # TS runtime normalizes invalid channel silently; --no-auto-install with no fly gives expected error
   run bash -c '
     NODE_DIR="$(dirname "$(command -v node)")"
-    OPENROUTER_API_KEY=test-key PATH="${NODE_DIR}:/usr/bin:/bin" \
+    tmp_no_fly="$(mktemp -d)"
+    trap "rm -rf \"${tmp_no_fly}\"" EXIT
+    printf "#!/usr/bin/env bash\nif [[ \"${1:-}\" == \"fly\" ]]; then exit 1; fi\nexec /usr/bin/which \"$@\"\n" > "${tmp_no_fly}/which"
+    chmod +x "${tmp_no_fly}/which"
+    OPENROUTER_API_KEY=test-key PATH="${tmp_no_fly}:${NODE_DIR}:/usr/bin:/bin" \
       "${PROJECT_ROOT}/hermes-fly" deploy --channel badvalue --no-auto-install 2>&1
   '
   assert_failure
   assert_output --partial "auto-install disabled"
   refute_output --partial "Unknown option"
   refute_output --partial "Unknown command"
+  refute_output --partial "Not authenticated"
 }
 
 @test "hermes-fly deploy --channel preview uses runtime path without parse errors (PR-05)" {
-  # TS CLI accepts --channel preview and reaches runtime execution path
   run bash -c '
     NODE_DIR="$(dirname "$(command -v node)")"
-    OPENROUTER_API_KEY=test-key PATH="${NODE_DIR}:/usr/bin:/bin" \
+    tmp_no_fly="$(mktemp -d)"
+    trap "rm -rf \"${tmp_no_fly}\"" EXIT
+    printf "#!/usr/bin/env bash\nif [[ \"${1:-}\" == \"fly\" ]]; then exit 1; fi\nexec /usr/bin/which \"$@\"\n" > "${tmp_no_fly}/which"
+    chmod +x "${tmp_no_fly}/which"
+    OPENROUTER_API_KEY=test-key PATH="${tmp_no_fly}:${NODE_DIR}:/usr/bin:/bin" \
       "${PROJECT_ROOT}/hermes-fly" deploy --channel preview --no-auto-install 2>&1
   '
   assert_failure
   assert_output --partial "auto-install disabled"
   refute_output --partial "Unknown option"
   refute_output --partial "Unknown command"
+  refute_output --partial "Not authenticated"
 }
 
 @test "channel end-to-end matrix resolves expected refs for stable preview edge (PR-05)" {
-  # All channel values invoke the runtime deploy path without parse errors.
   local node_dir
   node_dir="$(dirname "$(command -v node)")"
   for ch in stable preview edge; do
     run bash -c "
-      OPENROUTER_API_KEY=test-key PATH=\"${node_dir}:/usr/bin:/bin\" \
+      tmp_no_fly=\"\$(mktemp -d)\"
+      trap \"rm -rf \\\"\${tmp_no_fly}\\\"\" EXIT
+      printf '#!/usr/bin/env bash\nif [[ \"\${1:-}\" == \"fly\" ]]; then exit 1; fi\nexec /usr/bin/which \"\$@\"\n' > \"\${tmp_no_fly}/which\"
+      chmod +x \"\${tmp_no_fly}/which\"
+      OPENROUTER_API_KEY=test-key PATH=\"\${tmp_no_fly}:${node_dir}:/usr/bin:/bin\" \
         \"${PROJECT_ROOT}/hermes-fly\" deploy --channel ${ch} --no-auto-install 2>&1
     "
     assert_failure
     assert_output --partial "auto-install disabled"
     refute_output --partial "Unknown option"
     refute_output --partial "Unknown command"
+    refute_output --partial "Not authenticated"
   done
 }
