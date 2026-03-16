@@ -1,14 +1,20 @@
-#!/usr/bin/env bash
-set -euo pipefail
+#!/bin/sh
+set -eu
 
-# Resolve symlinks so dist/ is found relative to the real file location
-_self="${BASH_SOURCE[0]}"
-while [[ -L "$_self" ]]; do
-  _dir="$(cd "$(dirname "$_self")" && pwd)"
-  _self="$(readlink "$_self")"
-  [[ "$_self" != /* ]] && _self="$_dir/$_self"
+# Resolve symlinks so dist/ is found relative to the real file location.
+_self=$0
+while [ -L "$_self" ]; do
+  _dir=$(CDPATH= cd -- "$(dirname -- "$_self")" && pwd -P)
+  _self=$(readlink "$_self")
+  case "$_self" in
+    /*) ;;
+    *) _self="$_dir/$_self" ;;
+  esac
 done
-SCRIPT_DIR="$(cd "$(dirname "$_self")" && pwd)"
+SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$_self")" && pwd -P)
 unset _self _dir
+unset BASH_ENV ENV
+export LANG=C
+export LC_ALL=C
 
 exec node "${SCRIPT_DIR}/dist/cli.js" "$@"

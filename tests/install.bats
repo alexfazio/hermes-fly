@@ -16,8 +16,8 @@ write_source_checkout() {
 
   mkdir -p "$dest/templates" "$dest/data"
   cat > "$dest/hermes-fly" <<'MOCK'
-#!/usr/bin/env bash
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+#!/bin/sh
+SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)"
 exec node "${SCRIPT_DIR}/dist/cli.js" "$@"
 MOCK
   chmod +x "$dest/hermes-fly"
@@ -38,6 +38,12 @@ write_mock_npm() {
   cat > "$mock_dir/npm" <<'MOCK'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "${MOCK_NPM_ARGS_FILE}"
+{
+  printf 'BASH_ENV=%s\n' "${BASH_ENV:-}"
+  printf 'ENV=%s\n' "${ENV:-}"
+  printf 'LANG=%s\n' "${LANG:-}"
+  printf 'LC_ALL=%s\n' "${LC_ALL:-}"
+} >> "${MOCK_NPM_ENV_FILE}"
 if [[ "${1:-}" == "ci" ]]; then
   mkdir -p "$PWD/node_modules/commander"
   echo '{"name":"commander"}' > "$PWD/node_modules/commander/package.json"
@@ -195,14 +201,22 @@ MOCK
   local src="${TEST_TEMP_DIR}/src"
   local mock_dir="${TEST_TEMP_DIR}/mock_bin"
   local npm_args_file="${TEST_TEMP_DIR}/npm_args"
+  local npm_env_file="${TEST_TEMP_DIR}/npm_env"
+  local bash_env_file="${TEST_TEMP_DIR}/noop_bash_env"
 
   mkdir -p "$mock_dir"
   write_source_checkout "$src"
   write_mock_npm "$mock_dir"
+  : > "$bash_env_file"
 
   run bash -c '
     export PATH="'"$mock_dir"':${PATH}"
     export MOCK_NPM_ARGS_FILE="'"$npm_args_file"'"
+    export MOCK_NPM_ENV_FILE="'"$npm_env_file"'"
+    export BASH_ENV="'"$bash_env_file"'"
+    export ENV="'"$bash_env_file"'"
+    export LANG="broken-locale"
+    export LC_ALL="broken-locale"
     source "'"${PROJECT_ROOT}"'/scripts/install.sh"
     prepare_runtime_artifacts "'"$src"'"
   '
@@ -216,6 +230,13 @@ MOCK
   assert_output --partial "ci"
   assert_output --partial "run build"
   assert_output --partial "prune --omit=dev"
+
+  run cat "$npm_env_file"
+  assert_success
+  assert_output --partial "BASH_ENV="
+  assert_output --partial "ENV="
+  assert_output --partial "LANG=C"
+  assert_output --partial "LC_ALL=C"
 }
 
 @test "verify_installed_version surfaces launcher failure output" {
@@ -231,6 +252,38 @@ MOCK
   assert_failure
   assert_output --partial "Could not determine installed hermes-fly version"
   assert_output --partial "Cannot find module '/usr/local/lib/hermes-fly/dist/cli.js'"
+}
+
+@test "installed launcher ignores BASH_ENV and executes via a POSIX shell" {
+  local src="${TEST_TEMP_DIR}/src"
+  local dest="${TEST_TEMP_DIR}/hermes-home"
+  local bin="${TEST_TEMP_DIR}/bin"
+  local mock_dir="${TEST_TEMP_DIR}/mock_bin"
+  local node_args_file="${TEST_TEMP_DIR}/node_args"
+  local bash_env_file="${TEST_TEMP_DIR}/bash_env"
+
+  mkdir -p "$src/dist" "$src/templates" "$src/node_modules/commander" "$mock_dir"
+  cp "${PROJECT_ROOT}/hermes-fly" "$src/hermes-fly"
+  chmod +x "$src/hermes-fly"
+  echo '// compiled cli' > "$src/dist/cli.js"
+  echo '{"name":"commander"}' > "$src/node_modules/commander/package.json"
+  echo '{"type":"module"}' > "$src/package.json"
+  echo '{"lockfileVersion":3}' > "$src/package-lock.json"
+  echo 'tpl' > "$src/templates/Dockerfile.template"
+
+  write_mock_node "$mock_dir" "9.9.9"
+  printf 'echo BASH_ENV_LOADED >&2\n' > "$bash_env_file"
+
+  run bash -c '
+    export PATH="'"$mock_dir"':${PATH}"
+    export MOCK_NODE_ARGS_FILE="'"$node_args_file"'"
+    source "'"${PROJECT_ROOT}"'/scripts/install.sh"
+    install_files "'"$src"'" "'"$dest"'" "'"$bin"'"
+    BASH_ENV="'"$bash_env_file"'" "'"$bin"'/hermes-fly" --version 2>&1
+  '
+  assert_success
+  assert_output --partial "hermes-fly 9.9.9"
+  refute_output --partial "BASH_ENV_LOADED"
 }
 
 @test "package_release_asset creates a portable tarball without macOS metadata" {
@@ -577,8 +630,8 @@ if [[ "$1" == "clone" ]]; then
   dest="${@: -1}"
   mkdir -p "$dest"
   cat > "$dest/hermes-fly" <<'INNER'
-#!/usr/bin/env bash
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+#!/bin/sh
+SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)"
 exec node "${SCRIPT_DIR}/dist/cli.js" "$@"
 INNER
   chmod +x "$dest/hermes-fly"

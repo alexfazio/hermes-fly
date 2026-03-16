@@ -8,6 +8,7 @@ REPO="alexfazio/hermes-fly"
 INSTALL_DIR="${HERMES_FLY_INSTALL_DIR:-/usr/local/bin}"
 export HERMES_HOME="${HERMES_FLY_HOME:-/usr/local/lib/hermes-fly}"
 RELEASE_API_URL="${HERMES_FLY_RELEASE_API_URL:-https://api.github.com/repos/${REPO}/releases/latest}"
+SAFE_PROCESS_LOCALE="C"
 
 detect_platform() {
   local os
@@ -142,6 +143,10 @@ require_command() {
   return 1
 }
 
+run_with_sanitized_env() {
+  env -u BASH_ENV -u ENV LANG="$SAFE_PROCESS_LOCALE" LC_ALL="$SAFE_PROCESS_LOCALE" "$@"
+}
+
 release_asset_name() {
   local install_ref="$1"
   printf 'hermes-fly-%s.tar.gz\n' "$install_ref"
@@ -217,9 +222,9 @@ prepare_runtime_artifacts() {
   echo "Preparing hermes-fly runtime dependencies..."
   if ! (
     cd "$src_dir"
-    npm ci
-    npm run build
-    npm prune --omit=dev
+    run_with_sanitized_env npm ci
+    run_with_sanitized_env npm run build
+    run_with_sanitized_env npm prune --omit=dev
   ); then
     echo "Error: Failed to prepare hermes-fly runtime artifacts" >&2
     return 1
