@@ -48,10 +48,10 @@ describe("FlyDeployRunner", () => {
     assert.equal(result.ok, true);
     assert.equal(runner.calls.length, 2);
     assert.deepEqual(runner.calls[0]?.args, [
-      "volumes", "create", "hermes_data", "-a", "test-app", "--region", "fra", "--size", "5", "--json"
+      "volumes", "create", "hermes_data", "-a", "test-app", "--region", "fra", "--size", "5", "--json", "--yes"
     ]);
     assert.deepEqual(runner.calls[1]?.args, [
-      "volumes", "create", "hermes_data", "-a", "test-app", "-r", "fra", "--size", "5", "--json"
+      "volumes", "create", "hermes_data", "-a", "test-app", "-r", "fra", "--size", "5", "--json", "--yes"
     ]);
   });
 

@@ -21,13 +21,13 @@ export class FlyDeployRunner implements DeployRunnerPort {
 
   async createVolume(appName: string, region: string, sizeGb: number): Promise<{ ok: boolean; error?: string }> {
     const primaryArgs = [
-      "volumes", "create", "hermes_data", "-a", appName, "--region", region, "--size", String(sizeGb), "--json"
+      "volumes", "create", "hermes_data", "-a", appName, "--region", region, "--size", String(sizeGb), "--json", "--yes"
     ];
     let result = await this.runner.run("fly", primaryArgs, { env: this.env });
     if (result.exitCode !== 0 && this.isUnknownLongRegionFlag(result.stderr || result.stdout)) {
       result = await this.runner.run(
         "fly",
-        ["volumes", "create", "hermes_data", "-a", appName, "-r", region, "--size", String(sizeGb), "--json"],
+        ["volumes", "create", "hermes_data", "-a", appName, "-r", region, "--size", String(sizeGb), "--json", "--yes"],
         { env: this.env }
       );
     }
