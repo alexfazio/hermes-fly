@@ -1,9 +1,15 @@
 import assert from "node:assert/strict";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { PassThrough, Writable } from "node:stream";
 import { describe, it } from "node:test";
 
-import { RunDeployWizardUseCase } from "../../src/contexts/deploy/application/use-cases/run-deploy-wizard.ts";
-import type { DeployWizardPort, DeployConfig } from "../../src/contexts/deploy/application/ports/deploy-wizard.port.ts";
 import type { ForegroundProcessRunner } from "../../src/adapters/process.ts";
+import { RunDeployWizardUseCase } from "../../src/contexts/deploy/application/use-cases/run-deploy-wizard.ts";
+import type { DeployConfig, DeployWizardPort } from "../../src/contexts/deploy/application/ports/deploy-wizard.port.ts";
+import { ReadlineDeployPrompts } from "../../src/contexts/deploy/infrastructure/adapters/deploy-prompts.ts";
+import { FlyDeployWizard } from "../../src/contexts/deploy/infrastructure/adapters/fly-deploy-wizard.ts";
 import type { DeployPromptPort } from "../../src/contexts/deploy/infrastructure/adapters/deploy-prompts.ts";
 
 function makeIO() {
@@ -39,6 +45,53 @@ function makePort(overrides: Partial<DeployWizardPort> = {}): DeployWizardPort {
     postDeployCheck: async () => ({ ok: true }),
     saveApp: async () => {},
     ...overrides
+  };
+}
+
+function makeProcessRunner(
+  impl: (command: string, args: string[]) => Promise<{ stdout?: string; stderr?: string; exitCode: number }>,
+  foregroundImpl: (command: string, args: string[]) => Promise<{ exitCode: number }> = async () => ({ exitCode: 0 })
+): ForegroundProcessRunner {
+  return {
+    run: async (command, args) => {
+      const result = await impl(command, args);
+      return {
+        stdout: result.stdout ?? "",
+        stderr: result.stderr ?? "",
+        exitCode: result.exitCode
+      };
+    },
+    runStreaming: async () => ({ exitCode: 0 }),
+    runForeground: async (command, args) => foregroundImpl(command, args)
+  };
+}
+
+function makePromptPort(
+  answers: string[],
+  opts: { interactive?: boolean } = {}
+): DeployPromptPort & { asked: string[]; secretAsked: string[]; pauses: string[]; writes: string[] } {
+  const asked: string[] = [];
+  const secretAsked: string[] = [];
+  const pauses: string[] = [];
+  const writes: string[] = [];
+  return {
+    asked,
+    secretAsked,
+    pauses,
+    writes,
+    isInteractive: () => opts.interactive ?? true,
+    write: (message: string) => { writes.push(message); },
+    ask: async (message: string) => {
+      asked.push(message);
+      return answers.shift() ?? "";
+    },
+    askSecret: async (message: string) => {
+      secretAsked.push(message);
+      return answers.shift() ?? "";
+    },
+    pause: async (message: string) => {
+      pauses.push(message);
+    }
   };
 }
 
@@ -168,6 +221,17 @@ describe("RunDeployWizardUseCase - config collection failure", () => {
     await uc.execute({ autoInstall: true, channel: "stable" }, io.stderr);
     assert.equal(provisioned.length, 0, "provisioning must not run when config collection fails");
   });
+
+  it("prints a friendly cancellation message when the guided setup is cancelled", async () => {
+    const io = makeIO();
+    const uc = new RunDeployWizardUseCase(makePort({
+      collectConfig: async () => {
+        throw new Error("Deployment cancelled.");
+      }
+    }));
+    await uc.execute({ autoInstall: true, channel: "stable" }, io.stderr);
+    assert.equal(io.text.trim(), "Deployment cancelled.");
+  });
 });
 
 describe("RunDeployWizardUseCase - channel resolution", () => {
@@ -198,50 +262,6 @@ describe("RunDeployWizardUseCase - channel resolution", () => {
   });
 });
 
-import { FlyDeployWizard } from "../../src/contexts/deploy/infrastructure/adapters/fly-deploy-wizard.ts";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-
-function makeProcessRunner(
-  impl: (command: string, args: string[]) => Promise<{ stdout?: string; stderr?: string; exitCode: number }>,
-  foregroundImpl: (command: string, args: string[]) => Promise<{ exitCode: number }> = async () => ({ exitCode: 0 })
-): ForegroundProcessRunner {
-  return {
-    run: async (command, args) => {
-      const result = await impl(command, args);
-      return {
-        stdout: result.stdout ?? "",
-        stderr: result.stderr ?? "",
-        exitCode: result.exitCode
-      };
-    },
-    runStreaming: async () => ({ exitCode: 0 }),
-    runForeground: async (command, args) => foregroundImpl(command, args)
-  };
-}
-
-function makePromptPort(
-  answers: string[],
-  opts: { interactive?: boolean } = {}
-): DeployPromptPort & { asked: string[]; pauses: string[] } {
-  const asked: string[] = [];
-  const pauses: string[] = [];
-  return {
-    asked,
-    pauses,
-    isInteractive: () => opts.interactive ?? true,
-    write: (_message: string) => {},
-    ask: async (message: string) => {
-      asked.push(message);
-      return answers.shift() ?? "";
-    },
-    pause: async (message: string) => {
-      pauses.push(message);
-    }
-  };
-}
-
 describe("FlyDeployWizard.checkPrerequisites", () => {
   it("does not require OPENROUTER_API_KEY before entering the wizard", async () => {
     const dir = await mkdtemp(join(tmpdir(), "fly-check-"));
@@ -263,7 +283,6 @@ describe("FlyDeployWizard.checkPrerequisites", () => {
 
     try {
       const result = await wizard.checkPrerequisites({ autoInstall: true });
-
       assert.deepEqual(result, { ok: true });
     } finally {
       await rm(dir, { recursive: true, force: true });
@@ -278,31 +297,33 @@ describe("FlyDeployWizard.checkPrerequisites", () => {
       HOME: homeDir,
       PATH: `${pathDir}:/usr/bin:/bin`,
       HERMES_FLY_DEFAULT_APP_NAME: "hermes-agent-test",
-      HERMES_FLY_FLYCTL_INSTALL_CMD: `mkdir -p "${homeDir}/.fly/bin" && cat > "${homeDir}/.fly/bin/fly" <<'EOF'
+      HERMES_FLY_FLYCTL_INSTALL_CMD: `mkdir -p "${homeDir}/.fly/bin" && cat > "${homeDir}/.fly/bin/fly" <<'EOF2'
 #!/usr/bin/env bash
 if [[ "\${1:-}" == "version" ]]; then
   echo "fly v0.3.52 linux/amd64"
   exit 0
 fi
 exit 0
-EOF
+EOF2
 chmod +x "${homeDir}/.fly/bin/fly"`
-    });
+    }, { prompts });
 
     try {
       const result = await wizard.checkPrerequisites({ autoInstall: true });
-
       assert.deepEqual(result, { ok: true });
+      assert.match(prompts.writes.join(""), /Installing it now|installed successfully/);
     } finally {
       await rm(homeDir, { recursive: true, force: true });
       await rm(pathDir, { recursive: true, force: true });
     }
   });
 
-  it("returns an install error when fly auto-install fails", async () => {
+  it("uses a non-login shell for automatic fly installation", async () => {
     const pathDir = await mkdtemp(join(tmpdir(), "fly-missing-"));
+    const calls: Array<{ command: string; args: string[] }> = [];
     const runner = makeProcessRunner(async (command, args) => {
-      if (command === "bash" && args[0] === "-lc") {
+      calls.push({ command, args });
+      if (command === "bash") {
         return { exitCode: 1, stderr: "permission denied" };
       }
       throw new Error(`unexpected call: ${command} ${args.join(" ")}`);
@@ -320,6 +341,7 @@ chmod +x "${homeDir}/.fly/bin/fly"`
       assert.equal(result.ok, false);
       assert.equal(result.missing, "fly");
       assert.match(result.error ?? "", /permission denied/);
+      assert.deepEqual(calls, [{ command: "bash", args: ["-c", "echo install-fly"] }]);
     } finally {
       await rm(pathDir, { recursive: true, force: true });
     }
@@ -353,7 +375,7 @@ describe("FlyDeployWizard.checkAuth", () => {
       { command: "fly", args: ["auth", "login"] },
       { command: "fly", args: ["auth", "whoami"] }
     ]);
-    assert.equal(prompts.pauses.length, 0);
+    assert.match(prompts.writes.join(""), /browser window may open/i);
   });
 
   it("returns a targeted error when interactive fly auth login fails", async () => {
@@ -384,49 +406,91 @@ describe("FlyDeployWizard.checkAuth", () => {
 });
 
 describe("FlyDeployWizard.collectConfig", () => {
-  it("suggests a unique editable deployment name by default", async () => {
+  it("suggests a unique editable deployment name using username and uid", async () => {
     const prompts = makePromptPort([
-      "custom-app",
-      "ord",
-      "shared-cpu-2x",
-      "5",
+      "",
+      "",
+      "",
+      "",
+      "",
       "sk-live",
-      "anthropic/claude-sonnet-4-20250514",
+      "",
+      "",
       ""
     ], { interactive: true });
+    const runner = makeProcessRunner(async () => ({ exitCode: 1 }));
     const wizard = new FlyDeployWizard({
-      UID: "1001"
-    }, { prompts });
+      UID: "1001",
+      USER: "sprite"
+    }, { prompts, process: runner });
 
     const config = await wizard.collectConfig({ channel: "stable" });
 
-    assert.equal(config.appName, "custom-app");
-    assert.match(prompts.asked[0] ?? "", /Deployment name \[hermes-agent-1001-[0-9a-f]{4}\]: /);
+    assert.match(config.appName, /^hermes-sprite-1001-[0-9a-f]{4}$/);
+    assert.match(prompts.asked[0] ?? "", /Deployment name \[hermes-sprite-1001-[0-9a-f]{4}\]: /);
   });
 
-  it("prompts for missing deploy values in interactive mode", async () => {
+  it("uses guided menus and friendly copy in interactive mode", async () => {
     const prompts = makePromptPort([
       "my-app",
-      "ord",
-      "shared-cpu-2x",
-      "5",
+      "2",
+      "2",
+      "2",
+      "3",
       "sk-live",
-      "anthropic/claude-sonnet-4-20250514",
-      ""
+      "3",
+      "1",
+      "123:abc",
+      "y"
     ], { interactive: true });
-    const wizard = new FlyDeployWizard({}, { prompts });
+    const runner = makeProcessRunner(async (command, args) => {
+      if (command === "fly" && args[0] === "platform" && args[1] === "regions") {
+        return {
+          exitCode: 0,
+          stdout: JSON.stringify([
+            { code: "iad", name: "Ashburn, Virginia (US)" },
+            { code: "fra", name: "Frankfurt, Germany" },
+            { code: "lhr", name: "London, United Kingdom" }
+          ])
+        };
+      }
+      if (command === "fly" && args[0] === "platform" && args[1] === "vm-sizes") {
+        return {
+          exitCode: 0,
+          stdout: JSON.stringify([
+            { name: "shared-cpu-1x", memory_mb: 256 },
+            { name: "shared-cpu-2x", memory_mb: 512 },
+            { name: "performance-1x", memory_mb: 2048 }
+          ])
+        };
+      }
+      return { exitCode: 1 };
+    });
+    const wizard = new FlyDeployWizard({}, { prompts, process: runner });
 
     const config = await wizard.collectConfig({ channel: "preview" });
 
     assert.equal(config.appName, "my-app");
-    assert.equal(config.region, "ord");
+    assert.equal(config.region, "lhr");
     assert.equal(config.vmSize, "shared-cpu-2x");
-    assert.equal(config.volumeSize, 5);
+    assert.equal(config.volumeSize, 10);
     assert.equal(config.apiKey, "sk-live");
-    assert.equal(config.model, "anthropic/claude-sonnet-4-20250514");
+    assert.equal(config.model, "openai/gpt-4.1-mini");
+    assert.equal(config.botToken, "123:abc");
     assert.equal(config.channel, "preview");
-    assert.equal(config.botToken, "");
-    assert.ok(prompts.asked.some((q) => q.includes("OpenRouter API key")), prompts.asked.join("\n"));
+    assert.deepEqual(prompts.secretAsked, [
+      "OpenRouter API key (required): ",
+      "Telegram bot token (required): "
+    ]);
+    const guidedCopy = prompts.writes.join("");
+    assert.match(guidedCopy, /Hermes Agent Guided Setup/);
+    assert.match(guidedCopy, /Each deployment needs a unique name on Fly\.io/);
+    assert.match(guidedCopy, /Where are you \(or most of your users\) located/);
+    assert.match(guidedCopy, /How powerful should your agent's server be/);
+    assert.match(guidedCopy, /How much storage should your agent have/);
+    assert.match(guidedCopy, /You can create your openrouter api key here/i);
+    assert.match(guidedCopy, /Do you want to connect Telegram now/);
+    assert.match(guidedCopy, /Review your setup/);
   });
 
   it("fails in non-interactive mode when OPENROUTER_API_KEY is missing", async () => {
@@ -437,6 +501,61 @@ describe("FlyDeployWizard.collectConfig", () => {
       wizard.collectConfig({ channel: "stable" }),
       /OPENROUTER_API_KEY is required in non-interactive mode/
     );
+  });
+
+  it("lets the user cancel after reviewing the summary", async () => {
+    const prompts = makePromptPort([
+      "",
+      "",
+      "",
+      "",
+      "",
+      "sk-live",
+      "",
+      "",
+      "n"
+    ], { interactive: true });
+    const runner = makeProcessRunner(async () => ({ exitCode: 1 }));
+    const wizard = new FlyDeployWizard({ UID: "1001", USER: "sprite" }, { prompts, process: runner });
+
+    await assert.rejects(
+      wizard.collectConfig({ channel: "stable" }),
+      /Deployment cancelled\./
+    );
+  });
+});
+
+describe("ReadlineDeployPrompts.askSecret", () => {
+  it("does not echo the entered secret", async () => {
+    const input = new PassThrough() as PassThrough & NodeJS.ReadStream;
+    const rawModeTransitions: boolean[] = [];
+    Object.assign(input, {
+      isTTY: true,
+      setRawMode: (value: boolean) => {
+        rawModeTransitions.push(value);
+      }
+    });
+
+    const chunks: string[] = [];
+    const output = new Writable({
+      write(chunk, _encoding, callback) {
+        chunks.push(chunk.toString());
+        callback();
+      }
+    }) as Writable & NodeJS.WriteStream;
+    Object.assign(output, { isTTY: true });
+
+    const prompts = new ReadlineDeployPrompts(input, output);
+    const answerPromise = prompts.askSecret("OpenRouter API key (required): ");
+    input.write("sk-hidden");
+    input.write("\n");
+    const answer = await answerPromise;
+
+    assert.equal(answer, "sk-hidden");
+    assert.deepEqual(rawModeTransitions, [true, false]);
+    const written = chunks.join("");
+    assert.match(written, /OpenRouter API key \(required\): /);
+    assert.doesNotMatch(written, /sk-hidden/);
   });
 });
 

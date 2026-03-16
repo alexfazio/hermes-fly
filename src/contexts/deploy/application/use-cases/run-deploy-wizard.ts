@@ -62,7 +62,11 @@ export class RunDeployWizardUseCase {
       config = await this.port.collectConfig({ channel });
     } catch (error) {
       const message = error instanceof Error ? error.message : "failed to collect deploy configuration";
-      stderr.write(`[error] ${message}\n`);
+      if (message === "Deployment cancelled.") {
+        stderr.write(`${message}\n`);
+      } else {
+        stderr.write(`[error] ${message}\n`);
+      }
       return { kind: "failed", error: message };
     }
 

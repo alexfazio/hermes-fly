@@ -77,6 +77,6 @@ teardown() {
       node dist/cli.js deploy 2>&1
   '
   assert_success
-  assert_output --partial "fly CLI installed successfully."
+  assert_output --partial "Fly.io CLI installed successfully."
   refute_output --partial "Missing prerequisite: fly"
 }

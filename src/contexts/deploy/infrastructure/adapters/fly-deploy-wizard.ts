@@ -5,15 +5,120 @@ import { NodeProcessRunner, type ForegroundProcessRunner } from "../../../../ada
 import { DeploymentIntent } from "../../domain/deployment-intent.js";
 import { ReadlineDeployPrompts, type DeployPromptPort } from "./deploy-prompts.js";
 import { randomBytes } from "node:crypto";
+import { constants } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { constants } from "node:fs";
 
-const DEFAULT_APP_NAME_PREFIX = "hermes-agent";
+const DEFAULT_APP_NAME_PREFIX = "hermes";
 const DEFAULT_REGION = "iad";
 const DEFAULT_VM_SIZE = "shared-cpu-1x";
 const DEFAULT_VOLUME_SIZE = 1;
 const DEFAULT_MODEL = "anthropic/claude-3-5-sonnet";
+const DEFAULT_CHANNEL = "stable";
+
+type RegionOption = {
+  code: string;
+  name: string;
+  area: string;
+};
+
+type VmOption = {
+  value: string;
+  tier: string;
+  ramLabel: string;
+  costLabel: string;
+  bestFor: string;
+};
+
+type VolumeOption = {
+  value: number;
+  costLabel: string;
+  bestFor: string;
+};
+
+type ModelOption = {
+  value: string;
+  label: string;
+  bestFor: string;
+};
+
+const STATIC_REGIONS: RegionOption[] = [
+  { code: "iad", name: "Ashburn, Virginia (US)", area: "Americas" },
+  { code: "ord", name: "Chicago, Illinois (US)", area: "Americas" },
+  { code: "dfw", name: "Dallas, Texas (US)", area: "Americas" },
+  { code: "lax", name: "Los Angeles, California (US)", area: "Americas" },
+  { code: "sjc", name: "San Jose, California (US)", area: "Americas" },
+  { code: "ewr", name: "Secaucus, New Jersey (US)", area: "Americas" },
+  { code: "yyz", name: "Toronto, Canada", area: "Americas" },
+  { code: "ams", name: "Amsterdam, Netherlands", area: "Europe" },
+  { code: "fra", name: "Frankfurt, Germany", area: "Europe" },
+  { code: "lhr", name: "London, United Kingdom", area: "Europe" },
+  { code: "cdg", name: "Paris, France", area: "Europe" },
+  { code: "arn", name: "Stockholm, Sweden", area: "Europe" },
+  { code: "bom", name: "Mumbai, India", area: "Asia-Pacific" },
+  { code: "nrt", name: "Tokyo, Japan", area: "Asia-Pacific" },
+  { code: "sin", name: "Singapore, Singapore", area: "Asia-Pacific" },
+  { code: "syd", name: "Sydney, Australia", area: "Oceania" },
+  { code: "gru", name: "Sao Paulo, Brazil", area: "South America" },
+  { code: "jnb", name: "Johannesburg, South Africa", area: "Africa" },
+];
+
+const REGION_AREA_ORDER = ["Americas", "Europe", "Asia-Pacific", "Oceania", "South America", "Africa", "Other"];
+
+const STATIC_VM_OPTIONS: VmOption[] = [
+  {
+    value: "shared-cpu-1x",
+    tier: "Starter",
+    ramLabel: "256 MB",
+    costLabel: "~$2/mo",
+    bestFor: "Trying it out. Lowest cost.",
+  },
+  {
+    value: "shared-cpu-2x",
+    tier: "Standard",
+    ramLabel: "512 MB",
+    costLabel: "~$4/mo",
+    bestFor: "Most users. Better under everyday load.",
+  },
+  {
+    value: "performance-1x",
+    tier: "Pro",
+    ramLabel: "2 GB",
+    costLabel: "~$32/mo",
+    bestFor: "Heavy use or larger agents.",
+  },
+  {
+    value: "performance-2x",
+    tier: "Power",
+    ramLabel: "4 GB",
+    costLabel: "~$64/mo",
+    bestFor: "Sustained heavy workloads.",
+  },
+];
+
+const STATIC_VOLUME_OPTIONS: VolumeOption[] = [
+  { value: 1, costLabel: "~$0.15/mo", bestFor: "Light use and testing" },
+  { value: 5, costLabel: "~$0.75/mo", bestFor: "Most users and everyday chats" },
+  { value: 10, costLabel: "~$1.50/mo", bestFor: "Heavy use and more history" },
+];
+
+const STATIC_MODEL_OPTIONS: ModelOption[] = [
+  {
+    value: "anthropic/claude-3-5-sonnet",
+    label: "Balanced (recommended)",
+    bestFor: "Best default for quality and reliability",
+  },
+  {
+    value: "anthropic/claude-3-5-haiku",
+    label: "Fast and lower cost",
+    bestFor: "Quicker responses at lower cost",
+  },
+  {
+    value: "openai/gpt-4.1-mini",
+    label: "OpenAI fast alternative",
+    bestFor: "Good general-purpose fallback",
+  },
+];
 
 export interface FlyDeployWizardDeps {
   process?: ForegroundProcessRunner;
@@ -57,7 +162,7 @@ export class FlyDeployWizard implements DeployWizardPort {
       return { ok: false, missing: "fly", autoInstallDisabled: true };
     }
 
-    this.prompts.write("fly CLI not found. Attempting automatic installation...\n");
+    this.prompts.write("I need the Fly.io command-line tool to create your deployment. Installing it now...\n");
     const installResult = await this.installFlyCli();
     if (!installResult.ok) {
       return {
@@ -75,7 +180,7 @@ export class FlyDeployWizard implements DeployWizardPort {
       };
     }
 
-    this.prompts.write("fly CLI installed successfully.\n");
+    this.prompts.write("Fly.io CLI installed successfully.\n");
     return { ok: true };
   }
 
@@ -89,7 +194,8 @@ export class FlyDeployWizard implements DeployWizardPort {
       return { ok: false, error: "not authenticated" };
     }
 
-    this.prompts.write("Not authenticated with Fly.io. Launching 'fly auth login' now...\n");
+    this.prompts.write("I need to connect your Fly.io account before deploying. Launching 'fly auth login' now...\n");
+    this.prompts.write("A browser window may open so you can approve the login.\n");
     const loginResult = await this.process.runForeground("fly", ["auth", "login"], { env: this.env });
     if (loginResult.exitCode !== 0) {
       return { ok: false, error: "Fly.io authentication did not complete successfully." };
@@ -114,21 +220,22 @@ export class FlyDeployWizard implements DeployWizardPort {
   async collectConfig(opts: { channel: "stable" | "preview" | "edge" }): Promise<DeployConfig> {
     const env = this.env;
     if (this.prompts.isInteractive()) {
-      this.prompts.write("\nHermes Agent Deploy Configuration\n");
-      this.prompts.write("Press Enter to accept the default shown in brackets.\n\n");
+      this.prompts.write("\nHermes Agent Guided Setup\n");
+      this.prompts.write("I'll walk you through the deployment setup step by step.\n");
+      this.prompts.write("You can press Enter to accept a suggested option whenever one is shown.\n\n");
     }
 
-    const appName = await this.collectTextValue("Deployment name", env.HERMES_FLY_APP_NAME, this.defaultAppName);
-    const region = await this.collectTextValue("Region", env.HERMES_FLY_REGION, DEFAULT_REGION);
-    const vmSize = await this.collectTextValue("VM size", env.HERMES_FLY_VM_SIZE, DEFAULT_VM_SIZE);
+    const appName = await this.collectAppName(env.HERMES_FLY_APP_NAME);
+    const region = await this.collectRegion(env.HERMES_FLY_REGION);
+    const vmSize = await this.collectVmSize(env.HERMES_FLY_VM_SIZE);
     const volumeSize = await this.collectVolumeSize(env.HERMES_FLY_VOLUME_SIZE);
     const apiKey = await this.collectRequiredSecret(
       "OPENROUTER_API_KEY",
       "OpenRouter API key",
       "https://openrouter.ai/settings/keys"
     );
-    const model = await this.collectTextValue("Model", env.HERMES_FLY_MODEL, DEFAULT_MODEL);
-    const botToken = await this.collectOptionalSecret("TELEGRAM_BOT_TOKEN", "Telegram bot token");
+    const model = await this.collectModel(env.HERMES_FLY_MODEL);
+    const botToken = await this.collectTelegramToken(env.TELEGRAM_BOT_TOKEN);
     const hermesRef = (env.HERMES_FLY_VERSION ?? "latest").trim() || "latest";
 
     const intent = DeploymentIntent.create({
@@ -140,7 +247,7 @@ export class FlyDeployWizard implements DeployWizardPort {
       channel: opts.channel
     });
 
-    return {
+    const config: DeployConfig = {
       appName: intent.appName,
       region: intent.region,
       vmSize: intent.vmSize,
@@ -151,6 +258,12 @@ export class FlyDeployWizard implements DeployWizardPort {
       hermesRef,
       botToken,
     };
+
+    if (this.prompts.isInteractive()) {
+      await this.confirmConfig(config);
+    }
+
+    return config;
   }
 
   async createBuildContext(config: DeployConfig): Promise<{ buildDir: string }> {
@@ -214,17 +327,14 @@ export class FlyDeployWizard implements DeployWizardPort {
     const allLines = existing.split(/\r?\n/).filter(l => l.trim() !== "");
     const withoutCurrentApp = allLines.filter(l => !/^current_app:/.test(l));
 
-    // Split at apps: header
     const appsIdx = withoutCurrentApp.findIndex(l => /^apps:$/.test(l.trimEnd()));
     const preLines = appsIdx === -1 ? withoutCurrentApp : withoutCurrentApp.slice(0, appsIdx);
     const appsBodyRaw = appsIdx === -1 ? [] : withoutCurrentApp.slice(appsIdx + 1);
 
-    // Split trailing top-level lines (lines not starting with two spaces)
     const trailingStartIdx = appsBodyRaw.findIndex(l => !/^  /.test(l));
     const appsSectionLines = trailingStartIdx === -1 ? appsBodyRaw : appsBodyRaw.slice(0, trailingStartIdx);
     const trailingTopLevelLines = trailingStartIdx === -1 ? [] : appsBodyRaw.slice(trailingStartIdx);
 
-    // Parse existing entries with normalized names
     const entries: { name: string; lines: string[] }[] = [];
     let current: { name: string; lines: string[] } | null = null;
     for (const line of appsSectionLines) {
@@ -238,7 +348,6 @@ export class FlyDeployWizard implements DeployWizardPort {
     }
     if (current !== null) entries.push(current);
 
-    // Dedup by normalized name, then append updated entry
     const filtered = entries.filter(e => e.name !== appName);
     filtered.push({ name: appName, lines: [`  - name: ${appName}`, `    region: ${region}`] });
 
@@ -252,23 +361,89 @@ export class FlyDeployWizard implements DeployWizardPort {
     await writeFile(configPath, newLines.join("\n") + "\n", "utf8");
   }
 
-  private async collectTextValue(label: string, envValue: string | undefined, fallback: string): Promise<string> {
+  private async collectAppName(envValue: string | undefined): Promise<string> {
+    const preset = envValue?.trim();
+    if (preset && preset.length > 0) {
+      return this.validateAppName(preset);
+    }
+    if (!this.prompts.isInteractive()) {
+      return this.defaultAppName;
+    }
+
+    this.prompts.write("Each deployment needs a unique name on Fly.io.\n");
+    this.prompts.write("This name is only for the server setup. People chatting with your agent will not see it.\n\n");
+    this.prompts.write(`Suggested: ${this.defaultAppName}\n`);
+    this.prompts.write("Press Enter to use it, or type your own.\n\n");
+
+    while (true) {
+      const answer = await this.prompts.ask(`Deployment name [${this.defaultAppName}]: `);
+      const value = answer.length > 0 ? answer : this.defaultAppName;
+      try {
+        return this.validateAppName(value);
+      } catch (error) {
+        this.prompts.write(`${error instanceof Error ? error.message : "Deployment name is invalid."}\n`);
+      }
+    }
+  }
+
+  private async collectRegion(envValue: string | undefined): Promise<string> {
     const preset = envValue?.trim();
     if (preset && preset.length > 0) {
       return preset;
     }
     if (!this.prompts.isInteractive()) {
-      return fallback;
+      return DEFAULT_REGION;
     }
 
-    while (true) {
-      const answer = await this.prompts.ask(`${label} [${fallback}]: `);
-      const value = answer.length > 0 ? answer : fallback;
-      if (value.trim().length > 0) {
-        return value.trim();
-      }
-      this.prompts.write(`${label} cannot be empty.\n`);
+    const regions = await this.fetchRegions();
+    const areaRows = REGION_AREA_ORDER
+      .map((area) => ({ area, options: regions.filter((region) => region.area === area) }))
+      .filter((row) => row.options.length > 0);
+
+    this.prompts.write("Where are you (or most of your users) located?\n");
+    this.prompts.write("Choosing a closer server usually means faster responses.\n\n");
+    this.prompts.write("  #  Area            Locations\n");
+    areaRows.forEach((row, index) => {
+      this.prompts.write(`  ${String(index + 1).padStart(2, " ")}  ${row.area.padEnd(15, " ")} ${String(row.options.length).padStart(2, " ")}\n`);
+    });
+    this.prompts.write("\n");
+
+    const defaultAreaIndex = Math.max(0, areaRows.findIndex((row) => row.options.some((option) => option.code === DEFAULT_REGION)));
+    const selectedArea = areaRows[await this.chooseNumber(`Choose an area [${defaultAreaIndex + 1}]: `, areaRows.length, defaultAreaIndex + 1) - 1];
+
+    this.prompts.write(`\n${selectedArea.area} locations:\n\n`);
+    this.prompts.write("  #  Location                          Code\n");
+    selectedArea.options.forEach((region, index) => {
+      this.prompts.write(`  ${String(index + 1).padStart(2, " ")}  ${region.name.padEnd(32, " ")} ${region.code}\n`);
+    });
+    this.prompts.write("\n");
+
+    const defaultLocationIndex = Math.max(0, selectedArea.options.findIndex((region) => region.code === DEFAULT_REGION));
+    const selectedLocation = selectedArea.options[await this.chooseNumber(`Choose a location [${defaultLocationIndex + 1}]: `, selectedArea.options.length, defaultLocationIndex + 1) - 1];
+    return selectedLocation.code;
+  }
+
+  private async collectVmSize(envValue: string | undefined): Promise<string> {
+    const preset = envValue?.trim();
+    if (preset && preset.length > 0) {
+      return preset;
     }
+    if (!this.prompts.isInteractive()) {
+      return DEFAULT_VM_SIZE;
+    }
+
+    const options = await this.fetchVmOptions();
+    const defaultIndex = Math.max(0, options.findIndex((option) => option.value === DEFAULT_VM_SIZE));
+
+    this.prompts.write("How powerful should your agent's server be?\n\n");
+    this.prompts.write("  #  Tier       Specs           Est. cost  Best for\n");
+    options.forEach((option, index) => {
+      this.prompts.write(`  ${String(index + 1).padStart(2, " ")}  ${option.tier.padEnd(10, " ")} ${option.ramLabel.padEnd(14, " ")} ${option.costLabel.padEnd(10, " ")} ${option.bestFor}\n`);
+    });
+    this.prompts.write("\nPrices are estimates. Check current rates: https://fly.io/calculator\n\n");
+
+    const selected = options[await this.chooseNumber(`Choose a tier [${defaultIndex + 1}]: `, options.length, defaultIndex + 1) - 1];
+    return selected.value;
   }
 
   private async collectVolumeSize(envValue: string | undefined): Promise<number> {
@@ -280,30 +455,33 @@ export class FlyDeployWizard implements DeployWizardPort {
       return DEFAULT_VOLUME_SIZE;
     }
 
-    while (true) {
-      const answer = await this.prompts.ask(`Volume size in GB [${DEFAULT_VOLUME_SIZE}]: `);
-      const value = answer.length > 0 ? answer : String(DEFAULT_VOLUME_SIZE);
-      try {
-        return this.parseVolumeSize(value, "volume size");
-      } catch (error) {
-        this.prompts.write(`${error instanceof Error ? error.message : "Volume size must be a positive integer."}\n`);
-      }
-    }
+    const defaultIndex = Math.max(0, STATIC_VOLUME_OPTIONS.findIndex((option) => option.value === DEFAULT_VOLUME_SIZE));
+
+    this.prompts.write("How much storage should your agent have?\n");
+    this.prompts.write("This is where your agent saves conversations, memories, and files.\n\n");
+    this.prompts.write("  #  Size   Est. cost   Best for\n");
+    STATIC_VOLUME_OPTIONS.forEach((option, index) => {
+      this.prompts.write(`  ${String(index + 1).padStart(2, " ")}  ${String(option.value).padStart(2, " ")} GB  ${option.costLabel.padEnd(10, " ")} ${option.bestFor}\n`);
+    });
+    this.prompts.write("\nPrices are estimates. Check current rates: https://fly.io/calculator\n\n");
+
+    const selected = STATIC_VOLUME_OPTIONS[await this.chooseNumber(`Choose a size [${defaultIndex + 1}]: `, STATIC_VOLUME_OPTIONS.length, defaultIndex + 1) - 1];
+    return selected.value;
   }
 
   private async collectRequiredSecret(envKey: string, label: string, helpUrl: string): Promise<string> {
-    const env = this.env;
-    const preset = (env[envKey] ?? "").trim();
+    const preset = (this.env[envKey] ?? "").trim();
     if (preset.length > 0) {
       return preset;
     }
     if (!this.prompts.isInteractive()) {
-      throw new Error(`${envKey} is required in non-interactive mode. Run from a terminal to use the wizard or export ${envKey} first.`);
+      throw new Error(`${envKey} is required in non-interactive mode. Run from a terminal to use the guided wizard or export ${envKey} first.`);
     }
 
-    this.prompts.write(`Get your ${label.toLowerCase()} at: ${helpUrl}\n`);
+    this.prompts.write(`You can create your ${label.toLowerCase()} here: ${helpUrl}\n`);
+    this.prompts.write("This key lets your deployed agent call the AI model you choose.\n\n");
     while (true) {
-      const answer = await this.prompts.ask(`${label} (required): `);
+      const answer = await this.prompts.askSecret(`${label} (required): `);
       if (answer.trim().length > 0) {
         return answer.trim();
       }
@@ -311,16 +489,120 @@ export class FlyDeployWizard implements DeployWizardPort {
     }
   }
 
-  private async collectOptionalSecret(envKey: string, label: string): Promise<string> {
-    const env = this.env;
-    const preset = (env[envKey] ?? "").trim();
+  private async collectModel(envValue: string | undefined): Promise<string> {
+    const preset = envValue?.trim();
+    if (preset && preset.length > 0) {
+      return preset;
+    }
+    if (!this.prompts.isInteractive()) {
+      return DEFAULT_MODEL;
+    }
+
+    this.prompts.write("Which AI model should your agent use?\n\n");
+    STATIC_MODEL_OPTIONS.forEach((option, index) => {
+      this.prompts.write(`  ${String(index + 1).padStart(2, " ")}  ${option.label.padEnd(24, " ")} ${option.bestFor}\n`);
+    });
+    const manualIndex = STATIC_MODEL_OPTIONS.length + 1;
+    this.prompts.write(`  ${String(manualIndex).padStart(2, " ")}  Bring my own model        Enter a model ID manually\n\n`);
+
+    const selectedIndex = await this.chooseNumber(`Choose a model [1]: `, manualIndex, 1);
+    if (selectedIndex === manualIndex) {
+      this.prompts.write("Find model IDs at https://openrouter.ai/models\n");
+      this.prompts.write("Example: anthropic/claude-3-5-sonnet\n\n");
+      while (true) {
+        const answer = (await this.prompts.ask("Model ID: ")).trim();
+        if (answer.length > 0) {
+          return answer;
+        }
+        this.prompts.write("Model ID cannot be empty.\n");
+      }
+    }
+
+    return STATIC_MODEL_OPTIONS[selectedIndex - 1].value;
+  }
+
+  private async collectTelegramToken(envValue: string | undefined): Promise<string> {
+    const preset = (envValue ?? "").trim();
     if (preset.length > 0) {
       return preset;
     }
     if (!this.prompts.isInteractive()) {
       return "";
     }
-    return (await this.prompts.ask(`${label} (optional, press Enter to skip): `)).trim();
+
+    this.prompts.write("Do you want to connect Telegram now?\n");
+    this.prompts.write("You can skip this and set it up later if you prefer.\n\n");
+    this.prompts.write("   1  Telegram now   Chat with your agent in Telegram\n");
+    this.prompts.write("   2  Skip for now   Finish deployment first\n\n");
+
+    const choice = await this.chooseNumber("Choose an option [2]: ", 2, 2);
+    if (choice === 2) {
+      return "";
+    }
+
+    this.prompts.write("Create a Telegram bot with @BotFather, then copy the bot token here.\n");
+    this.prompts.write("Guide: https://core.telegram.org/bots#6-botfather\n\n");
+    while (true) {
+      const answer = await this.prompts.askSecret("Telegram bot token (required): ");
+      if (answer.trim().length > 0) {
+        return answer.trim();
+      }
+      this.prompts.write("TELEGRAM_BOT_TOKEN cannot be empty.\n");
+    }
+  }
+
+  private async confirmConfig(config: DeployConfig): Promise<void> {
+    this.prompts.write("\nReview your setup\n");
+    this.prompts.write(`  Deployment name: ${config.appName}\n`);
+    this.prompts.write(`  Location:        ${config.region}\n`);
+    this.prompts.write(`  Server size:     ${this.describeVmSize(config.vmSize)}\n`);
+    this.prompts.write(`  Storage:         ${config.volumeSize} GB\n`);
+    this.prompts.write(`  AI model:        ${this.describeModel(config.model)}\n`);
+    this.prompts.write(`  Telegram:        ${config.botToken ? "set up now" : "skip for now"}\n`);
+    this.prompts.write(`  Release channel: ${config.channel || DEFAULT_CHANNEL}\n\n`);
+
+    while (true) {
+      const answer = (await this.prompts.ask("Continue with deployment? [Y/n]: ")).trim().toLowerCase();
+      if (answer.length === 0 || answer === "y" || answer === "yes") {
+        return;
+      }
+      if (answer === "n" || answer === "no") {
+        throw new Error("Deployment cancelled.");
+      }
+      this.prompts.write("Please answer Y or n.\n");
+    }
+  }
+
+  private async chooseNumber(prompt: string, max: number, fallback: number): Promise<number> {
+    while (true) {
+      const answer = (await this.prompts.ask(prompt)).trim();
+      const value = answer.length > 0 ? Number(answer) : fallback;
+      if (Number.isInteger(value) && value >= 1 && value <= max) {
+        return value;
+      }
+      this.prompts.write(`Please enter a number between 1 and ${max}.\n`);
+    }
+  }
+
+  private validateAppName(value: string): string {
+    const normalized = value.trim().toLowerCase();
+    if (normalized.length < 2 || normalized.length > 63) {
+      throw new Error("Deployment name must be between 2 and 63 characters.");
+    }
+    if (!/^[a-z][a-z0-9-]*[a-z0-9]$/.test(normalized)) {
+      throw new Error("Deployment name must start with a letter and use only lowercase letters, numbers, and hyphens.");
+    }
+    return normalized;
+  }
+
+  private describeVmSize(vmSize: string): string {
+    const match = STATIC_VM_OPTIONS.find((option) => option.value === vmSize);
+    return match ? `${match.tier} (${vmSize}, ${match.ramLabel})` : vmSize;
+  }
+
+  private describeModel(model: string): string {
+    const match = STATIC_MODEL_OPTIONS.find((option) => option.value === model);
+    return match ? `${match.label} (${model})` : model;
   }
 
   private parseVolumeSize(value: string, label: string): number {
@@ -331,6 +613,112 @@ export class FlyDeployWizard implements DeployWizardPort {
     return parsed;
   }
 
+  private async fetchRegions(): Promise<RegionOption[]> {
+    try {
+      const result = await this.process.run("fly", ["platform", "regions", "--json"], { env: this.env });
+      if (result.exitCode !== 0 || result.stdout.trim().length === 0) {
+        return STATIC_REGIONS;
+      }
+      const parsed = JSON.parse(result.stdout) as Array<Record<string, unknown>>;
+      const options = parsed
+        .map((entry) => {
+          const code = String(entry.code ?? entry.Code ?? "").trim().toLowerCase();
+          const name = String(entry.name ?? entry.Name ?? "").trim();
+          if (code.length === 0 || name.length === 0) {
+            return null;
+          }
+          return { code, name, area: this.regionAreaFor(code) };
+        })
+        .filter((entry): entry is RegionOption => entry !== null);
+      return options.length > 0 ? options : STATIC_REGIONS;
+    } catch {
+      return STATIC_REGIONS;
+    }
+  }
+
+  private async fetchVmOptions(): Promise<VmOption[]> {
+    try {
+      const result = await this.process.run("fly", ["platform", "vm-sizes", "--json"], { env: this.env });
+      if (result.exitCode !== 0 || result.stdout.trim().length === 0) {
+        return STATIC_VM_OPTIONS;
+      }
+      const parsed = JSON.parse(result.stdout) as Array<Record<string, unknown>>;
+      const byName = new Map<string, Record<string, unknown>>();
+      parsed.forEach((entry) => {
+        const name = String(entry.name ?? entry.Name ?? "").trim();
+        if (name.length > 0) {
+          byName.set(name, entry);
+        }
+      });
+
+      const options = STATIC_VM_OPTIONS
+        .filter((option) => byName.has(option.value) || option.value.startsWith("shared-cpu"))
+        .map((option) => {
+          const dynamic = byName.get(option.value);
+          const memoryMb = Number(dynamic?.memory_mb ?? dynamic?.memoryMB ?? 0);
+          const ramLabel = memoryMb >= 1024
+            ? `${memoryMb / 1024} GB`
+            : memoryMb > 0
+              ? `${memoryMb} MB`
+              : option.ramLabel;
+          return {
+            ...option,
+            ramLabel,
+          };
+        });
+      return options.length > 0 ? options : STATIC_VM_OPTIONS;
+    } catch {
+      return STATIC_VM_OPTIONS;
+    }
+  }
+
+  private regionAreaFor(code: string): string {
+    switch (code) {
+      case "iad":
+      case "ord":
+      case "dfw":
+      case "lax":
+      case "sjc":
+      case "ewr":
+      case "yyz":
+      case "mia":
+      case "atl":
+      case "den":
+      case "bos":
+      case "phx":
+        return "Americas";
+      case "ams":
+      case "fra":
+      case "lhr":
+      case "cdg":
+      case "arn":
+      case "mad":
+      case "waw":
+      case "otp":
+        return "Europe";
+      case "bom":
+      case "nrt":
+      case "sin":
+      case "hkg":
+      case "del":
+      case "bkk":
+        return "Asia-Pacific";
+      case "syd":
+        return "Oceania";
+      case "gru":
+      case "bog":
+      case "eze":
+      case "scl":
+      case "qro":
+      case "gdl":
+        return "South America";
+      case "jnb":
+        return "Africa";
+      default:
+        return "Other";
+    }
+  }
+
   private async ensureFlyAvailable(): Promise<boolean> {
     const flyPath = await this.findExecutableOnPath("fly");
     if (flyPath && await this.canRunFlyBinary(flyPath)) {
@@ -339,10 +727,10 @@ export class FlyDeployWizard implements DeployWizardPort {
 
     const home = this.env.HOME ?? process.env.HOME;
     if (home) {
-      const flyPath = join(home, ".fly", "bin", "fly");
-      if (await this.isExecutable(flyPath)) {
-        this.prependPath(dirname(flyPath));
-        if (await this.canRunFlyBinary(flyPath)) {
+      const installedFlyPath = join(home, ".fly", "bin", "fly");
+      if (await this.isExecutable(installedFlyPath)) {
+        this.prependPath(dirname(installedFlyPath));
+        if (await this.canRunFlyBinary(installedFlyPath)) {
           return true;
         }
       }
@@ -352,8 +740,12 @@ export class FlyDeployWizard implements DeployWizardPort {
   }
 
   private async canRunFlyBinary(command: string): Promise<boolean> {
-    const versionResult = await this.process.run(command, ["version"], { env: this.env });
-    return versionResult.exitCode === 0;
+    try {
+      const versionResult = await this.process.run(command, ["version"], { env: this.env });
+      return versionResult.exitCode === 0;
+    } catch {
+      return false;
+    }
   }
 
   private prependPath(dir: string): void {
@@ -383,7 +775,7 @@ export class FlyDeployWizard implements DeployWizardPort {
       };
     }
 
-    const shellResult = await this.process.run("bash", ["-lc", command], { env: this.env });
+    const shellResult = await this.process.run("bash", ["-c", command], { env: this.env });
     if (shellResult.exitCode !== 0) {
       const details = shellResult.stderr.trim() || shellResult.stdout.trim();
       return {
@@ -444,7 +836,17 @@ export class FlyDeployWizard implements DeployWizardPort {
           ? String(process.getuid())
           : ""
       );
+    const rawUser = (this.env.USER ?? this.env.LOGNAME ?? "agent").trim().toLowerCase();
+    const user = rawUser.replace(/[^a-z0-9-]+/g, "-").replace(/^-+|-+$/g, "") || "agent";
     const suffix = randomBytes(2).toString("hex");
-    return [DEFAULT_APP_NAME_PREFIX, uid, suffix].filter((part) => part.length > 0).join("-");
+    const parts = [DEFAULT_APP_NAME_PREFIX, user, uid, suffix].filter((part) => part.length > 0);
+    let candidate = parts.join("-");
+    if (candidate.length > 63) {
+      const maxUserLength = Math.max(4, 63 - (DEFAULT_APP_NAME_PREFIX.length + uid.length + suffix.length + 3));
+      candidate = [DEFAULT_APP_NAME_PREFIX, user.slice(0, maxUserLength), uid, suffix]
+        .filter((part) => part.length > 0)
+        .join("-");
+    }
+    return candidate;
   }
 }
