@@ -4,11 +4,12 @@ import { TemplateWriter } from "./template-writer.js";
 import { NodeProcessRunner, type ForegroundProcessRunner } from "../../../../adapters/process.js";
 import { DeploymentIntent } from "../../domain/deployment-intent.js";
 import { ReadlineDeployPrompts, type DeployPromptPort } from "./deploy-prompts.js";
+import { randomBytes } from "node:crypto";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { constants } from "node:fs";
 
-const DEFAULT_APP_NAME = "hermes-agent";
+const DEFAULT_APP_NAME_PREFIX = "hermes-agent";
 const DEFAULT_REGION = "iad";
 const DEFAULT_VM_SIZE = "shared-cpu-1x";
 const DEFAULT_VOLUME_SIZE = 1;
@@ -26,6 +27,7 @@ export class FlyDeployWizard implements DeployWizardPort {
   private readonly process: ForegroundProcessRunner;
   private readonly prompts: DeployPromptPort;
   private readonly env: NodeJS.ProcessEnv;
+  private readonly defaultAppName: string;
 
   constructor(env?: NodeJS.ProcessEnv, deps: FlyDeployWizardDeps = {}) {
     this.env = {
@@ -36,6 +38,7 @@ export class FlyDeployWizard implements DeployWizardPort {
     this.runner = new FlyDeployRunner(this.process, this.env);
     this.templateWriter = deps.templateWriter ?? new TemplateWriter();
     this.prompts = deps.prompts ?? new ReadlineDeployPrompts();
+    this.defaultAppName = this.buildDefaultAppName();
   }
 
   async checkPlatform(): Promise<{ ok: boolean; error?: string }> {
@@ -115,7 +118,7 @@ export class FlyDeployWizard implements DeployWizardPort {
       this.prompts.write("Press Enter to accept the default shown in brackets.\n\n");
     }
 
-    const appName = await this.collectTextValue("Deployment name", env.HERMES_FLY_APP_NAME, DEFAULT_APP_NAME);
+    const appName = await this.collectTextValue("Deployment name", env.HERMES_FLY_APP_NAME, this.defaultAppName);
     const region = await this.collectTextValue("Region", env.HERMES_FLY_REGION, DEFAULT_REGION);
     const vmSize = await this.collectTextValue("VM size", env.HERMES_FLY_VM_SIZE, DEFAULT_VM_SIZE);
     const volumeSize = await this.collectVolumeSize(env.HERMES_FLY_VOLUME_SIZE);
@@ -329,19 +332,9 @@ export class FlyDeployWizard implements DeployWizardPort {
   }
 
   private async ensureFlyAvailable(): Promise<boolean> {
-    if (await this.canRunFlyFromPath()) {
+    const flyPath = await this.findExecutableOnPath("fly");
+    if (flyPath && await this.canRunFlyBinary(flyPath)) {
       return true;
-    }
-
-    const flyctlResult = await this.process.run("which", ["flyctl"], { env: this.env });
-    if (flyctlResult.exitCode === 0) {
-      const flyctlPath = flyctlResult.stdout.trim();
-      if (flyctlPath.length > 0) {
-        this.prependPath(dirname(flyctlPath));
-        if (await this.canRunFlyFromPath()) {
-          return true;
-        }
-      }
     }
 
     const home = this.env.HOME ?? process.env.HOME;
@@ -349,7 +342,7 @@ export class FlyDeployWizard implements DeployWizardPort {
       const flyPath = join(home, ".fly", "bin", "fly");
       if (await this.isExecutable(flyPath)) {
         this.prependPath(dirname(flyPath));
-        if (await this.canRunFlyFromPath()) {
+        if (await this.canRunFlyBinary(flyPath)) {
           return true;
         }
       }
@@ -358,12 +351,8 @@ export class FlyDeployWizard implements DeployWizardPort {
     return false;
   }
 
-  private async canRunFlyFromPath(): Promise<boolean> {
-    const whichResult = await this.process.run("which", ["fly"], { env: this.env });
-    if (whichResult.exitCode !== 0) {
-      return false;
-    }
-    const versionResult = await this.process.run("fly", ["version"], { env: this.env });
+  private async canRunFlyBinary(command: string): Promise<boolean> {
+    const versionResult = await this.process.run(command, ["version"], { env: this.env });
     return versionResult.exitCode === 0;
   }
 
@@ -413,11 +402,24 @@ export class FlyDeployWizard implements DeployWizardPort {
   }
 
   private async resolveMacFlyInstallCommand(): Promise<string> {
-    const brewResult = await this.process.run("which", ["brew"], { env: this.env });
-    if (brewResult.exitCode === 0) {
+    if (await this.findExecutableOnPath("brew")) {
       return "brew install flyctl";
     }
     return "curl -L https://fly.io/install.sh | sh";
+  }
+
+  private async findExecutableOnPath(command: string): Promise<string | null> {
+    const pathValue = this.env.PATH ?? process.env.PATH ?? "";
+    for (const dir of pathValue.split(":")) {
+      if (!dir) {
+        continue;
+      }
+      const candidate = join(dir, command);
+      if (await this.isExecutable(candidate)) {
+        return candidate;
+      }
+    }
+    return null;
   }
 
   private async isExecutable(path: string): Promise<boolean> {
@@ -428,5 +430,21 @@ export class FlyDeployWizard implements DeployWizardPort {
     } catch {
       return false;
     }
+  }
+
+  private buildDefaultAppName(): string {
+    const explicit = (this.env.HERMES_FLY_DEFAULT_APP_NAME ?? "").trim();
+    if (explicit.length > 0) {
+      return explicit;
+    }
+
+    const uid =
+      (this.env.UID ?? "").trim() || (
+        typeof process.getuid === "function"
+          ? String(process.getuid())
+          : ""
+      );
+    const suffix = randomBytes(2).toString("hex");
+    return [DEFAULT_APP_NAME_PREFIX, uid, suffix].filter((part) => part.length > 0).join("-");
   }
 }

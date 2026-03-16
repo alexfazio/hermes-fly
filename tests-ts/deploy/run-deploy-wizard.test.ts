@@ -244,60 +244,64 @@ function makePromptPort(
 
 describe("FlyDeployWizard.checkPrerequisites", () => {
   it("does not require OPENROUTER_API_KEY before entering the wizard", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "fly-check-"));
     const runner = makeProcessRunner(async (command, args) => {
-      if (command === "which") {
-        assert.deepEqual(args, ["fly"]);
-        return { exitCode: 0, stdout: "/usr/local/bin/fly\n" };
-      }
-      if (command === "fly") {
+      if (command.endsWith("/fly")) {
         assert.deepEqual(args, ["version"]);
         return { exitCode: 0, stdout: "fly v0.3.52 linux/amd64\n" };
       }
       throw new Error(`unexpected call: ${command} ${args.join(" ")}`);
     });
     const prompts = makePromptPort([], { interactive: false });
-    const wizard = new FlyDeployWizard({}, { process: runner, prompts });
+    const { chmod, writeFile } = await import("node:fs/promises");
+    await writeFile(join(dir, "fly"), "#!/usr/bin/env bash\nexit 0\n", "utf8");
+    await chmod(join(dir, "fly"), 0o755);
+    const wizard = new FlyDeployWizard({
+      PATH: dir,
+      HERMES_FLY_DEFAULT_APP_NAME: "hermes-agent-test"
+    }, { process: runner, prompts });
 
-    const result = await wizard.checkPrerequisites({ autoInstall: true });
+    try {
+      const result = await wizard.checkPrerequisites({ autoInstall: true });
 
-    assert.deepEqual(result, { ok: true });
+      assert.deepEqual(result, { ok: true });
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 
   it("auto-installs fly when missing and auto-install is enabled", async () => {
-    const calls: Array<{ command: string; args: string[] }> = [];
-    const runner = makeProcessRunner(async (command, args) => {
-      calls.push({ command, args });
-      if (command === "which" && args[0] === "fly") {
-        return { exitCode: calls.filter((c) => c.command === "which" && c.args[0] === "fly").length === 1 ? 1 : 0, stdout: "/tmp/home/.fly/bin/fly\n" };
-      }
-      if (command === "which" && args[0] === "flyctl") {
-        return { exitCode: 1 };
-      }
-      if (command === "bash" && args[0] === "-lc") {
-        return { exitCode: 0 };
-      }
-      if (command === "fly" && args[0] === "version") {
-        return { exitCode: 0, stdout: "fly v0.3.52 linux/amd64\n" };
-      }
-      throw new Error(`unexpected call: ${command} ${args.join(" ")}`);
-    });
+    const homeDir = await mkdtemp(join(tmpdir(), "fly-home-"));
+    const pathDir = await mkdtemp(join(tmpdir(), "fly-path-"));
     const prompts = makePromptPort([], { interactive: false });
     const wizard = new FlyDeployWizard({
-      HOME: "/tmp/home",
-      HERMES_FLY_FLYCTL_INSTALL_CMD: "echo install-fly"
-    }, { process: runner, prompts });
+      HOME: homeDir,
+      PATH: `${pathDir}:/usr/bin:/bin`,
+      HERMES_FLY_DEFAULT_APP_NAME: "hermes-agent-test",
+      HERMES_FLY_FLYCTL_INSTALL_CMD: `mkdir -p "${homeDir}/.fly/bin" && cat > "${homeDir}/.fly/bin/fly" <<'EOF'
+#!/usr/bin/env bash
+if [[ "\${1:-}" == "version" ]]; then
+  echo "fly v0.3.52 linux/amd64"
+  exit 0
+fi
+exit 0
+EOF
+chmod +x "${homeDir}/.fly/bin/fly"`
+    });
 
-    const result = await wizard.checkPrerequisites({ autoInstall: true });
+    try {
+      const result = await wizard.checkPrerequisites({ autoInstall: true });
 
-    assert.deepEqual(result, { ok: true });
-    assert.ok(calls.some((call) => call.command === "bash" && call.args[0] === "-lc"));
+      assert.deepEqual(result, { ok: true });
+    } finally {
+      await rm(homeDir, { recursive: true, force: true });
+      await rm(pathDir, { recursive: true, force: true });
+    }
   });
 
   it("returns an install error when fly auto-install fails", async () => {
+    const pathDir = await mkdtemp(join(tmpdir(), "fly-missing-"));
     const runner = makeProcessRunner(async (command, args) => {
-      if (command === "which" && (args[0] === "fly" || args[0] === "flyctl")) {
-        return { exitCode: 1 };
-      }
       if (command === "bash" && args[0] === "-lc") {
         return { exitCode: 1, stderr: "permission denied" };
       }
@@ -306,14 +310,19 @@ describe("FlyDeployWizard.checkPrerequisites", () => {
     const prompts = makePromptPort([], { interactive: false });
     const wizard = new FlyDeployWizard({
       HOME: "/tmp/home",
+      PATH: pathDir,
       HERMES_FLY_FLYCTL_INSTALL_CMD: "echo install-fly"
     }, { process: runner, prompts });
 
     const result = await wizard.checkPrerequisites({ autoInstall: true });
 
-    assert.equal(result.ok, false);
-    assert.equal(result.missing, "fly");
-    assert.match(result.error ?? "", /permission denied/);
+    try {
+      assert.equal(result.ok, false);
+      assert.equal(result.missing, "fly");
+      assert.match(result.error ?? "", /permission denied/);
+    } finally {
+      await rm(pathDir, { recursive: true, force: true });
+    }
   });
 });
 
@@ -375,6 +384,26 @@ describe("FlyDeployWizard.checkAuth", () => {
 });
 
 describe("FlyDeployWizard.collectConfig", () => {
+  it("suggests a unique editable deployment name by default", async () => {
+    const prompts = makePromptPort([
+      "custom-app",
+      "ord",
+      "shared-cpu-2x",
+      "5",
+      "sk-live",
+      "anthropic/claude-sonnet-4-20250514",
+      ""
+    ], { interactive: true });
+    const wizard = new FlyDeployWizard({
+      UID: "1001"
+    }, { prompts });
+
+    const config = await wizard.collectConfig({ channel: "stable" });
+
+    assert.equal(config.appName, "custom-app");
+    assert.match(prompts.asked[0] ?? "", /Deployment name \[hermes-agent-1001-[0-9a-f]{4}\]: /);
+  });
+
   it("prompts for missing deploy values in interactive mode", async () => {
     const prompts = makePromptPort([
       "my-app",

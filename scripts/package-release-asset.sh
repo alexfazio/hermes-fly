@@ -33,6 +33,9 @@ create_portable_tarball() {
   local source_dir="$1" archive_path="$2"
   local -a extra_flags=()
 
+  if tar_supports_flag "--format"; then
+    extra_flags+=(--format ustar)
+  fi
   if tar_supports_flag "--no-mac-metadata"; then
     extra_flags+=(--no-mac-metadata)
   fi

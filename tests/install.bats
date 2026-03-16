@@ -80,6 +80,7 @@ write_mock_release_tar() {
   cat > "$mock_dir/tar" <<'MOCK'
 #!/usr/bin/env bash
 if [[ "${1:-}" == "--help" ]]; then
+  printf '%s\n' '--format {ustar|pax|cpio|shar}'
   printf '%s\n' '--no-mac-metadata'
   printf '%s\n' '--no-xattrs'
   printf '%s\n' '--no-acls'
@@ -274,6 +275,7 @@ MOCK
   assert_success
   assert_output --partial "COPYFILE_DISABLE=1"
   assert_output --partial "COPY_EXTENDED_ATTRIBUTES_DISABLE=1"
+  assert_output --partial "--format ustar"
 }
 
 # --- release resolution ---
