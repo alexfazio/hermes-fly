@@ -10,7 +10,7 @@ export class FlyDeployRunner implements DeployRunnerPort {
   async createApp(appName: string, region: string): Promise<{ ok: boolean; error?: string }> {
     const result = await this.runner.run(
       "fly",
-      ["apps", "create", appName, "--region", region, "--json"],
+      ["apps", "create", appName, "--json"],
       { env: this.env }
     );
     if (result.exitCode !== 0) {
@@ -20,11 +20,17 @@ export class FlyDeployRunner implements DeployRunnerPort {
   }
 
   async createVolume(appName: string, region: string, sizeGb: number): Promise<{ ok: boolean; error?: string }> {
-    const result = await this.runner.run(
-      "fly",
-      ["volumes", "create", "hermes_data", "-a", appName, "--region", region, "--size", String(sizeGb), "--json"],
-      { env: this.env }
-    );
+    const primaryArgs = [
+      "volumes", "create", "hermes_data", "-a", appName, "--region", region, "--size", String(sizeGb), "--json"
+    ];
+    let result = await this.runner.run("fly", primaryArgs, { env: this.env });
+    if (result.exitCode !== 0 && this.isUnknownLongRegionFlag(result.stderr || result.stdout)) {
+      result = await this.runner.run(
+        "fly",
+        ["volumes", "create", "hermes_data", "-a", appName, "-r", region, "--size", String(sizeGb), "--json"],
+        { env: this.env }
+      );
+    }
     if (result.exitCode !== 0) {
       return { ok: false, error: result.stderr || result.stdout };
     }
@@ -42,5 +48,9 @@ export class FlyDeployRunner implements DeployRunnerPort {
       return { ok: false, error: result.stderr || result.stdout };
     }
     return { ok: true };
+  }
+
+  private isUnknownLongRegionFlag(output: string): boolean {
+    return output.includes("unknown flag: --region");
   }
 }
