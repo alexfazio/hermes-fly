@@ -3,6 +3,8 @@ import { describe, it } from "node:test";
 
 import { RunDeployWizardUseCase } from "../../src/contexts/deploy/application/use-cases/run-deploy-wizard.ts";
 import type { DeployWizardPort, DeployConfig } from "../../src/contexts/deploy/application/ports/deploy-wizard.port.ts";
+import type { ProcessRunner } from "../../src/adapters/process.ts";
+import type { DeployPromptPort } from "../../src/contexts/deploy/infrastructure/adapters/deploy-prompts.ts";
 
 function makeIO() {
   const lines: string[] = [];
@@ -133,25 +135,29 @@ describe("RunDeployWizardUseCase - deploy failure with resume hint", () => {
   });
 });
 
-describe("RunDeployWizardUseCase - missing OPENROUTER_API_KEY", () => {
-  it("returns failed when OPENROUTER_API_KEY is missing", async () => {
+describe("RunDeployWizardUseCase - config collection failure", () => {
+  it("returns failed when collectConfig throws", async () => {
     const io = makeIO();
     const uc = new RunDeployWizardUseCase(makePort({
-      checkPrerequisites: async () => ({ ok: false, missing: "OPENROUTER_API_KEY" })
+      collectConfig: async () => {
+        throw new Error("OPENROUTER_API_KEY is required in non-interactive mode");
+      }
     }));
     const result = await uc.execute({ autoInstall: true, channel: "stable" }, io.stderr);
     assert.equal(result.kind, "failed");
   });
 
-  it("fails before provisioning when OPENROUTER_API_KEY is missing", async () => {
+  it("fails before provisioning when collectConfig throws", async () => {
     const provisioned: boolean[] = [];
     const io = makeIO();
     const uc = new RunDeployWizardUseCase(makePort({
-      checkPrerequisites: async () => ({ ok: false, missing: "OPENROUTER_API_KEY" }),
+      collectConfig: async () => {
+        throw new Error("OPENROUTER_API_KEY is required in non-interactive mode");
+      },
       provisionResources: async () => { provisioned.push(true); return { ok: true }; }
     }));
     await uc.execute({ autoInstall: true, channel: "stable" }, io.stderr);
-    assert.equal(provisioned.length, 0, "provisioning must not run when API key is missing");
+    assert.equal(provisioned.length, 0, "provisioning must not run when config collection fails");
   });
 });
 
@@ -187,6 +193,116 @@ import { FlyDeployWizard } from "../../src/contexts/deploy/infrastructure/adapte
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+
+function makeProcessRunner(
+  impl: (command: string, args: string[]) => Promise<{ stdout?: string; stderr?: string; exitCode: number }>
+): ProcessRunner {
+  return {
+    run: async (command, args) => {
+      const result = await impl(command, args);
+      return {
+        stdout: result.stdout ?? "",
+        stderr: result.stderr ?? "",
+        exitCode: result.exitCode
+      };
+    },
+    runStreaming: async () => ({ exitCode: 0 })
+  };
+}
+
+function makePromptPort(
+  answers: string[],
+  opts: { interactive?: boolean } = {}
+): DeployPromptPort & { asked: string[]; pauses: string[] } {
+  const asked: string[] = [];
+  const pauses: string[] = [];
+  return {
+    asked,
+    pauses,
+    isInteractive: () => opts.interactive ?? true,
+    write: (_message: string) => {},
+    ask: async (message: string) => {
+      asked.push(message);
+      return answers.shift() ?? "";
+    },
+    pause: async (message: string) => {
+      pauses.push(message);
+    }
+  };
+}
+
+describe("FlyDeployWizard.checkPrerequisites", () => {
+  it("does not require OPENROUTER_API_KEY before entering the wizard", async () => {
+    const runner = makeProcessRunner(async (command, args) => {
+      assert.equal(command, "which");
+      assert.deepEqual(args, ["fly"]);
+      return { exitCode: 0, stdout: "/usr/local/bin/fly\n" };
+    });
+    const prompts = makePromptPort([], { interactive: false });
+    const wizard = new FlyDeployWizard({}, { process: runner, prompts });
+
+    const result = await wizard.checkPrerequisites({ autoInstall: true });
+
+    assert.deepEqual(result, { ok: true });
+  });
+});
+
+describe("FlyDeployWizard.checkAuth", () => {
+  it("retries once interactively after prompting for fly auth login", async () => {
+    let calls = 0;
+    const runner = makeProcessRunner(async (command, args) => {
+      assert.equal(command, "fly");
+      assert.deepEqual(args, ["auth", "whoami"]);
+      calls += 1;
+      return { exitCode: calls === 1 ? 1 : 0 };
+    });
+    const prompts = makePromptPort([], { interactive: true });
+    const wizard = new FlyDeployWizard({}, { process: runner, prompts });
+
+    const result = await wizard.checkAuth();
+
+    assert.deepEqual(result, { ok: true });
+    assert.equal(calls, 2);
+    assert.equal(prompts.pauses.length, 1);
+  });
+});
+
+describe("FlyDeployWizard.collectConfig", () => {
+  it("prompts for missing deploy values in interactive mode", async () => {
+    const prompts = makePromptPort([
+      "my-app",
+      "ord",
+      "shared-cpu-2x",
+      "5",
+      "sk-live",
+      "anthropic/claude-sonnet-4-20250514",
+      ""
+    ], { interactive: true });
+    const wizard = new FlyDeployWizard({}, { prompts });
+
+    const config = await wizard.collectConfig({ channel: "preview" });
+
+    assert.equal(config.appName, "my-app");
+    assert.equal(config.region, "ord");
+    assert.equal(config.vmSize, "shared-cpu-2x");
+    assert.equal(config.volumeSize, 5);
+    assert.equal(config.apiKey, "sk-live");
+    assert.equal(config.model, "anthropic/claude-sonnet-4-20250514");
+    assert.equal(config.channel, "preview");
+    assert.equal(config.botToken, "");
+    assert.ok(prompts.asked.some((q) => q.includes("OpenRouter API key")), prompts.asked.join("\n"));
+  });
+
+  it("fails in non-interactive mode when OPENROUTER_API_KEY is missing", async () => {
+    const prompts = makePromptPort([], { interactive: false });
+    const wizard = new FlyDeployWizard({}, { prompts });
+
+    await assert.rejects(
+      wizard.collectConfig({ channel: "stable" }),
+      /OPENROUTER_API_KEY is required in non-interactive mode/
+    );
+  });
+});
 
 describe("FlyDeployWizard.saveApp - persistence contract", () => {
   it("saveApp writes current_app and apps region entry", async () => {

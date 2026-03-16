@@ -1,21 +1,37 @@
 import type { DeployConfig, DeployWizardPort } from "../../application/ports/deploy-wizard.port.js";
 import { FlyDeployRunner } from "./fly-deploy-runner.js";
 import { TemplateWriter } from "./template-writer.js";
-import { NodeProcessRunner } from "../../../../adapters/process.js";
+import { NodeProcessRunner, type ProcessRunner } from "../../../../adapters/process.js";
+import { DeploymentIntent } from "../../domain/deployment-intent.js";
+import { ReadlineDeployPrompts, type DeployPromptPort } from "./deploy-prompts.js";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+
+const DEFAULT_APP_NAME = "hermes-agent";
+const DEFAULT_REGION = "iad";
+const DEFAULT_VM_SIZE = "shared-cpu-1x";
+const DEFAULT_VOLUME_SIZE = 1;
+const DEFAULT_MODEL = "anthropic/claude-3-5-sonnet";
+
+export interface FlyDeployWizardDeps {
+  process?: ProcessRunner;
+  prompts?: DeployPromptPort;
+  templateWriter?: TemplateWriter;
+}
 
 export class FlyDeployWizard implements DeployWizardPort {
   private readonly runner: FlyDeployRunner;
   private readonly templateWriter: TemplateWriter;
-  private readonly process: NodeProcessRunner;
+  private readonly process: ProcessRunner;
+  private readonly prompts: DeployPromptPort;
   private readonly env?: NodeJS.ProcessEnv;
 
-  constructor(env?: NodeJS.ProcessEnv) {
+  constructor(env?: NodeJS.ProcessEnv, deps: FlyDeployWizardDeps = {}) {
     this.env = env;
-    this.process = new NodeProcessRunner();
+    this.process = deps.process ?? new NodeProcessRunner();
     this.runner = new FlyDeployRunner(this.process, env);
-    this.templateWriter = new TemplateWriter();
+    this.templateWriter = deps.templateWriter ?? new TemplateWriter();
+    this.prompts = deps.prompts ?? new ReadlineDeployPrompts();
   }
 
   async checkPlatform(): Promise<{ ok: boolean; error?: string }> {
@@ -27,11 +43,6 @@ export class FlyDeployWizard implements DeployWizardPort {
   }
 
   async checkPrerequisites(opts: { autoInstall: boolean }): Promise<{ ok: boolean; missing?: string; autoInstallDisabled?: boolean }> {
-    const env = this.env ?? process.env;
-    const apiKey = (env.OPENROUTER_API_KEY ?? "").trim();
-    if (!apiKey) {
-      return { ok: false, missing: "OPENROUTER_API_KEY" };
-    }
     const result = await this.process.run("which", ["fly"], { env: this.env });
     if (result.exitCode !== 0) {
       if (!opts.autoInstall) {
@@ -43,7 +54,18 @@ export class FlyDeployWizard implements DeployWizardPort {
   }
 
   async checkAuth(): Promise<{ ok: boolean; error?: string }> {
-    const result = await this.process.run("fly", ["auth", "whoami"], { env: this.env });
+    let result = await this.process.run("fly", ["auth", "whoami"], { env: this.env });
+    if (result.exitCode === 0) {
+      return { ok: true };
+    }
+
+    if (!this.prompts.isInteractive()) {
+      return { ok: false, error: "not authenticated" };
+    }
+
+    this.prompts.write("Not authenticated with Fly.io. Please run 'fly auth login' in another terminal.\n");
+    await this.prompts.pause("Press Enter when ready to retry: ");
+    result = await this.process.run("fly", ["auth", "whoami"], { env: this.env });
     if (result.exitCode !== 0) {
       return { ok: false, error: "not authenticated" };
     }
@@ -60,16 +82,43 @@ export class FlyDeployWizard implements DeployWizardPort {
 
   async collectConfig(opts: { channel: "stable" | "preview" | "edge" }): Promise<DeployConfig> {
     const env = this.env ?? process.env;
+    if (this.prompts.isInteractive()) {
+      this.prompts.write("\nHermes Agent Deploy Configuration\n");
+      this.prompts.write("Press Enter to accept the default shown in brackets.\n\n");
+    }
+
+    const appName = await this.collectTextValue("Deployment name", env.HERMES_FLY_APP_NAME, DEFAULT_APP_NAME);
+    const region = await this.collectTextValue("Region", env.HERMES_FLY_REGION, DEFAULT_REGION);
+    const vmSize = await this.collectTextValue("VM size", env.HERMES_FLY_VM_SIZE, DEFAULT_VM_SIZE);
+    const volumeSize = await this.collectVolumeSize(env.HERMES_FLY_VOLUME_SIZE);
+    const apiKey = await this.collectRequiredSecret(
+      "OPENROUTER_API_KEY",
+      "OpenRouter API key",
+      "https://openrouter.ai/settings/keys"
+    );
+    const model = await this.collectTextValue("Model", env.HERMES_FLY_MODEL, DEFAULT_MODEL);
+    const botToken = await this.collectOptionalSecret("TELEGRAM_BOT_TOKEN", "Telegram bot token");
+    const hermesRef = (env.HERMES_FLY_VERSION ?? "latest").trim() || "latest";
+
+    const intent = DeploymentIntent.create({
+      appName,
+      region,
+      vmSize,
+      provider: "openrouter",
+      model,
+      channel: opts.channel
+    });
+
     return {
-      appName: env.HERMES_FLY_APP_NAME ?? "hermes-agent",
-      region: env.HERMES_FLY_REGION ?? "iad",
-      vmSize: env.HERMES_FLY_VM_SIZE ?? "shared-cpu-1x",
-      volumeSize: Number(env.HERMES_FLY_VOLUME_SIZE ?? "1"),
-      apiKey: env.OPENROUTER_API_KEY ?? "",
-      model: env.HERMES_FLY_MODEL ?? "anthropic/claude-3-5-sonnet",
-      channel: opts.channel,
-      hermesRef: env.HERMES_FLY_VERSION ?? "latest",
-      botToken: env.TELEGRAM_BOT_TOKEN ?? "",
+      appName: intent.appName,
+      region: intent.region,
+      vmSize: intent.vmSize,
+      volumeSize,
+      apiKey,
+      model: intent.model,
+      channel: intent.channel,
+      hermesRef,
+      botToken,
     };
   }
 
@@ -88,8 +137,15 @@ export class FlyDeployWizard implements DeployWizardPort {
 
     const secrets: Record<string, string> = {
       OPENROUTER_API_KEY: config.apiKey,
-      TELEGRAM_BOT_TOKEN: config.botToken,
+      LLM_MODEL: config.model,
+      HERMES_AGENT_REF: config.hermesRef,
+      HERMES_DEPLOY_CHANNEL: config.channel,
+      HERMES_LLM_PROVIDER: "openrouter",
+      HERMES_APP_NAME: config.appName,
     };
+    if (config.botToken) {
+      secrets.TELEGRAM_BOT_TOKEN = config.botToken;
+    }
     return this.runner.setSecrets(config.appName, secrets);
   }
 
@@ -163,5 +219,84 @@ export class FlyDeployWizard implements DeployWizardPort {
       ...trailingTopLevelLines,
     ];
     await writeFile(configPath, newLines.join("\n") + "\n", "utf8");
+  }
+
+  private async collectTextValue(label: string, envValue: string | undefined, fallback: string): Promise<string> {
+    const preset = envValue?.trim();
+    if (preset && preset.length > 0) {
+      return preset;
+    }
+    if (!this.prompts.isInteractive()) {
+      return fallback;
+    }
+
+    while (true) {
+      const answer = await this.prompts.ask(`${label} [${fallback}]: `);
+      const value = answer.length > 0 ? answer : fallback;
+      if (value.trim().length > 0) {
+        return value.trim();
+      }
+      this.prompts.write(`${label} cannot be empty.\n`);
+    }
+  }
+
+  private async collectVolumeSize(envValue: string | undefined): Promise<number> {
+    const preset = envValue?.trim();
+    if (preset && preset.length > 0) {
+      return this.parseVolumeSize(preset, "HERMES_FLY_VOLUME_SIZE");
+    }
+    if (!this.prompts.isInteractive()) {
+      return DEFAULT_VOLUME_SIZE;
+    }
+
+    while (true) {
+      const answer = await this.prompts.ask(`Volume size in GB [${DEFAULT_VOLUME_SIZE}]: `);
+      const value = answer.length > 0 ? answer : String(DEFAULT_VOLUME_SIZE);
+      try {
+        return this.parseVolumeSize(value, "volume size");
+      } catch (error) {
+        this.prompts.write(`${error instanceof Error ? error.message : "Volume size must be a positive integer."}\n`);
+      }
+    }
+  }
+
+  private async collectRequiredSecret(envKey: string, label: string, helpUrl: string): Promise<string> {
+    const env = this.env ?? process.env;
+    const preset = (env[envKey] ?? "").trim();
+    if (preset.length > 0) {
+      return preset;
+    }
+    if (!this.prompts.isInteractive()) {
+      throw new Error(`${envKey} is required in non-interactive mode. Run from a terminal to use the wizard or export ${envKey} first.`);
+    }
+
+    this.prompts.write(`Get your ${label.toLowerCase()} at: ${helpUrl}\n`);
+    while (true) {
+      const answer = await this.prompts.ask(`${label} (required): `);
+      if (answer.trim().length > 0) {
+        return answer.trim();
+      }
+      this.prompts.write(`${envKey} cannot be empty.\n`);
+    }
+  }
+
+  private async collectOptionalSecret(envKey: string, label: string): Promise<string> {
+    const env = this.env ?? process.env;
+    const preset = (env[envKey] ?? "").trim();
+    if (preset.length > 0) {
+      return preset;
+    }
+    if (!this.prompts.isInteractive()) {
+      return "";
+    }
+    return (await this.prompts.ask(`${label} (optional, press Enter to skip): `)).trim();
+  }
+
+  private parseVolumeSize(value: string, label: string): number {
+    const parsed = Number(value);
+    if (!Number.isInteger(parsed) || parsed <= 0) {
+      throw new Error(`${label} must be a positive integer.`);
+    }
+    return parsed;
   }
 }

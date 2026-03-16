@@ -31,6 +31,9 @@ export class ProvisionDeploymentUseCase {
     // Step 3: Set secrets
     const secrets: Record<string, string> = {
       OPENROUTER_API_KEY: config.apiKey,
+      LLM_MODEL: config.model,
+      HERMES_LLM_PROVIDER: "openrouter",
+      HERMES_APP_NAME: config.appName,
       HERMES_AGENT_REF: config.hermesRef,
       HERMES_DEPLOY_CHANNEL: config.channel
     };

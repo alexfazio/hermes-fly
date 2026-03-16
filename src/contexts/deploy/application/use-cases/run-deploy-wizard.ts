@@ -1,4 +1,4 @@
-import type { DeployWizardPort } from "../ports/deploy-wizard.port.js";
+import type { DeployConfig, DeployWizardPort } from "../ports/deploy-wizard.port.js";
 
 const VALID_CHANNELS = new Set(["stable", "preview", "edge"]);
 
@@ -51,7 +51,14 @@ export class RunDeployWizardUseCase {
     }
 
     // Phase 2: Collect config (interactive)
-    const config = await this.port.collectConfig({ channel });
+    let config: DeployConfig;
+    try {
+      config = await this.port.collectConfig({ channel });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "failed to collect deploy configuration";
+      stderr.write(`[error] ${message}\n`);
+      return { kind: "failed", error: message };
+    }
 
     // Phase 3: Create build context
     const { buildDir } = await this.port.createBuildContext(config);

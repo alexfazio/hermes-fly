@@ -106,12 +106,14 @@ describe("runDeployCommand - no-auto-install flag", () => {
   });
 });
 
-describe("runDeployCommand - missing OPENROUTER_API_KEY", () => {
-  it("returns 1 when OPENROUTER_API_KEY is reported missing by wizard", async () => {
+describe("runDeployCommand - config collection failure", () => {
+  it("returns 1 when config collection fails", async () => {
     const io = makeIO();
     const code = await runDeployCommand([], {
       wizard: makeWizardPort({
-        checkPrerequisites: async () => ({ ok: false, missing: "OPENROUTER_API_KEY" })
+        collectConfig: async () => {
+          throw new Error("OPENROUTER_API_KEY is required in non-interactive mode");
+        }
       }),
       stderr: io.stderr
     });

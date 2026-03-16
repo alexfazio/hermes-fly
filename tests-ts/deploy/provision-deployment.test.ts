@@ -41,6 +41,29 @@ describe("ProvisionDeploymentUseCase - happy path", () => {
     const result = await uc.execute(DEFAULT_CONFIG, io.stderr);
     assert.equal(result.ok, true);
   });
+
+  it("sets deploy secrets needed by the runtime", async () => {
+    let capturedSecrets: Record<string, string> | null = null;
+    const io = makeIO();
+    const uc = new ProvisionDeploymentUseCase(makeRunner({
+      setSecrets: async (_appName, secrets) => {
+        capturedSecrets = secrets;
+        return { ok: true };
+      }
+    }));
+
+    const result = await uc.execute(DEFAULT_CONFIG, io.stderr);
+
+    assert.equal(result.ok, true);
+    assert.deepEqual(capturedSecrets, {
+      OPENROUTER_API_KEY: DEFAULT_CONFIG.apiKey,
+      LLM_MODEL: DEFAULT_CONFIG.model,
+      HERMES_LLM_PROVIDER: "openrouter",
+      HERMES_APP_NAME: DEFAULT_CONFIG.appName,
+      HERMES_AGENT_REF: DEFAULT_CONFIG.hermesRef,
+      HERMES_DEPLOY_CHANNEL: DEFAULT_CONFIG.channel
+    });
+  });
 });
 
 describe("ProvisionDeploymentUseCase - create app failure", () => {
