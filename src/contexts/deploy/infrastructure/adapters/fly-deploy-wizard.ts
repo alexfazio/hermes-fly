@@ -165,16 +165,6 @@ const STATIC_MODEL_OPTIONS: ModelOption[] = [
   },
 ];
 
-const PREFERRED_DYNAMIC_MODELS: Array<{ id: string; bestFor: string }> = [
-  { id: "anthropic/claude-sonnet-4", bestFor: "Balanced, recommended" },
-  { id: "openai/gpt-5-mini", bestFor: "Fast, capable, and cost-aware" },
-  { id: "google/gemini-2.5-flash", bestFor: "Fast alternative" },
-  { id: "meta-llama/llama-4-maverick", bestFor: "Open source option" },
-  { id: "anthropic/claude-haiku-4.5", bestFor: "Very fast and affordable" },
-  { id: "openai/gpt-5", bestFor: "Higher capability" },
-  { id: "mistralai/mistral-large", bestFor: "Strong multilingual fallback" },
-];
-
 const PROVIDER_ORDER = ["anthropic", "openai", "google", "meta-llama", "mistralai"];
 
 export interface FlyDeployWizardDeps {
@@ -811,12 +801,12 @@ export class FlyDeployWizard implements DeployWizardPort {
         })
         .filter((entry): entry is OpenRouterModelRecord => entry !== null);
 
-      const curated = this.curateDynamicModelOptions(models);
-      if (curated.length === 0) {
+      const fullCatalog = this.buildDynamicModelOptions(models);
+      if (fullCatalog.length === 0) {
         return this.reportDynamicModelFallback();
       }
-      this.rememberModelOptions(curated);
-      return curated;
+      this.rememberModelOptions(fullCatalog);
+      return fullCatalog;
     } catch {
       return this.reportDynamicModelFallback();
     }
@@ -829,40 +819,25 @@ export class FlyDeployWizard implements DeployWizardPort {
     return STATIC_MODEL_OPTIONS;
   }
 
-  private curateDynamicModelOptions(models: OpenRouterModelRecord[]): ModelOption[] {
-    const byId = new Map(models.map((model) => [model.id, model]));
-    const selected: ModelOption[] = [];
+  private buildDynamicModelOptions(models: OpenRouterModelRecord[]): ModelOption[] {
     const seen = new Set<string>();
+    const options: ModelOption[] = [];
 
-    for (const preferred of PREFERRED_DYNAMIC_MODELS) {
-      const model = byId.get(preferred.id);
-      if (!model) {
+    for (const model of models) {
+      if (!this.isSupportedDynamicModel(model.id) || seen.has(model.id)) {
         continue;
       }
-      selected.push({
+      seen.add(model.id);
+      options.push({
         value: model.id,
         label: this.cleanModelName(model.name, model.id),
-        bestFor: preferred.bestFor,
+        bestFor: this.inferDynamicModelNote(model),
         providerKey: this.providerKeyForModel(model.id),
         providerLabel: this.providerLabelForModel(model.id),
       });
-      seen.add(model.id);
     }
 
-    const extras = models
-      .filter((model) => this.isSupportedDynamicModel(model.id) && !seen.has(model.id))
-      .sort((left, right) => left.id.localeCompare(right.id))
-      .slice(0, 6)
-      .map((model) => ({
-        value: model.id,
-        label: this.cleanModelName(model.name, model.id),
-        bestFor: `${this.formatProviderName(model.id)} model`,
-        providerKey: this.providerKeyForModel(model.id),
-        providerLabel: this.providerLabelForModel(model.id),
-      }));
-
-    const options = [...selected, ...extras];
-    return options.length > 0 ? options : [];
+    return options;
   }
 
   private cleanModelName(name: string, id: string): string {
@@ -872,6 +847,17 @@ export class FlyDeployWizard implements DeployWizardPort {
     }
     const [, fallback = id] = id.split("/", 2);
     return fallback;
+  }
+
+  private inferDynamicModelNote(model: OpenRouterModelRecord): string {
+    const haystack = `${model.id} ${model.name}`.toLowerCase();
+    if (/\bmini\b|\bhaiku\b|\bflash\b|\bnano\b|\bsmall\b/.test(haystack)) {
+      return "Fast / lower cost";
+    }
+    if (/\bpro\b|\bopus\b|\bsonnet\b|\blarge\b|\breasoning\b/.test(haystack)) {
+      return "Higher capability";
+    }
+    return `${this.formatProviderName(model.id)} model`;
   }
 
   private formatProviderName(modelId: string): string {

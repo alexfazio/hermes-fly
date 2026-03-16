@@ -528,7 +528,7 @@ describe("FlyDeployWizard.collectConfig", () => {
     assert.match(guidedCopy, /Review your setup/);
   });
 
-  it("fetches a dynamic OpenRouter catalog and lets the user choose provider then model", async () => {
+  it("fetches the full OpenRouter provider catalog and lets the user choose a specific model", async () => {
     const prompts = makePromptPort([
       "",
       "",
@@ -537,7 +537,7 @@ describe("FlyDeployWizard.collectConfig", () => {
       "",
       "sk-live",
       "2",
-      "1",
+      "3",
       "",
       "y"
     ], { interactive: true });
@@ -566,9 +566,14 @@ describe("FlyDeployWizard.collectConfig", () => {
           stdout: JSON.stringify({
             data: [
               { id: "anthropic/claude-sonnet-4", name: "Anthropic: Claude Sonnet 4" },
+              { id: "anthropic/claude-haiku-4.5", name: "Anthropic: Claude Haiku 4.5" },
               { id: "openai/gpt-5-mini", name: "OpenAI: GPT-5 Mini" },
+              { id: "openai/gpt-5", name: "OpenAI: GPT-5" },
+              { id: "openai/gpt-5-pro", name: "OpenAI: GPT-5 Pro" },
+              { id: "openai/gpt-4o", name: "OpenAI: GPT-4o" },
               { id: "google/gemini-2.5-flash", name: "Google: Gemini 2.5 Flash" },
-              { id: "meta-llama/llama-4-maverick", name: "Meta: Llama 4 Maverick" }
+              { id: "meta-llama/llama-4-maverick", name: "Meta: Llama 4 Maverick" },
+              { id: "mistralai/mistral-large", name: "Mistral: Mistral Large" }
             ]
           })
         };
@@ -579,15 +584,19 @@ describe("FlyDeployWizard.collectConfig", () => {
 
     const config = await wizard.collectConfig({ channel: "stable" });
 
-    assert.equal(config.model, "openai/gpt-5-mini");
+    assert.equal(config.model, "openai/gpt-5-pro");
     const guidedCopy = prompts.writes.join("");
     assert.match(guidedCopy, /Get your OpenRouter API key at: https:\/\/openrouter\.ai\/settings\/keys/);
     assert.match(guidedCopy, /Fetching available models from OpenRouter/);
     assert.match(guidedCopy, /Which AI provider do you want to use through OpenRouter/);
     assert.match(guidedCopy, /Anthropic/);
     assert.match(guidedCopy, /OpenAI/);
+    assert.match(guidedCopy, /Mistral/);
     assert.match(guidedCopy, /Which OpenAI model should your agent use/);
     assert.match(guidedCopy, /GPT-5 Mini/);
+    assert.match(guidedCopy, /GPT-5\s+/);
+    assert.match(guidedCopy, /GPT-5 Pro/);
+    assert.match(guidedCopy, /GPT-4o/);
   });
 
   it("falls back to a provider-first starter catalog when OpenRouter model fetch fails", async () => {
