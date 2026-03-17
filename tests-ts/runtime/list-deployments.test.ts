@@ -524,6 +524,50 @@ describe("fly deployment registry", () => {
     }
   });
 
+  it("labels saved nous deployments as Nous Portal OAuth", async () => {
+    const root = await mkdtemp(join(tmpdir(), "hermes-fly-runtime-list-nous-"));
+    const configDir = join(root, "config");
+
+    try {
+      await mkdir(configDir, { recursive: true });
+      await writeFile(
+        join(configDir, "config.yaml"),
+        [
+          "apps:",
+          "  - name: nous-app",
+          "    region: ams",
+          "    provider: nous",
+          ""
+        ].join("\n"),
+        "utf8"
+      );
+
+      const flyctl: FlyctlPort = {
+        listLiveAppNames: async () => new Set(["nous-app"]),
+        getMachineSummary: async () => ({ id: "machine123", state: "started", region: "ams" }),
+        getMachineState: async () => "started",
+        getAiAccessMode: async () => null,
+        getTelegramBotIdentity: async () => ({ configured: false, username: null, link: null }),
+        getAppStatus: async () => ({ ok: false, error: "unused" }),
+        getAppLogs: async () => ({ stdout: "", stderr: "", exitCode: 0 }),
+        streamAppLogs: async () => ({ exitCode: 0 })
+      };
+
+      const registry = new FlyDeploymentRegistry({
+        flyctl,
+        env: {
+          ...process.env,
+          HERMES_FLY_CONFIG_DIR: configDir
+        }
+      });
+
+      const rows = await registry.listDeployments();
+      assert.equal(rows[0]?.aiAccess, "Nous Portal OAuth");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("does not resolve config from relative .hermes-fly when HOME is empty", async () => {
     const root = await mkdtemp(join(tmpdir(), "hermes-fly-runtime-list-home-empty-"));
     const configDir = join(root, ".hermes-fly");

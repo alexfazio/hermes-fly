@@ -190,6 +190,8 @@ function describeAiAccess(provider: string | null): string {
   switch (provider) {
     case "openai-codex":
       return "OpenAI OAuth";
+    case "nous":
+      return "Nous Portal OAuth";
     case "openrouter":
       return "OpenRouter API key";
     case null:

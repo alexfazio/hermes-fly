@@ -145,6 +145,37 @@ describe("ProvisionDeploymentUseCase - happy path", () => {
       HERMES_DEPLOY_CHANNEL: DEFAULT_CONFIG.channel
     });
   });
+
+  it("sets Hermes auth-store secrets when deploying with Nous Portal access", async () => {
+    let capturedSecrets: Record<string, string> | null = null;
+    const io = makeIO();
+    const uc = new ProvisionDeploymentUseCase(makeRunner({
+      setSecrets: async (_appName, secrets) => {
+        capturedSecrets = secrets;
+        return { ok: true };
+      }
+    }));
+
+    const result = await uc.execute({
+      ...DEFAULT_CONFIG,
+      provider: "nous",
+      apiKey: "",
+      authJsonB64: "eyJ2ZXJzaW9uIjoxfQ==",
+      model: "gpt-5.4",
+      reasoningEffort: "medium"
+    }, io.stderr);
+
+    assert.equal(result.ok, true);
+    assert.deepEqual(capturedSecrets, {
+      HERMES_AUTH_JSON_B64: "eyJ2ZXJzaW9uIjoxfQ==",
+      LLM_MODEL: "gpt-5.4",
+      HERMES_LLM_PROVIDER: "nous",
+      HERMES_REASONING_EFFORT: "medium",
+      HERMES_APP_NAME: DEFAULT_CONFIG.appName,
+      HERMES_AGENT_REF: DEFAULT_CONFIG.hermesRef,
+      HERMES_DEPLOY_CHANNEL: DEFAULT_CONFIG.channel
+    });
+  });
 });
 
 describe("ProvisionDeploymentUseCase - create app failure", () => {

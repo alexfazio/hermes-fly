@@ -39,7 +39,7 @@ export class ProvisionDeploymentUseCase {
     if (config.provider === "openrouter") {
       secrets.OPENROUTER_API_KEY = config.apiKey;
     }
-    if (config.provider === "openai-codex" && config.authJsonB64) {
+    if (config.authJsonB64) {
       secrets.HERMES_AUTH_JSON_B64 = config.authJsonB64;
     }
     if (config.reasoningEffort) {

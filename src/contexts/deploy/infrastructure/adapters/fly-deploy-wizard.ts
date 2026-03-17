@@ -10,6 +10,11 @@ import {
   type CodexModelOption,
   type ResolvedCodexAuth,
 } from "./openai-codex-auth.js";
+import {
+  NousPortalAuthAdapter,
+  type NousModelOption,
+  type ResolvedNousPortalAuth,
+} from "./nous-portal-auth.js";
 import { MessagingPolicy, type MessagingPolicyMode } from "../../../messaging/domain/messaging-policy.js";
 import {
   TELEGRAM_BOTFATHER_DELETEBOT_URL,
@@ -108,7 +113,7 @@ type TelegramBotIdentity = {
 };
 
 type AiAccessSelection = {
-  provider: "openrouter" | "openai-codex";
+  provider: "openrouter" | "openai-codex" | "nous";
   apiKey: string;
   authJsonB64?: string;
   model: string;
@@ -243,6 +248,7 @@ export interface FlyDeployWizardDeps {
   templateWriter?: TemplateWriter;
   qrRenderer?: QrCodeRendererPort;
   codexAuth?: OpenAICodexAuthAdapter;
+  nousAuth?: NousPortalAuthAdapter;
 }
 
 export class FlyDeployWizard implements DeployWizardPort {
@@ -252,6 +258,7 @@ export class FlyDeployWizard implements DeployWizardPort {
   private readonly prompts: DeployPromptPort;
   private readonly qrRenderer: QrCodeRendererPort;
   private readonly codexAuth: OpenAICodexAuthAdapter;
+  private readonly nousAuth: NousPortalAuthAdapter;
   private readonly env: NodeJS.ProcessEnv;
   private readonly defaultAppName: string;
   private readonly modelLabels = new Map<string, string>();
@@ -266,6 +273,7 @@ export class FlyDeployWizard implements DeployWizardPort {
     this.prompts = deps.prompts ?? new ReadlineDeployPrompts();
     this.qrRenderer = deps.qrRenderer ?? new TerminalQrCodeRenderer();
     this.codexAuth = deps.codexAuth ?? new OpenAICodexAuthAdapter(this.process, this.env);
+    this.nousAuth = deps.nousAuth ?? new NousPortalAuthAdapter(this.process, this.env);
     this.defaultAppName = this.buildDefaultAppName();
     this.rememberModelOptions(STATIC_MODEL_OPTIONS);
   }
@@ -433,7 +441,7 @@ export class FlyDeployWizard implements DeployWizardPort {
     if (config.provider === "openrouter") {
       secrets.OPENROUTER_API_KEY = config.apiKey;
     }
-    if (config.provider === "openai-codex" && config.authJsonB64) {
+    if (config.authJsonB64) {
       secrets.HERMES_AUTH_JSON_B64 = config.authJsonB64;
     }
     if (config.reasoningEffort) {
@@ -835,21 +843,41 @@ export class FlyDeployWizard implements DeployWizardPort {
     sttProvider?: string;
     sttModel?: string;
   }): Promise<AiAccessSelection> {
-    const normalizedProvider = this.normalizeAiProvider(input.provider);
+    const normalizedProvider = this.normalizeAiProvider(input.provider)
+      ?? this.detectOauthProviderFromEncodedAuth(input.authJsonB64);
     if (normalizedProvider === "openrouter") {
       return this.collectOpenRouterAccess(input.model, input.reasoningEffort, input.sttProvider, input.sttModel);
     }
     if (normalizedProvider === "openai-codex") {
       return this.collectOpenAICodexAccess(input.model, input.reasoningEffort, input.authJsonB64, input.sttProvider, input.sttModel);
     }
+    if (normalizedProvider === "nous") {
+      return this.collectNousPortalAccess(
+        input.model,
+        input.reasoningEffort,
+        input.authJsonB64,
+        input.sttProvider,
+        input.sttModel
+      );
+    }
 
     if (!this.prompts.isInteractive()) {
-      const bundledCodexAuth = (input.authJsonB64 ?? "").trim();
-      if (bundledCodexAuth.length > 0) {
+      const bundledOauthAuth = (input.authJsonB64 ?? "").trim();
+      const bundledOauthProvider = this.detectOauthProviderFromEncodedAuth(bundledOauthAuth);
+      if (bundledOauthAuth.length > 0 && bundledOauthProvider === "nous") {
+        return this.collectNousPortalAccess(
+          input.model,
+          input.reasoningEffort,
+          bundledOauthAuth,
+          input.sttProvider,
+          input.sttModel
+        );
+      }
+      if (bundledOauthAuth.length > 0) {
         return this.collectOpenAICodexAccess(
           input.model,
           input.reasoningEffort,
-          bundledCodexAuth,
+          bundledOauthAuth,
           input.sttProvider,
           input.sttModel
         );
@@ -858,13 +886,23 @@ export class FlyDeployWizard implements DeployWizardPort {
     }
 
     this.prompts.write("How should Hermes access AI models?\n");
-    this.prompts.write("You can use your own OpenRouter API key, or sign in with your ChatGPT subscription through OpenAI Codex.\n\n");
+    this.prompts.write("You can use your own OpenRouter API key, sign in with your ChatGPT subscription through OpenAI Codex, or use your Nous Portal subscription.\n\n");
     this.prompts.write("   1  OpenRouter API key         Bring your own API key and choose from OpenRouter's model catalog\n");
     this.prompts.write("   2  ChatGPT subscription       Sign in with ChatGPT / OpenAI through OpenAI Codex\n\n");
+    this.prompts.write("   3  Nous Portal subscription   Sign in with your Nous Portal account and use Portal models\n\n");
 
-    const selection = await this.chooseNumber("Choose an option [1]: ", 2, 1);
+    const selection = await this.chooseNumber("Choose an option [1]: ", 3, 1);
     if (selection === 2) {
       return this.collectOpenAICodexAccess(
+        input.model,
+        input.reasoningEffort,
+        input.authJsonB64,
+        input.sttProvider,
+        input.sttModel
+      );
+    }
+    if (selection === 3) {
+      return this.collectNousPortalAccess(
         input.model,
         input.reasoningEffort,
         input.authJsonB64,
@@ -908,6 +946,28 @@ export class FlyDeployWizard implements DeployWizardPort {
     const stt = this.resolveSttDefaults("openai-codex", envSttProvider, envSttModel);
     return {
       provider: "openai-codex",
+      apiKey: "",
+      authJsonB64: auth.authJsonB64,
+      model,
+      reasoningEffort,
+      sttProvider: stt.provider,
+      sttModel: stt.model,
+    };
+  }
+
+  private async collectNousPortalAccess(
+    envModel: string | undefined,
+    envReasoningEffort: string | undefined,
+    bundledAuthJsonB64?: string,
+    envSttProvider?: string,
+    envSttModel?: string
+  ): Promise<AiAccessSelection> {
+    const auth = await this.collectNousAuth(bundledAuthJsonB64);
+    const model = await this.collectNousModel(envModel, auth);
+    const reasoningEffort = await this.collectReasoningEffort(envReasoningEffort, model);
+    const stt = this.resolveSttDefaults("nous", envSttProvider, envSttModel);
+    return {
+      provider: "nous",
       apiKey: "",
       authJsonB64: auth.authJsonB64,
       model,
@@ -982,6 +1042,34 @@ export class FlyDeployWizard implements DeployWizardPort {
     return this.runCodexDeviceCodeLoginWithRetry();
   }
 
+  private async collectNousAuth(bundledAuthJsonB64?: string): Promise<ResolvedNousPortalAuth> {
+    const providedAuth = (bundledAuthJsonB64 ?? "").trim();
+    if (providedAuth.length > 0) {
+      return this.nousAuthFromEncodedStore(providedAuth);
+    }
+
+    const stored = await this.nousAuth.resolveStoredAuth();
+    if (!this.prompts.isInteractive()) {
+      if (stored) {
+        return stored;
+      }
+      throw new Error("Nous Portal credentials are required in non-interactive mode. Export HERMES_AUTH_JSON_B64 or sign in interactively first.");
+    }
+
+    if (!stored) {
+      return this.runNousDeviceCodeLoginWithRetry();
+    }
+
+    this.prompts.write("I found an existing Hermes Nous Portal login on this machine.\n\n");
+    this.prompts.write("   1  Reuse it        Use the saved Nous Portal login for this deployment\n");
+    this.prompts.write("   2  Sign in again   Start a fresh Nous Portal login now\n\n");
+    const choice = await this.chooseNumber("Choose an option [1]: ", 2, 1);
+    if (choice === 1) {
+      return stored;
+    }
+    return this.runNousDeviceCodeLoginWithRetry();
+  }
+
   private async runCodexDeviceCodeLoginWithRetry(): Promise<ResolvedCodexAuth> {
     while (true) {
       this.prompts.write("If device-code sign-in has trouble in a remote or headless terminal, open:\n");
@@ -995,6 +1083,24 @@ export class FlyDeployWizard implements DeployWizardPort {
         this.prompts.write(`${message}\n`);
         this.prompts.write("If you're using ChatGPT OAuth here, check the ChatGPT security settings link above and retry.\n\n");
         this.prompts.write("   1  Retry sign-in   Start the OpenAI Codex device-code flow again\n");
+        this.prompts.write("   2  Cancel setup    Stop this deployment wizard\n\n");
+
+        const choice = await this.chooseNumber("Choose an option [1]: ", 2, 1);
+        if (choice === 2) {
+          throw new Error("Deployment cancelled.");
+        }
+      }
+    }
+  }
+
+  private async runNousDeviceCodeLoginWithRetry(): Promise<ResolvedNousPortalAuth> {
+    while (true) {
+      try {
+        return await this.nousAuth.runDeviceCodeLogin(this.prompts);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Nous Portal sign-in failed.";
+        this.prompts.write(`${message}\n\n`);
+        this.prompts.write("   1  Retry sign-in   Start the Nous Portal device-code flow again\n");
         this.prompts.write("   2  Cancel setup    Stop this deployment wizard\n\n");
 
         const choice = await this.chooseNumber("Choose an option [1]: ", 2, 1);
@@ -1037,12 +1143,75 @@ export class FlyDeployWizard implements DeployWizardPort {
     return models[selectedIndex - 1].value;
   }
 
+  private async collectNousModel(envValue: string | undefined, auth: ResolvedNousPortalAuth): Promise<string> {
+    const preset = envValue?.trim();
+    const models = await this.fetchNousModels(auth, this.prompts.isInteractive());
+    if (preset && preset.length > 0) {
+      return preset;
+    }
+    if (!this.prompts.isInteractive()) {
+      if (models.length === 0) {
+        throw new Error("Nous Portal did not return any models. Set LLM_MODEL and retry.");
+      }
+      return models[0].value;
+    }
+
+    if (models.length === 0) {
+      this.prompts.write("Nous Portal did not return any models right now.\n");
+      this.prompts.write("You can still enter a model ID manually if you know which one you want.\n\n");
+      while (true) {
+        const answer = (await this.prompts.ask("Model ID: ")).trim();
+        if (answer.length > 0) {
+          return answer;
+        }
+        this.prompts.write("Model ID cannot be empty.\n");
+      }
+    }
+
+    this.prompts.write("Which Nous Portal model should your agent use?\n\n");
+    models.forEach((option, index) => {
+      this.prompts.write(`  ${String(index + 1).padStart(2, " ")}  ${option.label.padEnd(24, " ")} ${option.bestFor}\n`);
+    });
+    const manualIndex = models.length + 1;
+    this.prompts.write(`  ${String(manualIndex).padStart(2, " ")}  Bring my own model        Enter a model ID manually\n\n`);
+
+    const selectedIndex = await this.chooseNumber("Choose a model [1]: ", manualIndex, 1);
+    if (selectedIndex === manualIndex) {
+      while (true) {
+        const answer = (await this.prompts.ask("Model ID: ")).trim();
+        if (answer.length > 0) {
+          return answer;
+        }
+        this.prompts.write("Model ID cannot be empty.\n");
+      }
+    }
+
+    return models[selectedIndex - 1].value;
+  }
+
   private async fetchCodexModels(accessToken: string, announce: boolean): Promise<CodexModelOption[]> {
     if (announce) {
       this.prompts.write("Fetching available Codex models from OpenAI...\n");
     }
 
     const models = await this.codexAuth.fetchModels(accessToken);
+    this.rememberModelOptions(models.map((option) => ({
+      value: option.value,
+      label: option.label,
+      bestFor: option.bestFor,
+      providerKey: option.providerKey,
+      providerLabel: option.providerLabel,
+      supportsReasoning: option.supportsReasoning,
+    })));
+    return models;
+  }
+
+  private async fetchNousModels(auth: ResolvedNousPortalAuth, announce: boolean): Promise<NousModelOption[]> {
+    if (announce) {
+      this.prompts.write("Fetching available models from Nous Portal...\n");
+    }
+
+    const models = await this.nousAuth.fetchModels(auth);
     this.rememberModelOptions(models.map((option) => ({
       value: option.value,
       label: option.label,
@@ -1070,13 +1239,65 @@ export class FlyDeployWizard implements DeployWizardPort {
     throw new Error("HERMES_AUTH_JSON_B64 does not contain valid OpenAI Codex credentials.");
   }
 
-  private normalizeAiProvider(value: string | undefined): "openrouter" | "openai-codex" | undefined {
+  private nousAuthFromEncodedStore(authJsonB64: string): ResolvedNousPortalAuth {
+    try {
+      const raw = Buffer.from(authJsonB64, "base64").toString("utf8");
+      const parsed = JSON.parse(raw) as {
+        providers?: Record<string, { access_token?: unknown; portal_base_url?: unknown; inference_base_url?: unknown }>;
+      };
+      const state = parsed.providers?.nous;
+      const accessToken = String(state?.access_token ?? "").trim();
+      if (accessToken.length === 0) {
+        throw new Error("missing access token");
+      }
+      const portalBaseUrl = String(state?.portal_base_url ?? "https://portal.nousresearch.com").trim() || "https://portal.nousresearch.com";
+      const inferenceBaseUrl = String(state?.inference_base_url ?? "https://inference-api.nousresearch.com/v1").trim()
+        || "https://inference-api.nousresearch.com/v1";
+      return {
+        source: "hermes",
+        accessToken,
+        authJsonB64,
+        portalBaseUrl,
+        inferenceBaseUrl,
+      };
+    } catch {
+      throw new Error("HERMES_AUTH_JSON_B64 does not contain valid Nous Portal credentials.");
+    }
+  }
+
+  private detectOauthProviderFromEncodedAuth(authJsonB64: string | undefined): "openai-codex" | "nous" | undefined {
+    const encoded = (authJsonB64 ?? "").trim();
+    if (encoded.length === 0) {
+      return undefined;
+    }
+
+    try {
+      const raw = Buffer.from(encoded, "base64").toString("utf8");
+      const parsed = JSON.parse(raw) as { active_provider?: unknown };
+      const activeProvider = String(parsed.active_provider ?? "").trim().toLowerCase();
+      if (activeProvider === "openai-codex") {
+        return "openai-codex";
+      }
+      if (activeProvider === "nous") {
+        return "nous";
+      }
+    } catch {
+      return undefined;
+    }
+
+    return undefined;
+  }
+
+  private normalizeAiProvider(value: string | undefined): "openrouter" | "openai-codex" | "nous" | undefined {
     const normalized = (value ?? "").trim().toLowerCase();
     if (normalized === "openrouter") {
       return "openrouter";
     }
     if (normalized === "openai-codex" || normalized === "codex" || normalized === "chatgpt") {
       return "openai-codex";
+    }
+    if (normalized === "nous" || normalized === "nous-portal" || normalized === "portal") {
+      return "nous";
     }
     return undefined;
   }
@@ -1604,6 +1825,9 @@ export class FlyDeployWizard implements DeployWizardPort {
   private describeAiAccess(provider: string): string {
     if (provider === "openai-codex") {
       return "ChatGPT subscription (OpenAI Codex)";
+    }
+    if (provider === "nous") {
+      return "Nous Portal OAuth";
     }
     return "OpenRouter API key";
   }

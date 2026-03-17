@@ -72,6 +72,9 @@ function describeAiAccess(provider: string): string {
   if (provider === "openai-codex") {
     return "ChatGPT subscription (OpenAI Codex)";
   }
+  if (provider === "nous") {
+    return "Nous Portal OAuth";
+  }
   return "OpenRouter API key";
 }
 

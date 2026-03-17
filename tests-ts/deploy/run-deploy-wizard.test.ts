@@ -206,6 +206,16 @@ function liveCodexModelsFixture() {
   };
 }
 
+function liveNousModelsFixture() {
+  return {
+    data: [
+      { id: "gpt-5.4" },
+      { id: "gpt-5.4-mini" },
+      { id: "nous-hermes-3" }
+    ]
+  };
+}
+
 describe("RunDeployWizardUseCase - happy path", () => {
   it("returns ok when all phases pass", async () => {
     const io = makeIO();
@@ -1132,6 +1142,95 @@ describe("FlyDeployWizard.collectConfig", () => {
       assert.match(guidedCopy, /Balanced \(recommended\)/);
       assert.match(guidedCopy, /Higher effort for harder tasks/);
       assert.match(guidedCopy, /Reasoning:\s+low/);
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
+  it("offers Nous Portal access and can reuse existing Hermes auth", async () => {
+    const home = await mkdtemp(join(tmpdir(), "hermes-fly-nous-auth-"));
+    await mkdir(join(home, ".hermes"), { recursive: true });
+    await writeFile(join(home, ".hermes", "auth.json"), JSON.stringify({
+      version: 1,
+      providers: {
+        nous: {
+          portal_base_url: "https://portal.nousresearch.com",
+          inference_base_url: "https://inference-api.nousresearch.com/v1",
+          client_id: "hermes-cli",
+          scope: "inference:mint_agent_key",
+          token_type: "Bearer",
+          access_token: "access-nous",
+          refresh_token: "refresh-nous",
+          obtained_at: "2026-03-17T07:00:00.000Z",
+          expires_at: "2026-03-17T08:00:00.000Z",
+          expires_in: 3600,
+          tls: { insecure: false, ca_bundle: null },
+          agent_key: null,
+          agent_key_id: null,
+          agent_key_expires_at: null,
+          agent_key_expires_in: null,
+          agent_key_reused: null,
+          agent_key_obtained_at: null
+        }
+      },
+      active_provider: "nous"
+    }), "utf8");
+
+    const prompts = makePromptPort([
+      "",
+      "",
+      "",
+      "",
+      "",
+      "3",
+      "1",
+      "",
+      "",
+      "",
+      "y"
+    ], { interactive: true });
+    const runner = makeProcessRunner(async (command, args) => {
+      if (command !== "curl") {
+        return { exitCode: 1 };
+      }
+      const target = args.find((value) => value.startsWith("https://"));
+      if (target === "https://portal.nousresearch.com/api/oauth/agent-key") {
+        return {
+          exitCode: 0,
+          stdout: `${JSON.stringify({
+            api_key: "agent-key-123",
+            inference_base_url: "https://inference-api.nousresearch.com/v1"
+          })}\n200`
+        };
+      }
+      if (target === "https://inference-api.nousresearch.com/v1/models") {
+        return {
+          exitCode: 0,
+          stdout: JSON.stringify(liveNousModelsFixture())
+        };
+      }
+      return { exitCode: 1 };
+    });
+
+    try {
+      const wizard = new FlyDeployWizard({ HOME: home }, { prompts, process: runner });
+
+      const config = await wizard.collectConfig({ channel: "stable" });
+
+      assert.equal(config.provider, "nous");
+      assert.equal(config.apiKey, "");
+      assert.ok(config.authJsonB64);
+      assert.equal(config.model, "gpt-5.4");
+      assert.equal(config.reasoningEffort, "medium");
+      assert.equal(config.sttProvider, undefined);
+      assert.equal(config.sttModel, undefined);
+      const guidedCopy = prompts.writes.join("");
+      assert.match(guidedCopy, /How should Hermes access AI models/);
+      assert.match(guidedCopy, /Nous Portal subscription/);
+      assert.match(guidedCopy, /I found an existing Hermes Nous Portal login on this machine/);
+      assert.match(guidedCopy, /Fetching available models from Nous Portal/);
+      assert.match(guidedCopy, /Which Nous Portal model should your agent use/);
+      assert.match(guidedCopy, /AI access:\s+Nous Portal OAuth/);
     } finally {
       await rm(home, { recursive: true, force: true });
     }
