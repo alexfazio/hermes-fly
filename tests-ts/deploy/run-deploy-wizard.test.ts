@@ -13,6 +13,11 @@ import { ReadlineDeployPrompts } from "../../src/contexts/deploy/infrastructure/
 import { FlyDeployWizard } from "../../src/contexts/deploy/infrastructure/adapters/fly-deploy-wizard.ts";
 import type { DeployPromptPort } from "../../src/contexts/deploy/infrastructure/adapters/deploy-prompts.ts";
 import type { QrCodeRendererPort } from "../../src/contexts/deploy/infrastructure/adapters/qr-code.ts";
+import type { BrowserOpenerPort } from "../../src/contexts/deploy/infrastructure/adapters/browser-opener.ts";
+import type {
+  DiscordBotAuthPort,
+  DiscordBotValidationResult,
+} from "../../src/contexts/deploy/infrastructure/adapters/discord-bot-auth.ts";
 
 function makeIO() {
   const outLines: string[] = [];
@@ -139,6 +144,32 @@ function makeQrRenderer(output = "[[QR: https://t.me/BotFather?text=%2Fnewbot]]"
   return {
     render: async () => output
   };
+}
+
+function makeBrowserOpener(result: { ok: boolean; error?: string } = { ok: true }) {
+  const opened: string[] = [];
+  const opener: BrowserOpenerPort = {
+    open: async (url: string) => {
+      opened.push(url);
+      return result;
+    }
+  };
+  return { opener, opened };
+}
+
+function makeDiscordAuth(results: DiscordBotValidationResult[]) {
+  const seenTokens: string[] = [];
+  const auth: DiscordBotAuthPort = {
+    validateBotToken: async (token: string) => {
+      seenTokens.push(token);
+      const next = results.shift();
+      if (!next) {
+        throw new Error("No Discord auth result queued");
+      }
+      return next;
+    }
+  };
+  return { auth, seenTokens };
 }
 
 function liveOpenRouterModelsFixture() {
@@ -823,7 +854,8 @@ describe("FlyDeployWizard.postDeployActions", () => {
       calls.push({ command, args });
       return { exitCode: 0, stdout: "", stderr: "" };
     });
-    const wizard = new FlyDeployWizard({}, { prompts, process: runner });
+    const { opener, opened } = makeBrowserOpener();
+    const wizard = new FlyDeployWizard({}, { prompts, process: runner, browserOpener: opener });
 
     await wizard.finalizeMessagingSetup({
       ...DEFAULT_CONFIG,
@@ -841,6 +873,8 @@ describe("FlyDeployWizard.postDeployActions", () => {
     assert.match(discordRemoteCommand, /discord/);
     assert.match(discordRemoteCommand, /ABCD1234/);
     assert.match(io.outText, /Discord pairing/);
+    assert.match(io.outText, /direct message/i);
+    assert.deepEqual(opened, ["https://discord.com/oauth2/authorize?client_id=123456789012345678&scope=bot%20applications.commands"]);
   });
 
   it("runs filtered remote WhatsApp pairing, restarts the deployed app, and avoids local-machine guidance", async () => {
@@ -1837,7 +1871,7 @@ describe("FlyDeployWizard.collectConfig", () => {
     assert.ok(prompts.asked.some((message) => message.includes("Continue with this bot?")));
   });
 
-  it("configures Discord with DM pairing for only-me access", async () => {
+  it("guides a non-technical user through Discord bot creation, opens the portal and invite link, and defaults to DM pairing", async () => {
     const prompts = makePromptPort([
       "",
       "",
@@ -1849,8 +1883,9 @@ describe("FlyDeployWizard.collectConfig", () => {
       "",
       "",
       "2",
+      "2",
+      "",
       "discord-live-token",
-      "y",
       "1",
       "y"
     ], { interactive: true });
@@ -1867,15 +1902,26 @@ describe("FlyDeployWizard.collectConfig", () => {
       if (command === "curl" && args.includes("https://openrouter.ai/api/v1/models")) {
         return { exitCode: 0, stdout: JSON.stringify({ data: liveOpenRouterModelsFixture() }) };
       }
-      if (command === "curl" && args.includes("https://discord.com/api/v10/users/@me")) {
-        return {
-          exitCode: 0,
-          stdout: JSON.stringify({ id: "123456789012345678", username: "hermes-discord-bot" })
-        };
-      }
       return { exitCode: 1 };
     });
-    const wizard = new FlyDeployWizard({}, { prompts, process: runner });
+    const { auth } = makeDiscordAuth([
+      {
+        ok: true,
+        identity: {
+          applicationId: "123456789012345678",
+          username: "hermes-discord-bot",
+          inviteUrl: "https://discord.com/oauth2/authorize?client_id=123456789012345678&scope=bot%20applications.commands",
+        },
+      },
+    ]);
+    const { opener, opened } = makeBrowserOpener();
+    const wizard = new FlyDeployWizard({}, {
+      prompts,
+      process: runner,
+      discordAuth: auth,
+      browserOpener: opener,
+      qrRenderer: makeQrRenderer("[[DISCORD-QR]]"),
+    });
 
     const config = await wizard.collectConfig({ channel: "stable" });
 
@@ -1885,10 +1931,77 @@ describe("FlyDeployWizard.collectConfig", () => {
     assert.equal(config.discordBotUsername, "hermes-discord-bot");
     assert.equal(config.discordUsePairing, true);
     assert.equal(config.discordAllowedUsers, undefined);
+    assert.deepEqual(opened, [
+      "https://discord.com/developers/applications",
+      "https://discord.com/oauth2/authorize?client_id=123456789012345678&scope=bot%20applications.commands",
+    ]);
     const guidedCopy = prompts.writes.join("");
-    assert.match(guidedCopy, /Discord Developer Portal: https:\/\/discord\.com\/developers\/applications/);
+    assert.match(guidedCopy, /If you already have a Discord bot token, you can paste it now/);
+    assert.match(guidedCopy, /New Application/);
+    assert.match(guidedCopy, /Add Bot/);
+    assert.match(guidedCopy, /Reset Token/);
     assert.match(guidedCopy, /Invite URL: https:\/\/discord\.com\/oauth2\/authorize\?client_id=123456789012345678&scope=bot%20applications\.commands/);
+    assert.match(guidedCopy, /\[\[DISCORD-QR\]\]/);
     assert.match(guidedCopy, /Only me\s+Just you\. Hermes will use DM pairing after deploy/);
+    assert.ok(prompts.pauses.some((message) => message.includes("copied the Discord bot token")));
+    assert.ok(prompts.pauses.some((message) => message.includes("invited this bot to your Discord server")));
+  });
+
+  it("explains likely Discord token mistakes before re-prompting", async () => {
+    const prompts = makePromptPort([
+      "",
+      "",
+      "",
+      "",
+      "",
+      "1",
+      "sk-live",
+      "",
+      "",
+      "2",
+      "1",
+      "bad-token",
+      "good-token",
+      "1",
+      "y"
+    ], { interactive: true });
+    const runner = makeProcessRunner(async (command, args) => {
+      if (command === "fly" && args[0] === "platform" && args[1] === "regions") {
+        return { exitCode: 0, stdout: JSON.stringify([{ code: "iad", name: "Ashburn, Virginia (US)" }]) };
+      }
+      if (command === "fly" && args[0] === "platform" && args[1] === "vm-sizes") {
+        return { exitCode: 0, stdout: JSON.stringify([{ name: "shared-cpu-1x", memory_mb: 256 }]) };
+      }
+      if (command === "curl" && args.includes("https://openrouter.ai/api/v1/key")) {
+        return { exitCode: 0, stdout: JSON.stringify({ data: { is_free_tier: false, usage: 10 } }) };
+      }
+      if (command === "curl" && args.includes("https://openrouter.ai/api/v1/models")) {
+        return { exitCode: 0, stdout: JSON.stringify({ data: liveOpenRouterModelsFixture() }) };
+      }
+      return { exitCode: 1 };
+    });
+    const { auth, seenTokens } = makeDiscordAuth([
+      { ok: false, reason: "invalid_token", error: "TokenInvalid: An invalid token was provided." },
+      {
+        ok: true,
+        identity: {
+          applicationId: "123456789012345678",
+          username: "hermes-discord-bot",
+          inviteUrl: "https://discord.com/oauth2/authorize?client_id=123456789012345678&scope=bot%20applications.commands",
+        },
+      },
+    ]);
+    const { opener } = makeBrowserOpener();
+    const wizard = new FlyDeployWizard({}, { prompts, process: runner, discordAuth: auth, browserOpener: opener });
+
+    const config = await wizard.collectConfig({ channel: "stable" });
+
+    assert.equal(config.discordBotToken, "good-token");
+    assert.deepEqual(seenTokens, ["bad-token", "good-token"]);
+    const guidedCopy = prompts.writes.join("");
+    assert.match(guidedCopy, /Discord could not log in with that bot token/);
+    assert.match(guidedCopy, /Client Secret instead of Bot Token/i);
+    assert.match(guidedCopy, /token was regenerated/i);
   });
 
   it("configures Slack with bot and app tokens plus DM pairing for only-me access", async () => {

@@ -29,6 +29,7 @@
   "dependencies": {
     "@types/qrcode": "^1.5.6",
     "commander": "^12.1.0",
+    "discord.js": "^14.25.1",
     "qrcode": "^1.5.4"
   },
   "devDependencies": {

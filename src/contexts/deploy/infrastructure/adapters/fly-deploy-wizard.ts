@@ -5,6 +5,12 @@ import { NodeProcessRunner, type ForegroundProcessRunner } from "../../../../ada
 import { DeploymentIntent } from "../../domain/deployment-intent.js";
 import { ReadlineDeployPrompts, type DeployPromptPort } from "./deploy-prompts.js";
 import { TerminalQrCodeRenderer, type QrCodeRendererPort } from "./qr-code.js";
+import { SystemBrowserOpener, type BrowserOpenerPort } from "./browser-opener.js";
+import {
+  DiscordBotAuthAdapter,
+  type DiscordBotAuthPort,
+  type DiscordBotIdentity,
+} from "./discord-bot-auth.js";
 import {
   OpenAICodexAuthAdapter,
   type CodexModelOption,
@@ -132,11 +138,6 @@ type DiscordSetup = {
   allowedUsers?: string;
   usePairing?: boolean;
   allowAllUsers?: boolean;
-};
-
-type DiscordBotIdentity = {
-  applicationId: string;
-  username: string;
 };
 
 type SlackSetup = {
@@ -310,6 +311,8 @@ export interface FlyDeployWizardDeps {
   prompts?: DeployPromptPort;
   templateWriter?: TemplateWriter;
   qrRenderer?: QrCodeRendererPort;
+  browserOpener?: BrowserOpenerPort;
+  discordAuth?: DiscordBotAuthPort;
   codexAuth?: OpenAICodexAuthAdapter;
   anthropicAuth?: AnthropicAuthAdapter;
   nousAuth?: NousPortalAuthAdapter;
@@ -322,6 +325,8 @@ export class FlyDeployWizard implements DeployWizardPort {
   private readonly process: ForegroundProcessRunner;
   private readonly prompts: DeployPromptPort;
   private readonly qrRenderer: QrCodeRendererPort;
+  private readonly browserOpener: BrowserOpenerPort;
+  private readonly discordAuth: DiscordBotAuthPort;
   private readonly codexAuth: OpenAICodexAuthAdapter;
   private readonly anthropicAuth: AnthropicAuthAdapter;
   private readonly nousAuth: NousPortalAuthAdapter;
@@ -339,6 +344,8 @@ export class FlyDeployWizard implements DeployWizardPort {
     this.templateWriter = deps.templateWriter ?? new TemplateWriter();
     this.prompts = deps.prompts ?? new ReadlineDeployPrompts();
     this.qrRenderer = deps.qrRenderer ?? new TerminalQrCodeRenderer();
+    this.browserOpener = deps.browserOpener ?? new SystemBrowserOpener(this.process, this.env);
+    this.discordAuth = deps.discordAuth ?? new DiscordBotAuthAdapter();
     this.codexAuth = deps.codexAuth ?? new OpenAICodexAuthAdapter(this.process, this.env);
     this.anthropicAuth = deps.anthropicAuth ?? new AnthropicAuthAdapter(this.process, this.env);
     this.nousAuth = deps.nousAuth ?? new NousPortalAuthAdapter(this.process, this.env);
@@ -701,15 +708,21 @@ export class FlyDeployWizard implements DeployWizardPort {
     }
 
     if (config.discordBotToken && config.discordUsePairing && !config.gatewayAllowAllUsers) {
+      let intro = "To finish Discord setup, send the bot a direct message in Discord and copy the pairing code it replies with.\n";
+      if (config.discordApplicationId) {
+        const inviteUrl = this.buildDiscordInviteUrl(config.discordApplicationId);
+        await this.tryOpenBrowser(inviteUrl);
+        intro =
+          `If you have not invited the bot yet, open this Discord invite link:\n${inviteUrl}\n` +
+          "Then open Discord, send the bot a direct message, and copy the pairing code it replies with.\n";
+      }
       await this.completeRemotePairing({
         appName: config.appName,
         platform: "discord",
         promptLabel: "Discord",
         stdout,
         stderr,
-        intro: config.discordApplicationId
-          ? `To finish Discord setup, invite the bot if you have not done it yet: ${this.buildDiscordInviteUrl(config.discordApplicationId)}\nThen send the bot a direct message in Discord and copy the pairing code it replies with.\n`
-          : "To finish Discord setup, send the bot a direct message in Discord and copy the pairing code it replies with.\n",
+        intro,
       });
     }
 
@@ -2201,11 +2214,11 @@ export class FlyDeployWizard implements DeployWizardPort {
   }, options: { allowAnyone: boolean }): Promise<DiscordSetup> {
     const presetToken = (input.botToken ?? "").trim();
     if (presetToken.length > 0) {
-      const identity = await this.validateDiscordBotToken(presetToken);
-      if (!identity) {
+      const validation = await this.discordAuth.validateBotToken(presetToken);
+      if (!validation.ok) {
         throw new Error("Discord rejected DISCORD_BOT_TOKEN. Check it and try again.");
       }
-      return this.buildDiscordSetupFromInputs(presetToken, identity, input.allowedUsers);
+      return this.buildDiscordSetupFromInputs(presetToken, validation.identity, input.allowedUsers);
     }
 
     if (!this.prompts.isInteractive()) {
@@ -2213,8 +2226,16 @@ export class FlyDeployWizard implements DeployWizardPort {
     }
 
     this.prompts.write("\nConnect Discord\n");
-    this.prompts.write("Create or open your Discord bot in the Developer Portal, then paste the bot token here.\n");
-    this.prompts.write(`Discord Developer Portal: ${DISCORD_DEVELOPER_PORTAL_URL}\n\n`);
+    this.prompts.write("Hermes needs your own Discord bot token.\n");
+    this.prompts.write("If you already have a Discord bot token, you can paste it now.\n");
+    this.prompts.write("If not, hermes-fly can walk you through creating one in the Discord Developer Portal.\n\n");
+    this.prompts.write("   1  I already have a bot token  Paste it now\n");
+    this.prompts.write("   2  Help me create one          Open the Developer Portal and walk me through it\n\n");
+
+    const setupPath = await this.chooseNumber("Choose an option [2]: ", 2, 2);
+    if (setupPath === 2) {
+      await this.guideDiscordBotCreation();
+    }
 
     while (true) {
       const token = (await this.prompts.askSecret("Discord bot token (required): ")).trim();
@@ -2224,17 +2245,16 @@ export class FlyDeployWizard implements DeployWizardPort {
       }
 
       this.prompts.write("Verifying your Discord bot token...\n");
-      const identity = await this.validateDiscordBotToken(token);
-      if (!identity) {
-        this.prompts.write("Discord rejected this bot token. Check it and try again.\n");
+      const validation = await this.discordAuth.validateBotToken(token);
+      if (!validation.ok) {
+        this.writeDiscordTokenTroubleshooting(validation);
         continue;
       }
 
+      const identity = validation.identity;
       this.prompts.write(`Found bot: @${identity.username} (${identity.applicationId})\n`);
-      this.prompts.write(`Invite URL: ${this.buildDiscordInviteUrl(identity.applicationId)}\n`);
-      if (!(await this.confirmYesNo("Continue with this Discord bot? [y/N]: ", false))) {
-        continue;
-      }
+      await this.showDiscordInvite(identity.inviteUrl);
+      await this.prompts.pause("Press Enter after you have invited this bot to your Discord server. ");
 
       const access = await this.collectGatewayAccessPolicy("Discord", options, {
         invalidMessage: "Discord user IDs must be numeric. Use commas to separate multiple IDs.",
@@ -2447,34 +2467,56 @@ export class FlyDeployWizard implements DeployWizardPort {
     }
   }
 
-  private async validateDiscordBotToken(token: string): Promise<DiscordBotIdentity | null> {
-    try {
-      const result = await this.process.run(
-        "curl",
-        [
-          "-fsSL",
-          "--max-time",
-          "10",
-          "-H",
-          `Authorization: Bot ${token}`,
-          "https://discord.com/api/v10/users/@me",
-        ],
-        { env: this.env }
-      );
-      if (result.exitCode !== 0 || result.stdout.trim().length === 0) {
-        return null;
-      }
+  private async guideDiscordBotCreation(): Promise<void> {
+    this.prompts.write("Discord Developer Portal\n");
+    this.prompts.write(`${DISCORD_DEVELOPER_PORTAL_URL}\n\n`);
+    this.prompts.write("Do these steps in order:\n");
+    this.prompts.write("  1. Click New Application\n");
+    this.prompts.write("  2. Give it a name you will recognize\n");
+    this.prompts.write("  3. Open Bot in the left sidebar\n");
+    this.prompts.write("  4. Click Add Bot\n");
+    this.prompts.write("  5. Click Reset Token, then Copy\n\n");
+    await this.tryOpenBrowser(DISCORD_DEVELOPER_PORTAL_URL);
+    await this.prompts.pause("Press Enter after you have copied the Discord bot token. ");
+  }
 
-      const payload = JSON.parse(result.stdout) as { id?: unknown; username?: unknown };
-      const applicationId = String(payload.id ?? "").trim();
-      const username = String(payload.username ?? "").trim();
-      if (!/^[0-9]+$/.test(applicationId) || username.length === 0) {
-        return null;
-      }
-      return { applicationId, username };
-    } catch {
-      return null;
+  private writeDiscordTokenTroubleshooting(validation: { reason: string; error?: string }): void {
+    this.prompts.write("Discord could not log in with that bot token.\n");
+    this.prompts.write("Common causes:\n");
+    this.prompts.write("  - you copied Client Secret instead of Bot Token\n");
+    this.prompts.write("  - the bot has not been added yet in the Bot tab\n");
+    this.prompts.write("  - the token was regenerated and the old one no longer works\n");
+    this.prompts.write("  - extra spaces or line breaks were pasted\n");
+    if (validation.reason === "network") {
+      this.prompts.write("  - your internet connection or Discord was temporarily unavailable\n");
     }
+    this.prompts.write(`Discord Developer Portal: ${DISCORD_DEVELOPER_PORTAL_URL}\n`);
+    if (validation.error) {
+      this.prompts.write(`Details: ${validation.error}\n`);
+    }
+  }
+
+  private async showDiscordInvite(inviteUrl: string): Promise<void> {
+    this.prompts.write("Invite the bot to the Discord server where you want to chat with Hermes.\n");
+    this.prompts.write(`Invite URL: ${inviteUrl}\n`);
+    const opened = await this.tryOpenBrowser(inviteUrl);
+    if (opened) {
+      this.prompts.write("I opened the Discord invite link in your browser.\n");
+    } else {
+      this.prompts.write("If the browser did not open, copy the invite URL above.\n");
+    }
+    try {
+      const qr = await this.qrRenderer.render(inviteUrl);
+      this.prompts.write("Scan this QR code to open the Discord invite on another device:\n\n");
+      this.prompts.write(`${qr}\n`);
+    } catch {
+      // Best effort only.
+    }
+  }
+
+  private async tryOpenBrowser(url: string): Promise<boolean> {
+    const result = await this.browserOpener.open(url);
+    return result.ok;
   }
 
   private async validateSlackBotToken(token: string): Promise<SlackBotIdentity | null> {
