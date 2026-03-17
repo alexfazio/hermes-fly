@@ -1971,8 +1971,12 @@ describe("FlyDeployWizard.collectConfig", () => {
     assert.equal(config.whatsappMode, "self-chat");
     assert.equal(config.whatsappUsePairing, true);
     const guidedCopy = prompts.writes.join("");
+    assert.match(guidedCopy, /WhatsApp has two setup styles/);
+    assert.match(guidedCopy, /If you are just testing for yourself, pick Self-chat/);
+    assert.match(guidedCopy, /If you want other people to talk to Hermes, pick Bot mode/);
+    assert.match(guidedCopy, /a dedicated WhatsApp number is the recommended setup/);
     assert.match(guidedCopy, /Hermes will finish WhatsApp pairing after deploy by opening the remote WhatsApp setup flow in this terminal/);
-    assert.match(guidedCopy, /Self-chat/);
+    assert.match(guidedCopy, /Recommended for safe personal testing/);
   });
 
   it("prompts for Hermes-compatible reasoning effort when the selected model supports it", async () => {

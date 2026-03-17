@@ -2340,9 +2340,16 @@ export class FlyDeployWizard implements DeployWizardPort {
     }
 
     this.prompts.write("\nConnect WhatsApp\n");
+    this.prompts.write("WhatsApp has two setup styles.\n");
+    this.prompts.write("Bot mode gives Hermes its own WhatsApp number, so other people can message that number like a normal contact.\n");
+    this.prompts.write("Self-chat uses your own WhatsApp account only in the built-in 'Message yourself' chat.\n");
+    this.prompts.write("Hermes will reply there as you, and it will not message your other contacts.\n\n");
+    this.prompts.write("If you are just testing for yourself, pick Self-chat.\n");
+    this.prompts.write("If you want other people to talk to Hermes, pick Bot mode.\n");
+    this.prompts.write("For Bot mode, a dedicated WhatsApp number is the recommended setup.\n");
     this.prompts.write("Hermes will finish WhatsApp pairing after deploy by opening the remote WhatsApp setup flow in this terminal.\n\n");
-    this.prompts.write("   1  Bot mode      Use a dedicated WhatsApp bot account\n");
-    this.prompts.write("   2  Self-chat     Use your own WhatsApp account in self-chat mode\n\n");
+    this.prompts.write("   1  Bot mode      Recommended when other people should message Hermes through its own number\n");
+    this.prompts.write("   2  Self-chat     Recommended for safe personal testing in your own Message yourself chat\n\n");
 
     const modeChoice = await this.chooseNumber("Choose a mode [1]: ", 2, 1);
     const mode: "bot" | "self-chat" = modeChoice === 2 ? "self-chat" : "bot";
