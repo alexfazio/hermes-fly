@@ -11,6 +11,8 @@ import { runResumeCommand } from "./commands/resume.js";
 import { runDoctorCommand } from "./commands/doctor.js";
 import { runDestroyCommand } from "./commands/destroy.js";
 import { runConsoleCommand } from "./commands/console.js";
+import { runExecCommand } from "./commands/exec.js";
+import { runAgentCommand } from "./commands/agent.js";
 import { HERMES_FLY_TS_VERSION } from "./version.js";
 
 export function buildProgram(): Command {
@@ -98,12 +100,32 @@ export function buildProgram(): Command {
 
   program
     .command("console")
-    .description("Open Hermes CLI in a deployed agent")
+    .description("Open Hermes CLI or a shell in a deployed agent")
     .helpOption(false)
     .allowUnknownOption(true)
     .allowExcessArguments(true)
     .action(async (_, cmd: Command) => {
       process.exitCode = await runConsoleCommand(cmd.args);
+    });
+
+  program
+    .command("exec")
+    .description("Execute a raw command in a deployed agent machine")
+    .helpOption(false)
+    .allowUnknownOption(true)
+    .allowExcessArguments(true)
+    .action(async (_, cmd: Command) => {
+      process.exitCode = await runExecCommand(cmd.args);
+    });
+
+  program
+    .command("agent")
+    .description("Run a Hermes CLI command in a deployed agent")
+    .helpOption(false)
+    .allowUnknownOption(true)
+    .allowExcessArguments(true)
+    .action(async (_, cmd: Command) => {
+      process.exitCode = await runAgentCommand(cmd.args);
     });
 
   program

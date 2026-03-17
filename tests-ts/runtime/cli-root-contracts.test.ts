@@ -13,7 +13,7 @@ import { runVersionCommand } from "../../src/commands/version.ts";
 // ---------------------------------------------------------------
 
 describe("CLI root contracts - command registration", () => {
-  it("registers all 10 public commands", () => {
+  it("registers all 12 public commands", () => {
     const program = buildProgram();
     const names = program.commands.map((c) => c.name());
 
@@ -25,6 +25,8 @@ describe("CLI root contracts - command registration", () => {
       "logs",
       "doctor",
       "console",
+      "exec",
+      "agent",
       "destroy",
       "help",
       "version",
@@ -54,6 +56,8 @@ describe("CLI root contracts - help output", () => {
       "logs",
       "doctor",
       "console",
+      "exec",
+      "agent",
       "destroy",
       "help",
       "version",
