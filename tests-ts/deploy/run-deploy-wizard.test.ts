@@ -8,6 +8,7 @@ import { describe, it } from "node:test";
 import type { ForegroundProcessRunner } from "../../src/adapters/process.ts";
 import { RunDeployWizardUseCase } from "../../src/contexts/deploy/application/use-cases/run-deploy-wizard.ts";
 import type { DeployConfig, DeployWizardPort } from "../../src/contexts/deploy/application/ports/deploy-wizard.port.ts";
+import type { PostDeployCleanupPort } from "../../src/contexts/deploy/application/ports/post-deploy-cleanup.port.ts";
 import { ReadlineDeployPrompts } from "../../src/contexts/deploy/infrastructure/adapters/deploy-prompts.ts";
 import { FlyDeployWizard } from "../../src/contexts/deploy/infrastructure/adapters/fly-deploy-wizard.ts";
 import type { DeployPromptPort } from "../../src/contexts/deploy/infrastructure/adapters/deploy-prompts.ts";
@@ -51,6 +52,15 @@ function makePort(overrides: Partial<DeployWizardPort> = {}): DeployWizardPort {
     runDeploy: async () => ({ ok: true }),
     postDeployCheck: async () => ({ ok: true }),
     saveApp: async () => {},
+    chooseSuccessfulDeploymentAction: async () => "conclude",
+    showTelegramBotDeletionGuidance: async () => {},
+    ...overrides
+  };
+}
+
+function makeCleanupPort(overrides: Partial<PostDeployCleanupPort> = {}): PostDeployCleanupPort {
+  return {
+    destroyDeployment: async () => ({ ok: true }),
     ...overrides
   };
 }
@@ -249,6 +259,52 @@ describe("RunDeployWizardUseCase - happy path", () => {
     assert.match(io.outText, /Telegram:\s+@testhermesbot/);
     assert.match(io.outText, /Chat link:\s+https:\/\/t\.me\/testhermesbot\?start=test-app/);
     assert.match(io.outText, /Home channel:\s+1467489858/);
+  });
+
+  it("destroys the new deployment when the user chooses the post-deploy destroy action", async () => {
+    const io = makeIO();
+    const destroyed: string[] = [];
+    const uc = new RunDeployWizardUseCase(
+      makePort({
+        chooseSuccessfulDeploymentAction: async () => "destroy"
+      }),
+      makeCleanupPort({
+        destroyDeployment: async (appName) => {
+          destroyed.push(appName);
+          return { ok: true };
+        }
+      })
+    );
+
+    const result = await uc.execute({ autoInstall: true, channel: "stable" }, io.stderr, io.stdout);
+
+    assert.equal(result.kind, "ok");
+    assert.deepEqual(destroyed, ["test-app"]);
+    assert.match(io.outText, /Destroying the deployment you just created/);
+  });
+
+  it("shows Telegram delete guidance after destroying a deployment that configured a bot", async () => {
+    const io = makeIO();
+    let guidanceShown = false;
+    const uc = new RunDeployWizardUseCase(
+      makePort({
+        collectConfig: async () => ({
+          ...DEFAULT_CONFIG,
+          botToken: "123:abc",
+          telegramBotUsername: "testhermesbot"
+        }),
+        chooseSuccessfulDeploymentAction: async () => "destroy",
+        showTelegramBotDeletionGuidance: async () => {
+          guidanceShown = true;
+        }
+      }),
+      makeCleanupPort()
+    );
+
+    const result = await uc.execute({ autoInstall: true, channel: "stable" }, io.stderr, io.stdout);
+
+    assert.equal(result.kind, "ok");
+    assert.equal(guidanceShown, true);
   });
 });
 
@@ -629,6 +685,55 @@ describe("FlyDeployWizard.postDeployCheck", () => {
     assert.equal(result.ok, false);
     assert.match(result.error ?? "", /machine not running after deploy/);
     assert.equal(calls, 3);
+  });
+});
+
+describe("FlyDeployWizard.postDeployActions", () => {
+  it("lets the user keep the deployment after a successful deploy", async () => {
+    const prompts = makePromptPort(["1"], { interactive: true });
+    const wizard = new FlyDeployWizard({}, { prompts });
+
+    const action = await wizard.chooseSuccessfulDeploymentAction(DEFAULT_CONFIG);
+
+    assert.equal(action, "conclude");
+    assert.match(prompts.writes.join(""), /What would you like to do next/);
+  });
+
+  it("requires a second confirmation before destroying the new deployment", async () => {
+    const prompts = makePromptPort(["2", "y"], { interactive: true });
+    const wizard = new FlyDeployWizard({}, { prompts });
+
+    const action = await wizard.chooseSuccessfulDeploymentAction({
+      ...DEFAULT_CONFIG,
+      appName: "fresh-app",
+      botToken: "123:abc"
+    });
+
+    assert.equal(action, "destroy");
+    const guidedCopy = prompts.writes.join("");
+    assert.match(guidedCopy, /Destroy it now/);
+    assert.ok(prompts.asked.some((message) => message.includes("Destroy fresh-app now")));
+  });
+
+  it("shows BotFather delete guidance with a prefilled /deletebot link and QR code", async () => {
+    const prompts = makePromptPort([], { interactive: true });
+    const wizard = new FlyDeployWizard({}, {
+      prompts,
+      qrRenderer: makeQrRenderer("[[DELETEBOT-QR]]")
+    });
+
+    await wizard.showTelegramBotDeletionGuidance({
+      ...DEFAULT_CONFIG,
+      botToken: "123:abc",
+      telegramBotUsername: "testhermesbot"
+    });
+
+    const guidedCopy = prompts.writes.join("");
+    assert.match(guidedCopy, /Telegram does not document any Bot API method that permanently deletes a bot/);
+    assert.match(guidedCopy, /https:\/\/t\.me\/BotFather\?text=%2Fdeletebot/);
+    assert.match(guidedCopy, /Scan this QR code with your phone to open BotFather with \/deletebot ready to send/);
+    assert.match(guidedCopy, /\[\[DELETEBOT-QR\]\]/);
+    assert.match(guidedCopy, /choose @testhermesbot/);
   });
 });
 

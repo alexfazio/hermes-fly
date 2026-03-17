@@ -1,4 +1,5 @@
 import type { DeployConfig, DeployWizardPort } from "../ports/deploy-wizard.port.js";
+import type { PostDeployCleanupPort } from "../ports/post-deploy-cleanup.port.js";
 
 const VALID_CHANNELS = new Set(["stable", "preview", "edge"]);
 
@@ -113,7 +114,10 @@ function writeCompletionSummary(stdout: { write: (s: string) => void }, config: 
 }
 
 export class RunDeployWizardUseCase {
-  constructor(private readonly port: DeployWizardPort) {}
+  constructor(
+    private readonly port: DeployWizardPort,
+    private readonly cleanupPort?: PostDeployCleanupPort
+  ) {}
 
   async execute(
     opts: { autoInstall: boolean; channel: string },
@@ -202,6 +206,28 @@ export class RunDeployWizardUseCase {
     await this.port.saveApp(config.appName, config.region);
 
     writeCompletionSummary(stdout, config);
+
+    const action = await this.port.chooseSuccessfulDeploymentAction(config);
+    if (action === "destroy") {
+      if (!this.cleanupPort) {
+        stderr.write("[error] Destroy action requested, but no cleanup handler is available.\n");
+        return { kind: "failed", error: "destroy handler unavailable" };
+      }
+
+      stdout.write("\nDestroying the deployment you just created...\n");
+      const cleanupResult = await this.cleanupPort.destroyDeployment(config.appName, { stdout, stderr });
+      if (!cleanupResult.ok) {
+        if (cleanupResult.notFound) {
+          return { kind: "failed", error: "destroyed app not found" };
+        }
+        stderr.write(`[error] Post-deploy cleanup failed: ${cleanupResult.error ?? "unknown error"}\n`);
+        return { kind: "failed", error: cleanupResult.error ?? "post-deploy cleanup failed" };
+      }
+
+      if (config.botToken) {
+        await this.port.showTelegramBotDeletionGuidance(config);
+      }
+    }
 
     return { kind: "ok" };
   }

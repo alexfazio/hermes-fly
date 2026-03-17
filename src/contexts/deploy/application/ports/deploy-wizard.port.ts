@@ -19,6 +19,8 @@ export interface DeployConfig {
   telegramHomeChannel?: string;
 }
 
+export type SuccessfulDeploymentAction = "conclude" | "destroy";
+
 export interface DeployWizardPort {
   checkPlatform(): Promise<{ ok: boolean; error?: string }>;
   checkPrerequisites(opts: { autoInstall: boolean }): Promise<{ ok: boolean; missing?: string; autoInstallDisabled?: boolean; error?: string }>;
@@ -30,4 +32,6 @@ export interface DeployWizardPort {
   runDeploy(buildDir: string, config: DeployConfig): Promise<{ ok: boolean; error?: string }>;
   postDeployCheck(appName: string): Promise<{ ok: boolean; error?: string }>;
   saveApp(appName: string, region: string): Promise<void>;
+  chooseSuccessfulDeploymentAction(config: DeployConfig): Promise<SuccessfulDeploymentAction>;
+  showTelegramBotDeletionGuidance(config: DeployConfig): Promise<void>;
 }

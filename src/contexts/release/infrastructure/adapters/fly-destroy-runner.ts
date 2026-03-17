@@ -44,10 +44,18 @@ export class FlyDestroyRunner implements DestroyRunnerPort {
   }
 
   async telegramLogout(appName: string): Promise<void> {
-    // Best-effort: SSH into the app and call the Telegram logOut API
+    // Best-effort: SSH into the app and call the Telegram logOut API.
+    // Hermes stores the token as TELEGRAM_BOT_TOKEN; BOT_TOKEN is kept as a fallback.
     await this.processRunner.run(
       "fly",
-      ["ssh", "console", "-a", appName, "-C", "curl -s https://api.telegram.org/bot$BOT_TOKEN/logOut"],
+      [
+        "ssh",
+        "console",
+        "-a",
+        appName,
+        "-C",
+        "sh -lc 'token=${TELEGRAM_BOT_TOKEN:-${BOT_TOKEN:-}}; if [ -n \"$token\" ]; then curl -fsSL --max-time 10 \"https://api.telegram.org/bot${token}/logOut\" >/dev/null 2>&1 || true; fi'"
+      ],
       { env: this.env }
     );
   }

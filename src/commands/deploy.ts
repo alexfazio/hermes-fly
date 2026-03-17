@@ -1,6 +1,10 @@
 import { RunDeployWizardUseCase } from "../contexts/deploy/application/use-cases/run-deploy-wizard.js";
 import type { DeployWizardPort } from "../contexts/deploy/application/ports/deploy-wizard.port.js";
 import { FlyDeployWizard } from "../contexts/deploy/infrastructure/adapters/fly-deploy-wizard.js";
+import { DestroyDeploymentAdapter } from "../contexts/deploy/infrastructure/adapters/destroy-deployment-adapter.js";
+import { DestroyDeploymentUseCase } from "../contexts/release/application/use-cases/destroy-deployment.js";
+import { FlyDestroyRunner } from "../contexts/release/infrastructure/adapters/fly-destroy-runner.js";
+import { NodeProcessRunner } from "../adapters/process.js";
 
 export interface DeployCommandOptions {
   wizard?: DeployWizardPort;
@@ -33,8 +37,13 @@ export async function runDeployCommand(
   const { channel, autoInstall } = parseDeployArgs(args);
 
   const wizard = options.wizard ?? new FlyDeployWizard(options.env);
+  const cleanup = new DestroyDeploymentAdapter(
+    new DestroyDeploymentUseCase(
+      new FlyDestroyRunner(new NodeProcessRunner(), options.env)
+    )
+  );
 
-  const useCase = new RunDeployWizardUseCase(wizard);
+  const useCase = new RunDeployWizardUseCase(wizard, cleanup);
   const result = await useCase.execute({ autoInstall, channel }, stderr, stdout);
 
   return result.kind === "ok" ? 0 : 1;

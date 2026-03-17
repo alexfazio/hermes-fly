@@ -41,6 +41,8 @@ function makeWizardPort(overrides: Partial<DeployWizardPort> = {}): DeployWizard
     runDeploy: async () => ({ ok: true }),
     postDeployCheck: async () => ({ ok: true }),
     saveApp: async () => {},
+    chooseSuccessfulDeploymentAction: async () => "conclude",
+    showTelegramBotDeletionGuidance: async () => {},
     ...overrides
   };
 }

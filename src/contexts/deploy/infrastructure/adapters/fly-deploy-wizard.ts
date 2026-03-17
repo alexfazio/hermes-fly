@@ -29,6 +29,7 @@ const OPENROUTER_KEY_API_URL = "https://openrouter.ai/api/v1/key";
 const OPENROUTER_MODELS_API_URL = "https://openrouter.ai/api/v1/models";
 const TELEGRAM_BOTFATHER_URL = "https://t.me/BotFather";
 const TELEGRAM_BOTFATHER_NEWBOT_URL = `${TELEGRAM_BOTFATHER_URL}?text=${encodeURIComponent("/newbot")}`;
+const TELEGRAM_BOTFATHER_DELETEBOT_URL = `${TELEGRAM_BOTFATHER_URL}?text=${encodeURIComponent("/deletebot")}`;
 const TELEGRAM_USERINFOBOT_URL = "https://t.me/userinfobot";
 
 type RegionOption = {
@@ -524,6 +525,61 @@ export class FlyDeployWizard implements DeployWizardPort {
       ...trailingTopLevelLines,
     ];
     await writeFile(configPath, newLines.join("\n") + "\n", "utf8");
+  }
+
+  async chooseSuccessfulDeploymentAction(config: DeployConfig): Promise<"conclude" | "destroy"> {
+    if (!this.prompts.isInteractive()) {
+      return "conclude";
+    }
+
+    this.prompts.write("\nWhat would you like to do next?\n\n");
+    this.prompts.write("   1  Conclude and keep it  Finish here and leave the new deployment running.\n");
+    if (config.botToken) {
+      this.prompts.write("   2  Destroy it now        Remove the Fly deployment now and hand off Telegram bot deletion to BotFather.\n\n");
+    } else {
+      this.prompts.write("   2  Destroy it now        Remove the Fly deployment and attached Fly resources now.\n\n");
+    }
+
+    const choice = await this.chooseNumber("Choose an option [1]: ", 2, 1);
+    if (choice === 1) {
+      return "conclude";
+    }
+
+    const confirmed = await this.confirmYesNo(`Destroy ${config.appName} now? [y/N]: `, false);
+    if (!confirmed) {
+      this.prompts.write("Keeping the deployment.\n");
+      return "conclude";
+    }
+
+    return "destroy";
+  }
+
+  async showTelegramBotDeletionGuidance(config: DeployConfig): Promise<void> {
+    if (!config.botToken) {
+      return;
+    }
+
+    this.prompts.write("\nTelegram bot cleanup\n");
+    this.prompts.write("Telegram does not document any Bot API method that permanently deletes a bot.\n");
+    this.prompts.write("The Fly deployment has been destroyed.\n");
+    if (config.telegramBotUsername) {
+      this.prompts.write(`To finish deleting @${config.telegramBotUsername}, open BotFather with /deletebot prefilled:\n`);
+    } else {
+      this.prompts.write("To finish deleting the Telegram bot itself, open BotFather with /deletebot prefilled:\n");
+    }
+    this.prompts.write(`${TELEGRAM_BOTFATHER_DELETEBOT_URL}\n`);
+    this.prompts.write("Scan this QR code with your phone to open BotFather with /deletebot ready to send:\n\n");
+    try {
+      const qr = await this.qrRenderer.render(TELEGRAM_BOTFATHER_DELETEBOT_URL);
+      this.prompts.write(`${qr}\n`);
+    } catch {
+      this.prompts.write("(QR code unavailable in this terminal. Use the direct link above.)\n\n");
+    }
+    this.prompts.write("If Telegram opens the chat without sending anything, tap Send to submit /deletebot.\n");
+    if (config.telegramBotUsername) {
+      this.prompts.write(`When BotFather asks which bot to delete, choose @${config.telegramBotUsername}.\n`);
+    }
+    this.prompts.write("Guide: https://core.telegram.org/bots#6-botfather\n");
   }
 
   private async collectAppName(envValue: string | undefined): Promise<string> {
