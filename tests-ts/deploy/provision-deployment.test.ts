@@ -176,6 +176,41 @@ describe("ProvisionDeploymentUseCase - happy path", () => {
       HERMES_DEPLOY_CHANNEL: DEFAULT_CONFIG.channel
     });
   });
+
+  it("sets Anthropic OAuth bootstrap secrets when deploying with Anthropic subscription access", async () => {
+    let capturedSecrets: Record<string, string> | null = null;
+    const io = makeIO();
+    const uc = new ProvisionDeploymentUseCase(makeRunner({
+      setSecrets: async (_appName, secrets) => {
+        capturedSecrets = secrets;
+        return { ok: true };
+      }
+    }));
+
+    const result = await uc.execute({
+      ...DEFAULT_CONFIG,
+      provider: "anthropic",
+      apiKey: "",
+      anthropicOauthJsonB64: "eyJhY2Nlc3NUb2tlbiI6ImFjY2Vzcy1hbnRoIn0=",
+      model: "claude-sonnet-4-6",
+      reasoningEffort: "medium",
+      sttProvider: "local",
+      sttModel: "base"
+    }, io.stderr);
+
+    assert.equal(result.ok, true);
+    assert.deepEqual(capturedSecrets, {
+      HERMES_ANTHROPIC_OAUTH_JSON_B64: "eyJhY2Nlc3NUb2tlbiI6ImFjY2Vzcy1hbnRoIn0=",
+      LLM_MODEL: "claude-sonnet-4-6",
+      HERMES_LLM_PROVIDER: "anthropic",
+      HERMES_REASONING_EFFORT: "medium",
+      HERMES_STT_PROVIDER: "local",
+      HERMES_STT_MODEL: "base",
+      HERMES_APP_NAME: DEFAULT_CONFIG.appName,
+      HERMES_AGENT_REF: DEFAULT_CONFIG.hermesRef,
+      HERMES_DEPLOY_CHANNEL: DEFAULT_CONFIG.channel
+    });
+  });
 });
 
 describe("ProvisionDeploymentUseCase - create app failure", () => {

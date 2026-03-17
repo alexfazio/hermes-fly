@@ -11,6 +11,11 @@ import {
   type ResolvedCodexAuth,
 } from "./openai-codex-auth.js";
 import {
+  AnthropicAuthAdapter,
+  type AnthropicModelOption,
+  type ResolvedAnthropicAuth,
+} from "./anthropic-auth.js";
+import {
   NousPortalAuthAdapter,
   type NousModelOption,
   type ResolvedNousPortalAuth,
@@ -113,9 +118,10 @@ type TelegramBotIdentity = {
 };
 
 type AiAccessSelection = {
-  provider: "openrouter" | "openai-codex" | "nous";
+  provider: "openrouter" | "openai-codex" | "nous" | "anthropic";
   apiKey: string;
   authJsonB64?: string;
+  anthropicOauthJsonB64?: string;
   model: string;
   reasoningEffort?: string;
   sttProvider?: string;
@@ -238,6 +244,7 @@ const HERMES_AGENT_DEFAULT_REF = "8eefbef91cd715cfe410bba8c13cfab4eb3040df";
 const HERMES_AGENT_PREVIEW_REF = HERMES_AGENT_DEFAULT_REF;
 const HERMES_AGENT_EDGE_REF = "main";
 const STATIC_REASONING_POLICIES = new Map<string, ReasoningPolicy>([
+  ["claude-4-6", { allowedEfforts: ["low", "medium", "high"], defaultEffort: "medium" }],
   ["gpt-5", { allowedEfforts: ["low", "medium", "high"], defaultEffort: "medium" }],
   ["gpt-5-pro", { allowedEfforts: ["high"], defaultEffort: "high" }]
 ]);
@@ -248,6 +255,7 @@ export interface FlyDeployWizardDeps {
   templateWriter?: TemplateWriter;
   qrRenderer?: QrCodeRendererPort;
   codexAuth?: OpenAICodexAuthAdapter;
+  anthropicAuth?: AnthropicAuthAdapter;
   nousAuth?: NousPortalAuthAdapter;
 }
 
@@ -258,6 +266,7 @@ export class FlyDeployWizard implements DeployWizardPort {
   private readonly prompts: DeployPromptPort;
   private readonly qrRenderer: QrCodeRendererPort;
   private readonly codexAuth: OpenAICodexAuthAdapter;
+  private readonly anthropicAuth: AnthropicAuthAdapter;
   private readonly nousAuth: NousPortalAuthAdapter;
   private readonly env: NodeJS.ProcessEnv;
   private readonly defaultAppName: string;
@@ -273,6 +282,7 @@ export class FlyDeployWizard implements DeployWizardPort {
     this.prompts = deps.prompts ?? new ReadlineDeployPrompts();
     this.qrRenderer = deps.qrRenderer ?? new TerminalQrCodeRenderer();
     this.codexAuth = deps.codexAuth ?? new OpenAICodexAuthAdapter(this.process, this.env);
+    this.anthropicAuth = deps.anthropicAuth ?? new AnthropicAuthAdapter(this.process, this.env);
     this.nousAuth = deps.nousAuth ?? new NousPortalAuthAdapter(this.process, this.env);
     this.defaultAppName = this.buildDefaultAppName();
     this.rememberModelOptions(STATIC_MODEL_OPTIONS);
@@ -367,6 +377,7 @@ export class FlyDeployWizard implements DeployWizardPort {
       model: env.HERMES_FLY_MODEL,
       reasoningEffort: env.HERMES_REASONING_EFFORT,
       authJsonB64: env.HERMES_AUTH_JSON_B64,
+      anthropicOauthJsonB64: env.HERMES_ANTHROPIC_OAUTH_JSON_B64,
       sttProvider: env.HERMES_FLY_STT_PROVIDER ?? env.HERMES_STT_PROVIDER,
       sttModel: env.HERMES_FLY_STT_MODEL ?? env.HERMES_STT_MODEL,
     });
@@ -397,6 +408,7 @@ export class FlyDeployWizard implements DeployWizardPort {
       provider: intent.provider,
       apiKey: aiAccess.apiKey,
       authJsonB64: aiAccess.authJsonB64,
+      anthropicOauthJsonB64: aiAccess.anthropicOauthJsonB64,
       model: intent.model,
       reasoningEffort: intent.reasoningEffort.length > 0 ? intent.reasoningEffort : undefined,
       sttProvider: aiAccess.sttProvider,
@@ -443,6 +455,9 @@ export class FlyDeployWizard implements DeployWizardPort {
     }
     if (config.authJsonB64) {
       secrets.HERMES_AUTH_JSON_B64 = config.authJsonB64;
+    }
+    if (config.anthropicOauthJsonB64) {
+      secrets.HERMES_ANTHROPIC_OAUTH_JSON_B64 = config.anthropicOauthJsonB64;
     }
     if (config.reasoningEffort) {
       secrets.HERMES_REASONING_EFFORT = config.reasoningEffort;
@@ -840,13 +855,24 @@ export class FlyDeployWizard implements DeployWizardPort {
     model?: string;
     reasoningEffort?: string;
     authJsonB64?: string;
+    anthropicOauthJsonB64?: string;
     sttProvider?: string;
     sttModel?: string;
   }): Promise<AiAccessSelection> {
     const normalizedProvider = this.normalizeAiProvider(input.provider)
-      ?? this.detectOauthProviderFromEncodedAuth(input.authJsonB64);
+      ?? this.detectOauthProviderFromEncodedAuth(input.authJsonB64)
+      ?? ((input.anthropicOauthJsonB64 ?? "").trim().length > 0 ? "anthropic" : undefined);
     if (normalizedProvider === "openrouter") {
       return this.collectOpenRouterAccess(input.model, input.reasoningEffort, input.sttProvider, input.sttModel);
+    }
+    if (normalizedProvider === "anthropic") {
+      return this.collectAnthropicAccess(
+        input.model,
+        input.reasoningEffort,
+        input.anthropicOauthJsonB64,
+        input.sttProvider,
+        input.sttModel
+      );
     }
     if (normalizedProvider === "openai-codex") {
       return this.collectOpenAICodexAccess(input.model, input.reasoningEffort, input.authJsonB64, input.sttProvider, input.sttModel);
@@ -862,6 +888,16 @@ export class FlyDeployWizard implements DeployWizardPort {
     }
 
     if (!this.prompts.isInteractive()) {
+      const bundledAnthropicAuth = (input.anthropicOauthJsonB64 ?? "").trim();
+      if (bundledAnthropicAuth.length > 0) {
+        return this.collectAnthropicAccess(
+          input.model,
+          input.reasoningEffort,
+          bundledAnthropicAuth,
+          input.sttProvider,
+          input.sttModel
+        );
+      }
       const bundledOauthAuth = (input.authJsonB64 ?? "").trim();
       const bundledOauthProvider = this.detectOauthProviderFromEncodedAuth(bundledOauthAuth);
       if (bundledOauthAuth.length > 0 && bundledOauthProvider === "nous") {
@@ -886,12 +922,13 @@ export class FlyDeployWizard implements DeployWizardPort {
     }
 
     this.prompts.write("How should Hermes access AI models?\n");
-    this.prompts.write("You can use your own OpenRouter API key, sign in with your ChatGPT subscription through OpenAI Codex, or use your Nous Portal subscription.\n\n");
+    this.prompts.write("You can use your own OpenRouter API key, sign in with your ChatGPT subscription through OpenAI Codex, use your Nous Portal subscription, or sign in with Anthropic OAuth.\n\n");
     this.prompts.write("   1  OpenRouter API key         Bring your own API key and choose from OpenRouter's model catalog\n");
     this.prompts.write("   2  ChatGPT subscription       Sign in with ChatGPT / OpenAI through OpenAI Codex\n\n");
     this.prompts.write("   3  Nous Portal subscription   Sign in with your Nous Portal account and use Portal models\n\n");
+    this.prompts.write("   4  Anthropic subscription    Sign in with Claude / Anthropic through OAuth\n\n");
 
-    const selection = await this.chooseNumber("Choose an option [1]: ", 3, 1);
+    const selection = await this.chooseNumber("Choose an option [1]: ", 4, 1);
     if (selection === 2) {
       return this.collectOpenAICodexAccess(
         input.model,
@@ -906,6 +943,15 @@ export class FlyDeployWizard implements DeployWizardPort {
         input.model,
         input.reasoningEffort,
         input.authJsonB64,
+        input.sttProvider,
+        input.sttModel
+      );
+    }
+    if (selection === 4) {
+      return this.collectAnthropicAccess(
+        input.model,
+        input.reasoningEffort,
+        input.anthropicOauthJsonB64,
         input.sttProvider,
         input.sttModel
       );
@@ -955,6 +1001,28 @@ export class FlyDeployWizard implements DeployWizardPort {
     };
   }
 
+  private async collectAnthropicAccess(
+    envModel: string | undefined,
+    envReasoningEffort: string | undefined,
+    bundledOauthJsonB64?: string,
+    envSttProvider?: string,
+    envSttModel?: string
+  ): Promise<AiAccessSelection> {
+    const auth = await this.collectAnthropicAuth(bundledOauthJsonB64);
+    const model = await this.collectAnthropicModel(envModel);
+    const reasoningEffort = await this.collectReasoningEffort(envReasoningEffort, model);
+    const stt = this.resolveSttDefaults("anthropic", envSttProvider, envSttModel);
+    return {
+      provider: "anthropic",
+      apiKey: "",
+      anthropicOauthJsonB64: auth.oauthJsonB64,
+      model,
+      reasoningEffort,
+      sttProvider: stt.provider,
+      sttModel: stt.model,
+    };
+  }
+
   private async collectNousPortalAccess(
     envModel: string | undefined,
     envReasoningEffort: string | undefined,
@@ -992,6 +1060,9 @@ export class FlyDeployWizard implements DeployWizardPort {
     }
 
     if (aiProvider === "openai-codex") {
+      return { provider: "local", model: "base" };
+    }
+    if (aiProvider === "anthropic") {
       return { provider: "local", model: "base" };
     }
 
@@ -1070,6 +1141,46 @@ export class FlyDeployWizard implements DeployWizardPort {
     return this.runNousDeviceCodeLoginWithRetry();
   }
 
+  private async collectAnthropicAuth(bundledOauthJsonB64?: string): Promise<ResolvedAnthropicAuth> {
+    const providedAuth = (bundledOauthJsonB64 ?? "").trim();
+    if (providedAuth.length > 0) {
+      return this.anthropicAuthFromEncodedStore(providedAuth);
+    }
+
+    const stored = await this.anthropicAuth.resolveStoredAuth();
+    if (!this.prompts.isInteractive()) {
+      if (stored) {
+        return stored;
+      }
+      throw new Error("Anthropic OAuth credentials are required in non-interactive mode. Export HERMES_ANTHROPIC_OAUTH_JSON_B64 or sign in interactively first.");
+    }
+
+    if (!stored) {
+      return this.runAnthropicOauthLoginWithRetry();
+    }
+
+    if (stored.source === "hermes") {
+      this.prompts.write("I found an existing Hermes Anthropic OAuth login on this machine.\n\n");
+      this.prompts.write("   1  Reuse it        Use the saved Anthropic OAuth login for this deployment\n");
+      this.prompts.write("   2  Sign in again   Start a fresh Anthropic OAuth login now\n\n");
+      const choice = await this.chooseNumber("Choose an option [1]: ", 2, 1);
+      if (choice === 1) {
+        return stored;
+      }
+      return this.runAnthropicOauthLoginWithRetry();
+    }
+
+    this.prompts.write("I found existing Claude Code credentials on this machine.\n");
+    this.prompts.write("Hermes can reuse them for this deployment without asking for an API key.\n\n");
+    this.prompts.write("   1  Reuse them      Import the saved Claude Code login\n");
+    this.prompts.write("   2  Sign in again   Start a fresh Anthropic OAuth login now\n\n");
+    const choice = await this.chooseNumber("Choose an option [1]: ", 2, 1);
+    if (choice === 1) {
+      return stored;
+    }
+    return this.runAnthropicOauthLoginWithRetry();
+  }
+
   private async runCodexDeviceCodeLoginWithRetry(): Promise<ResolvedCodexAuth> {
     while (true) {
       this.prompts.write("If device-code sign-in has trouble in a remote or headless terminal, open:\n");
@@ -1101,6 +1212,24 @@ export class FlyDeployWizard implements DeployWizardPort {
         const message = error instanceof Error ? error.message : "Nous Portal sign-in failed.";
         this.prompts.write(`${message}\n\n`);
         this.prompts.write("   1  Retry sign-in   Start the Nous Portal device-code flow again\n");
+        this.prompts.write("   2  Cancel setup    Stop this deployment wizard\n\n");
+
+        const choice = await this.chooseNumber("Choose an option [1]: ", 2, 1);
+        if (choice === 2) {
+          throw new Error("Deployment cancelled.");
+        }
+      }
+    }
+  }
+
+  private async runAnthropicOauthLoginWithRetry(): Promise<ResolvedAnthropicAuth> {
+    while (true) {
+      try {
+        return await this.anthropicAuth.runOauthLogin(this.prompts);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Anthropic OAuth sign-in failed.";
+        this.prompts.write(`${message}\n\n`);
+        this.prompts.write("   1  Retry sign-in   Start the Anthropic OAuth flow again\n");
         this.prompts.write("   2  Cancel setup    Stop this deployment wizard\n\n");
 
         const choice = await this.chooseNumber("Choose an option [1]: ", 2, 1);
@@ -1189,6 +1318,51 @@ export class FlyDeployWizard implements DeployWizardPort {
     return models[selectedIndex - 1].value;
   }
 
+  private async collectAnthropicModel(envValue: string | undefined): Promise<string> {
+    const preset = envValue?.trim();
+    const models = this.fetchAnthropicModels();
+    if (preset && preset.length > 0) {
+      return preset;
+    }
+    if (!this.prompts.isInteractive()) {
+      return models[0]?.value ?? "claude-sonnet-4-6";
+    }
+
+    this.prompts.write("Which Anthropic model should your agent use?\n\n");
+    models.forEach((option, index) => {
+      this.prompts.write(`  ${String(index + 1).padStart(2, " ")}  ${option.label.padEnd(24, " ")} ${option.bestFor}\n`);
+    });
+    const manualIndex = models.length + 1;
+    this.prompts.write(`  ${String(manualIndex).padStart(2, " ")}  Bring my own model        Enter a model ID manually\n\n`);
+
+    const selectedIndex = await this.chooseNumber("Choose a model [1]: ", manualIndex, 1);
+    if (selectedIndex === manualIndex) {
+      this.prompts.write("Anthropic model IDs look like claude-sonnet-4-6.\n\n");
+      while (true) {
+        const answer = (await this.prompts.ask("Model ID: ")).trim();
+        if (answer.length > 0) {
+          return answer;
+        }
+        this.prompts.write("Model ID cannot be empty.\n");
+      }
+    }
+
+    return models[selectedIndex - 1].value;
+  }
+
+  private fetchAnthropicModels(): AnthropicModelOption[] {
+    const models = this.anthropicAuth.staticModelOptions();
+    this.rememberModelOptions(models.map((option) => ({
+      value: option.value,
+      label: option.label,
+      bestFor: option.bestFor,
+      providerKey: option.providerKey,
+      providerLabel: option.providerLabel,
+      supportsReasoning: option.supportsReasoning,
+    })));
+    return models;
+  }
+
   private async fetchCodexModels(accessToken: string, announce: boolean): Promise<CodexModelOption[]> {
     if (announce) {
       this.prompts.write("Fetching available Codex models from OpenAI...\n");
@@ -1265,6 +1439,24 @@ export class FlyDeployWizard implements DeployWizardPort {
     }
   }
 
+  private anthropicAuthFromEncodedStore(oauthJsonB64: string): ResolvedAnthropicAuth {
+    try {
+      const raw = Buffer.from(oauthJsonB64, "base64").toString("utf8");
+      const parsed = JSON.parse(raw) as { accessToken?: unknown };
+      const accessToken = String(parsed.accessToken ?? "").trim();
+      if (accessToken.length === 0) {
+        throw new Error("missing access token");
+      }
+      return {
+        source: "hermes",
+        accessToken,
+        oauthJsonB64,
+      };
+    } catch {
+      throw new Error("HERMES_ANTHROPIC_OAUTH_JSON_B64 does not contain valid Anthropic OAuth credentials.");
+    }
+  }
+
   private detectOauthProviderFromEncodedAuth(authJsonB64: string | undefined): "openai-codex" | "nous" | undefined {
     const encoded = (authJsonB64 ?? "").trim();
     if (encoded.length === 0) {
@@ -1288,10 +1480,13 @@ export class FlyDeployWizard implements DeployWizardPort {
     return undefined;
   }
 
-  private normalizeAiProvider(value: string | undefined): "openrouter" | "openai-codex" | "nous" | undefined {
+  private normalizeAiProvider(value: string | undefined): "openrouter" | "openai-codex" | "nous" | "anthropic" | undefined {
     const normalized = (value ?? "").trim().toLowerCase();
     if (normalized === "openrouter") {
       return "openrouter";
+    }
+    if (normalized === "anthropic" || normalized === "claude" || normalized === "claude-code") {
+      return "anthropic";
     }
     if (normalized === "openai-codex" || normalized === "codex" || normalized === "chatgpt") {
       return "openai-codex";
@@ -1823,6 +2018,9 @@ export class FlyDeployWizard implements DeployWizardPort {
   }
 
   private describeAiAccess(provider: string): string {
+    if (provider === "anthropic") {
+      return "Anthropic OAuth";
+    }
     if (provider === "openai-codex") {
       return "ChatGPT subscription (OpenAI Codex)";
     }
@@ -2152,6 +2350,9 @@ export class FlyDeployWizard implements DeployWizardPort {
     const withoutProvider = modelId.includes("/") ? modelId.split("/", 2)[1] ?? modelId : modelId;
     const normalized = withoutProvider.split(":", 2)[0] ?? withoutProvider;
 
+    if (/^claude-(?:sonnet|opus)-4(?:-6|\.6)(?:[-.].+)?$/i.test(normalized)) {
+      return "claude-4-6";
+    }
     if (/^gpt-5-pro(?:[-.].+)?$/i.test(normalized)) {
       return "gpt-5-pro";
     }

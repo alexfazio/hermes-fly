@@ -42,6 +42,9 @@ export class ProvisionDeploymentUseCase {
     if (config.authJsonB64) {
       secrets.HERMES_AUTH_JSON_B64 = config.authJsonB64;
     }
+    if (config.anthropicOauthJsonB64) {
+      secrets.HERMES_ANTHROPIC_OAUTH_JSON_B64 = config.anthropicOauthJsonB64;
+    }
     if (config.reasoningEffort) {
       secrets.HERMES_REASONING_EFFORT = config.reasoningEffort;
     }

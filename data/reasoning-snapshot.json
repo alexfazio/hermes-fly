@@ -10,6 +10,10 @@
     "gpt-5-pro": {
       "allowed_efforts": ["high"],
       "default": "high"
+    },
+    "claude-4-6": {
+      "allowed_efforts": ["low", "medium", "high"],
+      "default": "medium"
     }
   }
 }

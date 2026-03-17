@@ -69,6 +69,9 @@ function buildTelegramChatLink(config: DeployConfig): string | undefined {
 }
 
 function describeAiAccess(provider: string): string {
+  if (provider === "anthropic") {
+    return "Anthropic OAuth";
+  }
   if (provider === "openai-codex") {
     return "ChatGPT subscription (OpenAI Codex)";
   }

@@ -104,6 +104,14 @@ teardown() {
   assert_output --partial "base64"
 }
 
+@test "entrypoint.sh seeds Anthropic OAuth credentials from HERMES_ANTHROPIC_OAUTH_JSON_B64 when missing" {
+  run cat "${PROJECT_ROOT}/templates/entrypoint.sh"
+  assert_success
+  assert_output --partial "HERMES_ANTHROPIC_OAUTH_JSON_B64"
+  assert_output --partial "/root/.hermes/.anthropic_oauth.json"
+  assert_output --partial "base64"
+}
+
 @test "entrypoint.sh bridges all messaging and LLM secrets" {
   run cat "${PROJECT_ROOT}/templates/entrypoint.sh"
   assert_success

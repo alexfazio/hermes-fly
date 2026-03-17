@@ -568,6 +568,44 @@ describe("fly deployment registry", () => {
     }
   });
 
+  it("labels saved anthropic deployments as Anthropic OAuth", async () => {
+    const root = await mkdtemp(join(tmpdir(), "hermes-fly-runtime-list-anthropic-"));
+    try {
+      await mkdir(root, { recursive: true });
+      await writeFile(
+        join(root, "config.yaml"),
+        [
+          "current_app: anthropic-app",
+          "apps:",
+          "  - name: anthropic-app",
+          "    region: fra",
+          "    provider: anthropic",
+        ].join("\n"),
+        "utf8"
+      );
+
+      const registry = new FlyDeploymentRegistry({
+        env: { HOME: "/", HERMES_FLY_CONFIG_DIR: root },
+        flyctl: {
+          listLiveAppNames: async () => new Set(["anthropic-app"]),
+          getMachineSummary: async () => ({ id: "machine123", state: "started", region: "fra" }),
+          getMachineState: async () => "started",
+          getAiAccessMode: async () => null,
+          getTelegramBotIdentity: async () => ({ configured: false, username: null, link: null }),
+          getAppStatus: async () => ({ ok: false, error: "unused" }),
+          getAppLogs: async () => ({ stdout: "", stderr: "", exitCode: 0 }),
+          streamAppLogs: async () => ({ exitCode: 0 }),
+        }
+      });
+
+      const rows = await registry.listDeployments();
+
+      assert.equal(rows[0]?.aiAccess, "Anthropic OAuth");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("does not resolve config from relative .hermes-fly when HOME is empty", async () => {
     const root = await mkdtemp(join(tmpdir(), "hermes-fly-runtime-list-home-empty-"));
     const configDir = join(root, ".hermes-fly");

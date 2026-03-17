@@ -7,6 +7,7 @@ export interface DeployConfig {
   provider: string;
   apiKey: string;
   authJsonB64?: string;
+  anthropicOauthJsonB64?: string;
   model: string;
   reasoningEffort?: string;
   sttProvider?: string;

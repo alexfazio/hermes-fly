@@ -20,6 +20,11 @@ if [[ -n "${HERMES_AUTH_JSON_B64:-}" ]] && [[ ! -f /root/.hermes/auth.json ]]; t
   printf '%s' "${HERMES_AUTH_JSON_B64}" | base64 -d > /root/.hermes/auth.json
   chmod 600 /root/.hermes/auth.json
 fi
+if [[ -n "${HERMES_ANTHROPIC_OAUTH_JSON_B64:-}" ]] && [[ ! -f /root/.hermes/.anthropic_oauth.json ]]; then
+  umask 077
+  printf '%s' "${HERMES_ANTHROPIC_OAUTH_JSON_B64}" | base64 -d > /root/.hermes/.anthropic_oauth.json
+  chmod 600 /root/.hermes/.anthropic_oauth.json
+fi
 # Bridge Fly secrets into /root/.hermes/.env on every boot (not just first deploy)
 for var in OPENROUTER_API_KEY LLM_MODEL LLM_BASE_URL LLM_API_KEY NOUS_API_KEY \
   HERMES_REASONING_EFFORT \

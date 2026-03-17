@@ -188,6 +188,8 @@ function parseConfigEntries(configContent: string): SavedDeploymentEntry[] {
 
 function describeAiAccess(provider: string | null): string {
   switch (provider) {
+    case "anthropic":
+      return "Anthropic OAuth";
     case "openai-codex":
       return "OpenAI OAuth";
     case "nous":

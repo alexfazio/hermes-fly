@@ -1236,6 +1236,55 @@ describe("FlyDeployWizard.collectConfig", () => {
     }
   });
 
+  it("offers Anthropic OAuth access and can reuse existing Claude Code credentials", async () => {
+    const home = await mkdtemp(join(tmpdir(), "hermes-fly-anthropic-auth-"));
+    await mkdir(join(home, ".claude"), { recursive: true });
+    await writeFile(join(home, ".claude", ".credentials.json"), JSON.stringify({
+      claudeAiOauth: {
+        accessToken: "access-claude",
+        refreshToken: "refresh-claude",
+        expiresAt: 1_900_000_000_000,
+      }
+    }), "utf8");
+
+    const prompts = makePromptPort([
+      "",
+      "",
+      "",
+      "",
+      "",
+      "4",
+      "1",
+      "",
+      "",
+      "2",
+      "y"
+    ], { interactive: true });
+    const runner = makeProcessRunner(async () => ({ exitCode: 1 }));
+
+    try {
+      const wizard = new FlyDeployWizard({ HOME: home }, { prompts, process: runner });
+
+      const config = await wizard.collectConfig({ channel: "stable" });
+
+      assert.equal(config.provider, "anthropic");
+      assert.equal(config.apiKey, "");
+      assert.ok(config.anthropicOauthJsonB64);
+      assert.equal(config.model, "claude-sonnet-4-6");
+      assert.equal(config.reasoningEffort, "medium");
+      assert.equal(config.sttProvider, "local");
+      assert.equal(config.sttModel, "base");
+      const guidedCopy = prompts.writes.join("");
+      assert.match(guidedCopy, /How should Hermes access AI models/);
+      assert.match(guidedCopy, /Anthropic subscription/);
+      assert.match(guidedCopy, /I found existing Claude Code credentials on this machine/);
+      assert.match(guidedCopy, /Which Anthropic model should your agent use/);
+      assert.match(guidedCopy, /AI access:\s+Anthropic OAuth/);
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
   it("fetches the full OpenRouter provider catalog and lets the user choose a specific model", async () => {
     const prompts = makePromptPort([
       "",

@@ -303,6 +303,9 @@ export class FlyctlAdapter implements FlyctlPort {
 }
 
 function inferAiAccessMode(secretNames: string[]): string | null {
+  if (secretNames.includes("HERMES_ANTHROPIC_OAUTH_JSON_B64")) {
+    return "anthropic";
+  }
   if (secretNames.includes("HERMES_AUTH_JSON_B64")) {
     return "openai-codex";
   }
