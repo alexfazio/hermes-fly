@@ -124,7 +124,7 @@ function makePromptPort(
   };
 }
 
-function makeQrRenderer(output = "[[QR: https://t.me/BotFather]]"): QrCodeRendererPort {
+function makeQrRenderer(output = "[[QR: https://t.me/BotFather?text=%2Fnewbot]]"): QrCodeRendererPort {
   return {
     render: async () => output
   };
@@ -742,9 +742,10 @@ describe("FlyDeployWizard.collectConfig", () => {
     assert.match(guidedCopy, /Which AI provider do you want to use through OpenRouter/);
     assert.match(guidedCopy, /Which OpenAI model should your agent use/);
     assert.match(guidedCopy, /Do you want to connect Telegram now/);
-    assert.match(guidedCopy, /Open BotFather directly: https:\/\/t\.me\/BotFather/);
-    assert.match(guidedCopy, /Scan this QR code with your phone to open the BotFather chat/);
-    assert.match(guidedCopy, /\[\[QR: https:\/\/t\.me\/BotFather\]\]/);
+    assert.match(guidedCopy, /Open BotFather directly with \/newbot prefilled: https:\/\/t\.me\/BotFather\?text=%2Fnewbot/);
+    assert.match(guidedCopy, /Scan this QR code with your phone to open BotFather with \/newbot ready to send/);
+    assert.match(guidedCopy, /\[\[QR: https:\/\/t\.me\/BotFather\?text=%2Fnewbot\]\]/);
+    assert.match(guidedCopy, /tap Send to submit \/newbot/);
     assert.match(guidedCopy, /Review your setup/);
   });
 
@@ -1125,9 +1126,10 @@ describe("FlyDeployWizard.collectConfig", () => {
     assert.equal(config.telegramAllowedUsers, "12345");
     assert.equal(config.telegramHomeChannel, "12345");
     const guidedCopy = prompts.writes.join("");
-    assert.match(guidedCopy, /Open BotFather directly: https:\/\/t\.me\/BotFather/);
-    assert.match(guidedCopy, /Scan this QR code with your phone to open the BotFather chat/);
+    assert.match(guidedCopy, /Open BotFather directly with \/newbot prefilled: https:\/\/t\.me\/BotFather\?text=%2Fnewbot/);
+    assert.match(guidedCopy, /Scan this QR code with your phone to open BotFather with \/newbot ready to send/);
     assert.match(guidedCopy, /\[\[BOTFATHER-QR\]\]/);
+    assert.match(guidedCopy, /tap Send to submit \/newbot/);
     assert.match(guidedCopy, /Guide: https:\/\/core\.telegram\.org\/bots#6-botfather/);
     assert.match(guidedCopy, /Found bot: @test_hermes_bot \(Hermes Test Bot\)/);
     assert.match(guidedCopy, /t\.me\/userinfobot/);

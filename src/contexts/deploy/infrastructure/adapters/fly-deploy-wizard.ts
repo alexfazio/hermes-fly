@@ -28,6 +28,7 @@ const OPENROUTER_MODELS_URL = "https://openrouter.ai/models";
 const OPENROUTER_KEY_API_URL = "https://openrouter.ai/api/v1/key";
 const OPENROUTER_MODELS_API_URL = "https://openrouter.ai/api/v1/models";
 const TELEGRAM_BOTFATHER_URL = "https://t.me/BotFather";
+const TELEGRAM_BOTFATHER_NEWBOT_URL = `${TELEGRAM_BOTFATHER_URL}?text=${encodeURIComponent("/newbot")}`;
 const TELEGRAM_USERINFOBOT_URL = "https://t.me/userinfobot";
 
 type RegionOption = {
@@ -1108,14 +1109,15 @@ export class FlyDeployWizard implements DeployWizardPort {
     }
 
     this.prompts.write("Create your Telegram bot with BotFather, then paste the bot token here.\n");
-    this.prompts.write(`Open BotFather directly: ${TELEGRAM_BOTFATHER_URL}\n`);
-    this.prompts.write("Scan this QR code with your phone to open the BotFather chat:\n\n");
+    this.prompts.write(`Open BotFather directly with /newbot prefilled: ${TELEGRAM_BOTFATHER_NEWBOT_URL}\n`);
+    this.prompts.write("Scan this QR code with your phone to open BotFather with /newbot ready to send:\n\n");
     try {
-      const qr = await this.qrRenderer.render(TELEGRAM_BOTFATHER_URL);
+      const qr = await this.qrRenderer.render(TELEGRAM_BOTFATHER_NEWBOT_URL);
       this.prompts.write(`${qr}\n`);
     } catch {
       this.prompts.write("(QR code unavailable in this terminal. Use the direct link above.)\n\n");
     }
+    this.prompts.write("If Telegram opens the chat without sending anything, tap Send to submit /newbot.\n");
     this.prompts.write("Guide: https://core.telegram.org/bots#6-botfather\n\n");
 
     while (true) {
