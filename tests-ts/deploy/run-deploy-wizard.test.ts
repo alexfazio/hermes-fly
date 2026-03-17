@@ -514,6 +514,27 @@ describe("FlyDeployWizard.checkAuth", () => {
   });
 });
 
+describe("FlyDeployWizard.runDeploy", () => {
+  it("runs fly deploy from the build directory so entrypoint.sh is inside the Docker build context", async () => {
+    const calls: Array<{ command: string; args: string[]; cwd?: string }> = [];
+    const runner = makeProcessRunner(async (command, args, options) => {
+      calls.push({ command, args, cwd: options?.cwd });
+      return { exitCode: 0 };
+    });
+    const wizard = new FlyDeployWizard({}, { process: runner });
+
+    const result = await wizard.runDeploy("/tmp/hermes-build", DEFAULT_CONFIG);
+
+    assert.deepEqual(result, { ok: true });
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0]?.command, "fly");
+    assert.deepEqual(calls[0]?.args, [
+      "deploy", "--app", "test-app", "--config", "fly.toml", "--dockerfile", "Dockerfile", "--wait-timeout", "5m0s"
+    ]);
+    assert.equal(calls[0]?.cwd, "/tmp/hermes-build");
+  });
+});
+
 describe("FlyDeployWizard.collectConfig", () => {
   it("suggests a unique editable deployment name using username and uid", async () => {
     const prompts = makePromptPort([

@@ -419,8 +419,8 @@ export class FlyDeployWizard implements DeployWizardPort {
   async runDeploy(buildDir: string, config: DeployConfig): Promise<{ ok: boolean; error?: string }> {
     const result = await this.process.run(
       "fly",
-      ["deploy", "--app", config.appName, "--config", `${buildDir}/fly.toml`, "--dockerfile", `${buildDir}/Dockerfile`],
-      { env: this.env }
+      ["deploy", "--app", config.appName, "--config", "fly.toml", "--dockerfile", "Dockerfile", "--wait-timeout", "5m0s"],
+      { env: this.env, cwd: buildDir }
     );
     if (result.exitCode !== 0) {
       return { ok: false, error: result.stderr || result.stdout };
