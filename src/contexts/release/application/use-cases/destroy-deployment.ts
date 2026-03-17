@@ -2,7 +2,7 @@ import type { DestroyRunnerPort } from "../ports/destroy-runner.port.js";
 
 export type DestroyDeploymentResult =
   | { kind: "ok" }
-  | { kind: "not_found" }
+  | { kind: "already_absent" }
   | { kind: "failed"; error: string };
 
 export interface DestroyIO {
@@ -25,8 +25,15 @@ export class DestroyDeploymentUseCase {
 
     const destroyResult = await this.runner.destroyApp(appName);
     if (!destroyResult.ok) {
-      io.stderr.write(`[error] App '${appName}' not found\n`);
-      return { kind: "not_found" };
+      if (destroyResult.reason === "not_found") {
+        await this.runner.removeConfig(appName);
+        io.stderr.write(`[success] Fly app '${appName}' was already absent; cleaned local config\n`);
+        return { kind: "already_absent" };
+      }
+
+      const error = destroyResult.error ?? `Failed to destroy '${appName}'`;
+      io.stderr.write(`[error] ${error}\n`);
+      return { kind: "failed", error };
     }
 
     await this.runner.removeConfig(appName);

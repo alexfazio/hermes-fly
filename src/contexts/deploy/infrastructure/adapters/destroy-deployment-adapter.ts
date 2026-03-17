@@ -12,11 +12,8 @@ export class DestroyDeploymentAdapter implements PostDeployCleanupPort {
     }
   ): Promise<PostDeployCleanupResult> {
     const result = await this.useCase.execute(appName, io);
-    if (result.kind === "ok") {
+    if (result.kind === "ok" || result.kind === "already_absent") {
       return { ok: true };
-    }
-    if (result.kind === "not_found") {
-      return { ok: false, notFound: true };
     }
     return { ok: false, error: result.error };
   }

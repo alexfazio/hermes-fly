@@ -73,23 +73,39 @@ describe("DestroyDeploymentUseCase - happy path", () => {
   });
 });
 
-describe("DestroyDeploymentUseCase - not_found path", () => {
-  it("returns not_found when destroyApp returns ok:false", async () => {
+describe("DestroyDeploymentUseCase - already_absent path", () => {
+  it("returns already_absent when destroyApp returns ok:false", async () => {
     const runner = makeRunner({
-      destroyApp: async () => ({ ok: false })
+      destroyApp: async () => ({ ok: false, reason: "not_found" })
     });
     const io = makeIO();
     const useCase = new DestroyDeploymentUseCase(runner);
     const result = await useCase.execute("nonexistent-app", io);
-    assert.equal(result.kind, "not_found");
+    assert.equal(result.kind, "already_absent");
   });
 
-  it("writes 'not found' error to stderr on not_found", async () => {
-    const runner = makeRunner({ destroyApp: async () => ({ ok: false }) });
+  it("removes config and writes cleanup success output when the app is already absent", async () => {
+    let configRemoved = false;
+    const runner = makeRunner({
+      destroyApp: async () => ({ ok: false, reason: "not_found" }),
+      removeConfig: async () => { configRemoved = true; }
+    });
     const io = makeIO();
     const useCase = new DestroyDeploymentUseCase(runner);
     await useCase.execute("ghost-app", io);
-    assert.ok(io.errText.includes("not found"), `Expected 'not found' in stderr: ${io.errText}`);
+    assert.equal(configRemoved, true);
+    assert.ok(io.errText.includes("already absent"), `Expected cleanup success in stderr: ${io.errText}`);
+  });
+
+  it("returns failed when destroyApp fails for a non-not-found reason", async () => {
+    const runner = makeRunner({
+      destroyApp: async () => ({ ok: false, reason: "failed", error: "permission denied" })
+    });
+    const io = makeIO();
+    const useCase = new DestroyDeploymentUseCase(runner);
+    const result = await useCase.execute("ghost-app", io);
+    assert.equal(result.kind, "failed");
+    assert.ok(io.errText.includes("permission denied"), `Expected failure detail in stderr: ${io.errText}`);
   });
 });
 

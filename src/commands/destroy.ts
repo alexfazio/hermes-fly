@@ -110,12 +110,11 @@ export async function runDestroyCommand(
 
   switch (result.kind) {
     case "ok":
+    case "already_absent":
       if (telegramCleanup?.configured) {
         await writeTelegramDeletionGuidance(stdout, telegramCleanup, options.qrRenderer);
       }
       return 0;
-    case "not_found":
-      return 4;
     case "failed":
       return 1;
   }

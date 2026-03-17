@@ -38,46 +38,49 @@ export class FlyDeploymentRegistry implements DeploymentRegistryPort {
     }
 
     const entries = parseConfigEntries(configContent);
-    const rows: DeploymentListRow[] = [];
+    const liveAppNames = await this.flyctl.listLiveAppNames();
+    const visibleEntries = liveAppNames === null
+      ? entries
+      : entries.filter((entry) => liveAppNames.has(entry.name));
 
-    for (const entry of entries) {
-      let platform = entry.platform;
-      if (platform === null) {
-        platform = await resolvePlatform(configDir, entry.name);
-      }
-
-      const machine = await resolveMachine(this.flyctl, entry.name);
-      let telegramBotUsername = entry.telegramBotUsername;
-      let telegramLink = "-";
-
-      if (telegramBotUsername === null || platform === "-") {
-        const botIdentity = await this.flyctl.getTelegramBotIdentity(entry.name);
-        if (botIdentity.configured) {
-          platform = "telegram";
+    return await Promise.all(
+      visibleEntries.map(async (entry) => {
+        let platform = entry.platform;
+        if (platform === null) {
+          platform = await resolvePlatform(configDir, entry.name);
         }
-        if (telegramBotUsername === null && botIdentity.username) {
-          telegramBotUsername = botIdentity.username;
+
+        const machine = await resolveMachine(this.flyctl, entry.name);
+        let telegramBotUsername = entry.telegramBotUsername;
+        let telegramLink = "-";
+
+        if (telegramBotUsername === null || platform === "-") {
+          const botIdentity = await this.flyctl.getTelegramBotIdentity(entry.name);
+          if (botIdentity.configured) {
+            platform = "telegram";
+          }
+          if (telegramBotUsername === null && botIdentity.username) {
+            telegramBotUsername = botIdentity.username;
+          }
+          if (botIdentity.link) {
+            telegramLink = botIdentity.link;
+          }
         }
-        if (botIdentity.link) {
-          telegramLink = botIdentity.link;
+
+        if (telegramBotUsername !== null && telegramLink === "-") {
+          telegramLink = telegramBotLink(telegramBotUsername);
         }
-      }
 
-      if (telegramBotUsername !== null && telegramLink === "-") {
-        telegramLink = telegramBotLink(telegramBotUsername);
-      }
-
-      rows.push({
-        appName: truncate(entry.name, 26),
-        region: entry.region ?? "?",
-        platform: platform ?? "-",
-        machine,
-        telegramBot: telegramBotUsername ? `@${telegramBotUsername}` : "-",
-        telegramLink
-      });
-    }
-
-    return rows;
+        return {
+          appName: truncate(entry.name, 26),
+          region: entry.region ?? "?",
+          platform: platform ?? "-",
+          machine,
+          telegramBot: telegramBotUsername ? `@${telegramBotUsername}` : "-",
+          telegramLink
+        };
+      })
+    );
   }
 }
 

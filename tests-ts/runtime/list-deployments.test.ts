@@ -55,16 +55,44 @@ describe("process adapter", () => {
 });
 
 describe("flyctl adapter", () => {
+  it("lists live Fly app names from fly apps list json", async () => {
+    const runner: ProcessRunner = {
+      run: async (_command, args) => {
+        if (args[0] === "auth" && args[1] === "whoami") {
+          return { stdout: "{\"name\":\"alex\"}", stderr: "", exitCode: 0 };
+        }
+        if (args[0] === "apps" && args[1] === "list") {
+          return {
+            stdout: JSON.stringify([{ Name: "app-a" }, { name: "app-b" }]),
+            stderr: "",
+            exitCode: 0
+          };
+        }
+        return { stdout: "", stderr: "", exitCode: 1 };
+      }
+    };
+
+    const adapter = new FlyctlAdapter(runner, { HOME: "" });
+    const apps = await adapter.listLiveAppNames();
+
+    assert.deepEqual([...apps ?? []], ["app-a", "app-b"]);
+  });
+
   it("parses the first machine from fly machine list json", async () => {
     const runner: ProcessRunner = {
-      run: async () => ({
-        stdout: JSON.stringify([
-          { id: "machine123", state: "started", region: "fra" },
-          { id: "machine456", state: "stopped", region: "ams" }
-        ]),
-        stderr: "",
-        exitCode: 0
-      })
+      run: async (_command, args) => {
+        if (args[0] === "auth" && args[1] === "whoami") {
+          return { stdout: "{\"name\":\"alex\"}", stderr: "", exitCode: 0 };
+        }
+        return {
+          stdout: JSON.stringify([
+            { id: "machine123", state: "started", region: "fra" },
+            { id: "machine456", state: "stopped", region: "ams" }
+          ]),
+          stderr: "",
+          exitCode: 0
+        };
+      }
     };
 
     const adapter = new FlyctlAdapter(runner, { HOME: "" });
@@ -78,7 +106,10 @@ describe("flyctl adapter", () => {
   it("falls back to fly status json when machine list parsing fails", async () => {
     let callCount = 0;
     const runner: ProcessRunner = {
-      run: async () => {
+      run: async (_command, args) => {
+        if (args[0] === "auth" && args[1] === "whoami") {
+          return { stdout: "{\"name\":\"alex\"}", stderr: "", exitCode: 0 };
+        }
         callCount += 1;
         if (callCount === 1) {
           return {
@@ -108,11 +139,16 @@ describe("flyctl adapter", () => {
 
   it("returns null on non-zero exit", async () => {
     const runner: ProcessRunner = {
-      run: async () => ({
-        stdout: "",
-        stderr: "failed",
-        exitCode: 1
-      })
+      run: async (_command, args) => {
+        if (args[0] === "auth" && args[1] === "whoami") {
+          return { stdout: "{\"name\":\"alex\"}", stderr: "", exitCode: 0 };
+        }
+        return {
+          stdout: "",
+          stderr: "failed",
+          exitCode: 1
+        };
+      }
     };
 
     const adapter = new FlyctlAdapter(runner, { HOME: "" });
@@ -123,11 +159,16 @@ describe("flyctl adapter", () => {
 
   it("returns null on parse failure", async () => {
     const runner: ProcessRunner = {
-      run: async () => ({
-        stdout: "not-json",
-        stderr: "",
-        exitCode: 0
-      })
+      run: async (_command, args) => {
+        if (args[0] === "auth" && args[1] === "whoami") {
+          return { stdout: "{\"name\":\"alex\"}", stderr: "", exitCode: 0 };
+        }
+        return {
+          stdout: "not-json",
+          stderr: "",
+          exitCode: 0
+        };
+      }
     };
 
     const adapter = new FlyctlAdapter(runner, { HOME: "" });
@@ -340,6 +381,7 @@ describe("fly deployment registry", () => {
       );
 
       const flyctl: FlyctlPort = {
+        listLiveAppNames: async () => new Set([longApp, secondApp]),
         getMachineSummary: async (appName: string) => (
           appName === longApp
             ? { id: "machine123", state: "started", region: "ord" }
@@ -386,6 +428,61 @@ describe("fly deployment registry", () => {
     }
   });
 
+  it("filters out stale saved entries when live Fly inventory is available", async () => {
+    const root = await mkdtemp(join(tmpdir(), "hermes-fly-runtime-list-live-filter-"));
+    const configDir = join(root, "config");
+
+    try {
+      await mkdir(configDir, { recursive: true });
+      await writeFile(
+        join(configDir, "config.yaml"),
+        [
+          "apps:",
+          "  - name: stale-app",
+          "    region: fra",
+          "  - name: live-app",
+          "    region: ams",
+          "    platform: telegram",
+          "    telegram_bot_username: livebot",
+          ""
+        ].join("\n"),
+        "utf8"
+      );
+
+      const flyctl: FlyctlPort = {
+        listLiveAppNames: async () => new Set(["live-app"]),
+        getMachineSummary: async () => ({ id: "machine123", state: "started", region: "ams" }),
+        getMachineState: async () => "started",
+        getTelegramBotIdentity: async () => ({ configured: true, username: "livebot", link: "https://t.me/livebot" }),
+        getAppStatus: async () => ({ ok: false, error: "unused" }),
+        getAppLogs: async () => ({ stdout: "", stderr: "", exitCode: 0 }),
+        streamAppLogs: async () => ({ exitCode: 0 })
+      };
+
+      const registry = new FlyDeploymentRegistry({
+        flyctl,
+        env: {
+          ...process.env,
+          HERMES_FLY_CONFIG_DIR: configDir
+        }
+      });
+
+      const rows = await registry.listDeployments();
+      assert.deepEqual(rows, [
+        {
+          appName: "live-app",
+          region: "ams",
+          platform: "telegram",
+          machine: "machine123 (started)",
+          telegramBot: "@livebot",
+          telegramLink: "https://t.me/livebot"
+        }
+      ]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("does not resolve config from relative .hermes-fly when HOME is empty", async () => {
     const root = await mkdtemp(join(tmpdir(), "hermes-fly-runtime-list-home-empty-"));
     const configDir = join(root, ".hermes-fly");
@@ -402,9 +499,13 @@ describe("fly deployment registry", () => {
       process.chdir(root);
 
       const flyctl: FlyctlPort = {
+        listLiveAppNames: async () => null,
         getMachineSummary: async () => ({ id: "machine123", state: "started", region: "ord" }),
         getMachineState: async () => "started",
-        getTelegramBotIdentity: async () => ({ configured: false, username: null, link: null })
+        getTelegramBotIdentity: async () => ({ configured: false, username: null, link: null }),
+        getAppStatus: async () => ({ ok: false, error: "unused" }),
+        getAppLogs: async () => ({ stdout: "", stderr: "", exitCode: 0 }),
+        streamAppLogs: async () => ({ exitCode: 0 })
       };
 
       const registry = new FlyDeploymentRegistry({
@@ -438,9 +539,13 @@ describe("fly deployment registry", () => {
       process.chdir(root);
 
       const flyctl: FlyctlPort = {
+        listLiveAppNames: async () => null,
         getMachineSummary: async () => ({ id: "machine123", state: "started", region: "ord" }),
         getMachineState: async () => "started",
-        getTelegramBotIdentity: async () => ({ configured: false, username: null, link: null })
+        getTelegramBotIdentity: async () => ({ configured: false, username: null, link: null }),
+        getAppStatus: async () => ({ ok: false, error: "unused" }),
+        getAppLogs: async () => ({ stdout: "", stderr: "", exitCode: 0 }),
+        streamAppLogs: async () => ({ exitCode: 0 })
       };
 
       const registry = new FlyDeploymentRegistry({

@@ -31,6 +31,7 @@ export type TelegramBotIdentity = {
 };
 
 export interface FlyctlPort {
+  listLiveAppNames(): Promise<Set<string> | null>;
   getMachineSummary(appName: string): Promise<MachineSummary>;
   getMachineState(appName: string): Promise<string | null>;
   getTelegramBotIdentity(appName: string): Promise<TelegramBotIdentity>;
@@ -46,6 +47,20 @@ export class FlyctlAdapter implements FlyctlPort {
     private readonly processRunner: ProcessRunner,
     private readonly env?: NodeJS.ProcessEnv
   ) {}
+
+  async listLiveAppNames(): Promise<Set<string> | null> {
+    if (!await this.isFlyReady()) {
+      return null;
+    }
+
+    const flyCommand = await resolveFlyCommand(this.env);
+    const stdout = await this.runFlyJson(flyCommand, ["apps", "list", "--json"]);
+    if (stdout === null) {
+      return null;
+    }
+
+    return parseLiveAppNames(stdout);
+  }
 
   async getMachineSummary(appName: string): Promise<MachineSummary> {
     if (!await this.isFlyReady()) {
@@ -331,4 +346,36 @@ function normalizeMachineRecord(record: Record<string, unknown>): MachineSummary
     state: typeof stateValue === "string" && stateValue.length > 0 ? stateValue : null,
     region: typeof regionValue === "string" && regionValue.length > 0 ? regionValue : null
   };
+}
+
+function parseLiveAppNames(stdout: string): Set<string> | null {
+  try {
+    const parsed = JSON.parse(stdout) as Array<Record<string, unknown>>;
+    if (!Array.isArray(parsed)) {
+      return null;
+    }
+
+    const names = parsed
+      .map((entry) => {
+        const direct = entry.name ?? entry.Name;
+        if (typeof direct === "string" && direct.trim().length > 0) {
+          return direct.trim();
+        }
+
+        const app = entry.app;
+        if (app && typeof app === "object") {
+          const nested = (app as Record<string, unknown>).name;
+          if (typeof nested === "string" && nested.trim().length > 0) {
+            return nested.trim();
+          }
+        }
+
+        return "";
+      })
+      .filter((value) => value.length > 0);
+
+    return new Set(names);
+  } catch {
+    return null;
+  }
 }

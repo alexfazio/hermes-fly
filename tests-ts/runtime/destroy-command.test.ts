@@ -199,13 +199,13 @@ describe("runDestroyCommand - Telegram cleanup guidance", () => {
   });
 });
 
-describe("runDestroyCommand - not_found exit code", () => {
-  it("returns 4 when app is not found", async () => {
-    const runner = makeRunner({ destroyApp: async () => ({ ok: false }) });
+describe("runDestroyCommand - already absent app cleanup", () => {
+  it("returns 0 when app is already absent on Fly and local cleanup succeeds", async () => {
+    const runner = makeRunner({ destroyApp: async () => ({ ok: false, reason: "not_found" }) });
     const io = makeIO();
     const code = await runDestroyCommand(["-a", "ghost-app", "--force"], { runner, ...io });
-    assert.equal(code, 4);
-    assert.ok(io.errText.includes("not found"), `Expected 'not found' in stderr: ${io.errText}`);
+    assert.equal(code, 0);
+    assert.ok(io.errText.includes("already absent"), `Expected cleanup success in stderr: ${io.errText}`);
   });
 });
 
