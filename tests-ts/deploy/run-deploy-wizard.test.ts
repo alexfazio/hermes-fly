@@ -1351,6 +1351,58 @@ describe("FlyDeployWizard.collectConfig", () => {
     assert.match(guidedCopy, /AI access:\s+Z\.AI GLM API key/);
   });
 
+  it("rejects an invalid Z.AI API key and reprompts before deploying", async () => {
+    const prompts = makePromptPort([
+      "",
+      "",
+      "",
+      "",
+      "",
+      "5",
+      "/Users/alex/Desktop/Screenshot · Fly.png",
+      "glm-live-key",
+      "",
+      "2",
+      "y"
+    ], { interactive: true });
+    const runner = makeProcessRunner(async (command, args) => {
+      if (command !== "curl") {
+        return { exitCode: 1 };
+      }
+
+      const authHeader = args.find((value) => value.startsWith("Authorization: Bearer "));
+      const target = args.find((value) => value.startsWith("https://"));
+      assert.ok(authHeader);
+      assert.ok(target);
+
+      if (authHeader.includes("glm-live-key") && target === "https://api.z.ai/api/coding/paas/v4/chat/completions") {
+        return {
+          exitCode: 0,
+          stdout: "{\"id\":\"probe\"}\n200"
+        };
+      }
+
+      return {
+        exitCode: 0,
+        stdout: "{\"error\":\"unauthorized\"}\n401"
+      };
+    });
+    const wizard = new FlyDeployWizard({}, { prompts, process: runner });
+
+    const config = await wizard.collectConfig({ channel: "stable" });
+
+    assert.equal(config.provider, "zai");
+    assert.equal(config.apiKey, "glm-live-key");
+    assert.equal(config.apiBaseUrl, "https://api.z.ai/api/coding/paas/v4");
+    assert.deepEqual(prompts.secretAsked, [
+      "Z.AI GLM API key (required): ",
+      "Z.AI GLM API key (required): ",
+    ]);
+    const guidedCopy = prompts.writes.join("");
+    assert.match(guidedCopy, /This looks like a file path, not a Z\.AI API key/);
+    assert.match(guidedCopy, /Detected: Global \(Coding Plan\) endpoint/);
+  });
+
   it("fetches the full OpenRouter provider catalog and lets the user choose a specific model", async () => {
     const prompts = makePromptPort([
       "",

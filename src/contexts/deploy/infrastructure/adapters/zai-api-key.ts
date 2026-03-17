@@ -53,6 +53,16 @@ export interface ZaiModelOption {
   supportsReasoning: boolean;
 }
 
+export interface ZaiApiKeyValidation {
+  ok: boolean;
+  reason?: string;
+  warning?: string;
+}
+
+interface ZaiEndpointProbeResult {
+  statusCode: number | null;
+}
+
 export class ZaiApiKeyAdapter {
   constructor(
     private readonly process: ProcessRunner,
@@ -81,45 +91,58 @@ export class ZaiApiKeyAdapter {
 
   async detectEndpoint(apiKey: string): Promise<ZaiEndpointResolution | null> {
     for (const endpoint of ZAI_ENDPOINTS) {
-      const result = await this.process.run(
-        "curl",
-        [
-          "-sS",
-          "--max-time",
-          "8",
-          "-o",
-          "-",
-          "-w",
-          "\n%{http_code}",
-          "-X",
-          "POST",
-          `${endpoint.baseUrl}/chat/completions`,
-          "-H",
-          `Authorization: Bearer ${apiKey}`,
-          "-H",
-          "Content-Type: application/json",
-          "-d",
-          JSON.stringify({
-            model: endpoint.defaultModel,
-            stream: false,
-            max_tokens: 1,
-            messages: [{ role: "user", content: "ping" }],
-          }),
-        ],
-        { env: this.env }
-      );
-
-      if (result.exitCode !== 0) {
-        continue;
-      }
-
-      const statusCode = readStatusCode(result.stdout);
-      if (statusCode === 200) {
+      const probe = await this.probeEndpoint(apiKey, endpoint);
+      if (probe.statusCode === 200) {
         return { ...endpoint };
       }
     }
 
     return null;
+  }
+
+  async validateApiKey(apiKey: string, baseUrl?: string): Promise<ZaiApiKeyValidation> {
+    const trimmed = apiKey.trim();
+    const suspicious = explainPasteError(trimmed);
+    if (suspicious) {
+      return {
+        ok: false,
+        reason: suspicious,
+      };
+    }
+
+    const configuredBaseUrl = String(baseUrl ?? "").trim();
+    const endpoints = configuredBaseUrl.length > 0
+      ? [endpointForBaseUrl(configuredBaseUrl)]
+      : ZAI_ENDPOINTS.map((endpoint) => ({ ...endpoint }));
+
+    const statuses: number[] = [];
+    let sawReachabilityFailure = false;
+
+    for (const endpoint of endpoints) {
+      const probe = await this.probeEndpoint(trimmed, endpoint);
+      if (probe.statusCode === 200) {
+        return { ok: true };
+      }
+      if (probe.statusCode === null) {
+        sawReachabilityFailure = true;
+        continue;
+      }
+      statuses.push(probe.statusCode);
+    }
+
+    if (statuses.length === 0 && sawReachabilityFailure) {
+      return {
+        ok: true,
+        warning: configuredBaseUrl.length > 0
+          ? "I could not verify this Z.AI key against GLM_BASE_URL right now. Hermes will continue with the configured endpoint."
+          : "I could not verify this Z.AI key right now. Hermes will continue and use the detected or default endpoint.",
+      };
+    }
+
+    return {
+      ok: false,
+      reason: describeProbeFailure(statuses, configuredBaseUrl),
+    };
   }
 
   staticModelOptions(preferredModel?: string): ZaiModelOption[] {
@@ -139,6 +162,44 @@ export class ZaiApiKeyAdapter {
 
   codingFallback(): ZaiEndpointResolution {
     return { ...ZAI_ENDPOINTS[0] };
+  }
+
+  private async probeEndpoint(apiKey: string, endpoint: ZaiEndpointResolution): Promise<ZaiEndpointProbeResult> {
+    const result = await this.process.run(
+      "curl",
+      [
+        "-sS",
+        "--max-time",
+        "8",
+        "-o",
+        "-",
+        "-w",
+        "\n%{http_code}",
+        "-X",
+        "POST",
+        `${endpoint.baseUrl}/chat/completions`,
+        "-H",
+        `Authorization: Bearer ${apiKey}`,
+        "-H",
+        "Content-Type: application/json",
+        "-d",
+        JSON.stringify({
+          model: endpoint.defaultModel,
+          stream: false,
+          max_tokens: 1,
+          messages: [{ role: "user", content: "ping" }],
+        }),
+      ],
+      { env: this.env }
+    );
+
+    if (result.exitCode !== 0) {
+      return { statusCode: null };
+    }
+
+    return {
+      statusCode: readStatusCode(result.stdout),
+    };
   }
 
   private buildModelOption(modelId: string): ZaiModelOption {
@@ -182,4 +243,50 @@ function describeModel(modelId: string): string {
     return "Fast / lower cost";
   }
   return "Z.AI model";
+}
+
+function endpointForBaseUrl(baseUrl: string): ZaiEndpointResolution {
+  const normalized = baseUrl.replace(/\/+$/, "");
+  const known = ZAI_ENDPOINTS.find((endpoint) => endpoint.baseUrl === normalized);
+  if (known) {
+    return { ...known };
+  }
+  return {
+    id: "configured",
+    baseUrl: normalized,
+    defaultModel: normalized.includes("/coding/") ? "glm-4.7" : "glm-5",
+    label: "Configured via GLM_BASE_URL",
+  };
+}
+
+function explainPasteError(value: string): string | undefined {
+  if (value.length === 0) {
+    return "GLM_API_KEY cannot be empty.";
+  }
+
+  if (/[\\/]/.test(value) && /\.[A-Za-z0-9]{2,5}$/.test(value)) {
+    return "This looks like a file path, not a Z.AI API key. Paste the actual GLM API key from your Z.AI account.";
+  }
+
+  if (/^https?:\/\//i.test(value)) {
+    return "This looks like a URL, not a Z.AI API key. Paste the actual GLM API key from your Z.AI account.";
+  }
+
+  return undefined;
+}
+
+function describeProbeFailure(statuses: number[], configuredBaseUrl: string): string {
+  if (statuses.includes(401) || statuses.includes(403)) {
+    return "Z.AI rejected this key. Paste a valid GLM API key from your Z.AI account and try again.";
+  }
+
+  if (statuses.includes(402)) {
+    return "Z.AI accepted the request but no usable GLM endpoint is available for this key right now. Check your GLM plan or billing, then try again.";
+  }
+
+  if (configuredBaseUrl.length > 0 && statuses.includes(404)) {
+    return "GLM_BASE_URL did not point to a working Z.AI chat endpoint. Check GLM_BASE_URL and try again.";
+  }
+
+  return "I could reach Z.AI, but this key did not authorize a usable GLM endpoint. Check the key and your plan, then try again.";
 }

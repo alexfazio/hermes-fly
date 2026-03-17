@@ -1042,7 +1042,7 @@ export class FlyDeployWizard implements DeployWizardPort {
     envSttProvider?: string,
     envSttModel?: string
   ): Promise<AiAccessSelection> {
-    const apiKey = await this.collectZaiApiKey();
+    const apiKey = await this.collectZaiApiKey(envBaseUrl);
     const endpoint = await this.collectZaiEndpoint(apiKey, envBaseUrl);
     const model = await this.collectZaiModel(envModel, endpoint);
     const stt = this.resolveSttDefaults("zai", envSttProvider, envSttModel);
@@ -1633,10 +1633,21 @@ export class FlyDeployWizard implements DeployWizardPort {
     }
   }
 
-  private async collectZaiApiKey(): Promise<string> {
+  private async collectZaiApiKey(envBaseUrl?: string): Promise<string> {
     const preset = this.zaiAuth.resolvePresetApiKey();
+    const configuredBaseUrl = envBaseUrl?.trim() || this.zaiAuth.resolvePresetBaseUrl() || undefined;
     if (preset) {
-      return preset;
+      const validation = await this.zaiAuth.validateApiKey(preset, configuredBaseUrl);
+      if (validation.ok) {
+        if (validation.warning && this.prompts.isInteractive()) {
+          this.prompts.write(`${validation.warning}\n\n`);
+        }
+        return preset;
+      }
+      if (!this.prompts.isInteractive()) {
+        throw new Error(validation.reason ?? "GLM_API_KEY is invalid.");
+      }
+      this.prompts.write(`${validation.reason ?? "GLM_API_KEY looks invalid."}\n\n`);
     }
     if (!this.prompts.isInteractive()) {
       throw new Error("GLM_API_KEY is required in non-interactive mode. Run from a terminal to use the guided wizard or export GLM_API_KEY first.");
@@ -1648,6 +1659,14 @@ export class FlyDeployWizard implements DeployWizardPort {
       const answer = await this.prompts.askSecret("Z.AI GLM API key (required): ");
       const apiKey = answer.trim();
       if (apiKey.length > 0) {
+        const validation = await this.zaiAuth.validateApiKey(apiKey, configuredBaseUrl);
+        if (!validation.ok) {
+          this.prompts.write(`${validation.reason ?? "Z.AI rejected this key. Check it and try again."}\n`);
+          continue;
+        }
+        if (validation.warning) {
+          this.prompts.write(`${validation.warning}\n`);
+        }
         return apiKey;
       }
       this.prompts.write("GLM_API_KEY cannot be empty.\n");

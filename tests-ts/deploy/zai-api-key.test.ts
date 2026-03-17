@@ -60,6 +60,40 @@ describe("ZaiApiKeyAdapter", () => {
     assert.equal(attemptedTargets[0], "https://api.z.ai/api/coding/paas/v4/chat/completions");
   });
 
+  it("rejects a path-like value before treating it as a Z.AI API key", async () => {
+    let probeCount = 0;
+    const adapter = new ZaiApiKeyAdapter(
+      makeProcessRunner(async () => {
+        probeCount += 1;
+        return { exitCode: 0, stdout: "{\"error\":\"unauthorized\"}\n401" };
+      })
+    );
+
+    const validation = await adapter.validateApiKey("/Users/alex/Desktop/Screenshot · Fly.png");
+
+    assert.deepEqual(validation, {
+      ok: false,
+      reason: "This looks like a file path, not a Z.AI API key. Paste the actual GLM API key from your Z.AI account.",
+    });
+    assert.equal(probeCount, 0);
+  });
+
+  it("rejects a GLM key when Z.AI returns authorization failures", async () => {
+    const adapter = new ZaiApiKeyAdapter(
+      makeProcessRunner(async () => ({
+        exitCode: 0,
+        stdout: "{\"error\":\"unauthorized\"}\n401",
+      }))
+    );
+
+    const validation = await adapter.validateApiKey("glm-bad-key");
+
+    assert.deepEqual(validation, {
+      ok: false,
+      reason: "Z.AI rejected this key. Paste a valid GLM API key from your Z.AI account and try again.",
+    });
+  });
+
   it("offers the Hermes-supported GLM model catalog with the preferred model first", () => {
     const adapter = new ZaiApiKeyAdapter(makeProcessRunner(async () => ({ exitCode: 1 })));
 
