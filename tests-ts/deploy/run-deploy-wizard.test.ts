@@ -873,6 +873,66 @@ describe("FlyDeployWizard.collectConfig", () => {
     assert.match(guidedCopy, /Fetching available Codex models from OpenAI/);
   });
 
+  it("prompts for Hermes-compatible reasoning effort for Codex GPT-5 models", async () => {
+    const home = await mkdtemp(join(tmpdir(), "hermes-fly-codex-reasoning-"));
+    await mkdir(join(home, ".hermes"), { recursive: true });
+    await writeFile(join(home, ".hermes", "auth.json"), JSON.stringify({
+      version: 1,
+      providers: {
+        "openai-codex": {
+          tokens: {
+            access_token: "access-hermes",
+            refresh_token: "refresh-hermes"
+          },
+          last_refresh: "2026-03-17T07:00:00Z",
+          auth_mode: "chatgpt"
+        }
+      },
+      active_provider: "openai-codex"
+    }), "utf8");
+
+    const prompts = makePromptPort([
+      "",
+      "",
+      "",
+      "",
+      "",
+      "2",
+      "1",
+      "1",
+      "1",
+      "2",
+      "y"
+    ], { interactive: true });
+    const runner = makeProcessRunner(async (command, args) => {
+      if (command === "curl" && args.includes("https://chatgpt.com/backend-api/codex/models?client_version=1.0.0")) {
+        return {
+          exitCode: 0,
+          stdout: JSON.stringify(liveCodexModelsFixture())
+        };
+      }
+      return { exitCode: 1 };
+    });
+
+    try {
+      const wizard = new FlyDeployWizard({ HOME: home }, { prompts, process: runner });
+
+      const config = await wizard.collectConfig({ channel: "stable" });
+
+      assert.equal(config.provider, "openai-codex");
+      assert.equal(config.model, "gpt-5.4");
+      assert.equal(config.reasoningEffort, "low");
+      const guidedCopy = prompts.writes.join("");
+      assert.match(guidedCopy, /How much extra reasoning effort should Hermes use with this model/);
+      assert.match(guidedCopy, /Lower cost and faster responses/);
+      assert.match(guidedCopy, /Balanced \(recommended\)/);
+      assert.match(guidedCopy, /Higher effort for harder tasks/);
+      assert.match(guidedCopy, /Reasoning:\s+low/);
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
   it("fetches the full OpenRouter provider catalog and lets the user choose a specific model", async () => {
     const prompts = makePromptPort([
       "",

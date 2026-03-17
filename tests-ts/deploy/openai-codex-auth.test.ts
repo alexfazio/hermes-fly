@@ -201,9 +201,12 @@ describe("OpenAICodexAuthAdapter", () => {
       liveModels.map((option) => option.value),
       ["gpt-5.4", "gpt-5.3-codex"]
     );
+    assert.equal(liveModels[0]?.supportsReasoning, true);
+    assert.equal(liveModels[1]?.supportsReasoning, true);
     assert.deepEqual(
       fallbackModels.map((option) => option.value),
       ["gpt-5.3-codex", "gpt-5.2-codex", "gpt-5.1-codex-max", "gpt-5.1-codex-mini"]
     );
+    assert.ok(fallbackModels.every((option) => option.supportsReasoning));
   });
 });

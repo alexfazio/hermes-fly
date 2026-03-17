@@ -800,17 +800,15 @@ export class FlyDeployWizard implements DeployWizardPort {
     envReasoningEffort: string | undefined,
     bundledAuthJsonB64?: string
   ): Promise<AiAccessSelection> {
-    if ((envReasoningEffort ?? "").trim().length > 0) {
-      throw new Error("HERMES_REASONING_EFFORT is not currently supported for OpenAI Codex deployments.");
-    }
-
     const auth = await this.collectCodexAuth(bundledAuthJsonB64);
     const model = await this.collectCodexModel(envModel, auth.accessToken);
+    const reasoningEffort = await this.collectReasoningEffort(envReasoningEffort, model);
     return {
       provider: "openai-codex",
       apiKey: "",
       authJsonB64: auth.authJsonB64,
       model,
+      reasoningEffort,
     };
   }
 

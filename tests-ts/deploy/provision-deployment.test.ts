@@ -126,7 +126,8 @@ describe("ProvisionDeploymentUseCase - happy path", () => {
       provider: "openai-codex",
       apiKey: "",
       authJsonB64: "eyJ2ZXJzaW9uIjoxfQ==",
-      model: "gpt-5.3-codex"
+      model: "gpt-5.3-codex",
+      reasoningEffort: "low"
     }, io.stderr);
 
     assert.equal(result.ok, true);
@@ -134,6 +135,7 @@ describe("ProvisionDeploymentUseCase - happy path", () => {
       HERMES_AUTH_JSON_B64: "eyJ2ZXJzaW9uIjoxfQ==",
       LLM_MODEL: "gpt-5.3-codex",
       HERMES_LLM_PROVIDER: "openai-codex",
+      HERMES_REASONING_EFFORT: "low",
       HERMES_APP_NAME: DEFAULT_CONFIG.appName,
       HERMES_AGENT_REF: DEFAULT_CONFIG.hermesRef,
       HERMES_DEPLOY_CHANNEL: DEFAULT_CONFIG.channel

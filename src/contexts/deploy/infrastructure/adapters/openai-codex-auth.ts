@@ -403,8 +403,12 @@ export class OpenAICodexAuthAdapter {
       bestFor: this.noteForModel(normalized),
       providerKey: "openai",
       providerLabel: "OpenAI",
-      supportsReasoning: false,
+      supportsReasoning: this.supportsReasoning(normalized),
     };
+  }
+
+  private supportsReasoning(slug: string): boolean {
+    return /^gpt-5(?:[.-].+)?$/i.test(slug.trim());
   }
 
   private labelForModel(slug: string): string {
