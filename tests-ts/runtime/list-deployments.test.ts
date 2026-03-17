@@ -388,7 +388,7 @@ describe("flyctl adapter - installed fly fallback", () => {
             return { stdout: "", stderr: "", exitCode: 0 };
           }
         },
-        { HOME: root }
+        { HOME: root, PATH: "" }
       );
 
       const machine = await adapter.getMachineSummary("test-app");

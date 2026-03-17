@@ -46,7 +46,7 @@ describe("FlyDestroyRunner", () => {
             return { stdout: "", stderr: "", exitCode: 0 };
           }
         },
-        { HOME: root }
+        { HOME: root, PATH: "" }
       );
 
       await runner.destroyApp("test-app");
