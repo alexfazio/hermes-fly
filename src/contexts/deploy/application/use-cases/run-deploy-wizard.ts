@@ -67,6 +67,13 @@ function buildTelegramChatLink(config: DeployConfig): string | undefined {
   return `https://t.me/${config.telegramBotUsername}?start=${config.appName}`;
 }
 
+function describeAiAccess(provider: string): string {
+  if (provider === "openai-codex") {
+    return "ChatGPT subscription (OpenAI Codex)";
+  }
+  return "OpenRouter API key";
+}
+
 function writeCompletionSummary(stdout: { write: (s: string) => void }, config: DeployConfig): void {
   stdout.write("Deployment complete\n");
   stdout.write(`  Fly organization: ${config.orgSlug}\n`);
@@ -74,6 +81,7 @@ function writeCompletionSummary(stdout: { write: (s: string) => void }, config: 
   stdout.write(`  Location:        ${config.region}\n`);
   stdout.write(`  Server size:     ${describeVmSize(config.vmSize)}\n`);
   stdout.write(`  Storage:         ${config.volumeSize} GB\n`);
+  stdout.write(`  AI access:       ${describeAiAccess(config.provider)}\n`);
   stdout.write(`  AI model:        ${config.model}\n`);
   if (config.reasoningEffort) {
     stdout.write(`  Reasoning:       ${config.reasoningEffort}\n`);

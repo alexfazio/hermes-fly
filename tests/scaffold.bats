@@ -96,6 +96,14 @@ teardown() {
   assert_output --partial "/root/.hermes/.env"
 }
 
+@test "entrypoint.sh seeds Hermes auth.json from HERMES_AUTH_JSON_B64 when missing" {
+  run cat "${PROJECT_ROOT}/templates/entrypoint.sh"
+  assert_success
+  assert_output --partial "HERMES_AUTH_JSON_B64"
+  assert_output --partial "/root/.hermes/auth.json"
+  assert_output --partial "base64"
+}
+
 @test "entrypoint.sh bridges all messaging and LLM secrets" {
   run cat "${PROJECT_ROOT}/templates/entrypoint.sh"
   assert_success
@@ -108,7 +116,15 @@ teardown() {
   assert_success
   assert_output --partial "LLM_MODEL"
   assert_output --partial "config.yaml"
-  assert_output --partial "sed"
+  assert_output --partial "python3"
+}
+
+@test "entrypoint.sh patches config.yaml provider from HERMES_LLM_PROVIDER" {
+  run cat "${PROJECT_ROOT}/templates/entrypoint.sh"
+  assert_success
+  assert_output --partial "HERMES_LLM_PROVIDER"
+  assert_output --partial "provider"
+  assert_output --partial "config.yaml"
 }
 
 @test "entrypoint.sh clears rate limits for approved users" {
@@ -118,10 +134,11 @@ teardown() {
   assert_output --partial "approved.json"
 }
 
-@test "entrypoint.sh escapes pipe characters in LLM_MODEL for sed safety" {
+@test "entrypoint.sh updates config.yaml through a Python patch script" {
   run cat "${PROJECT_ROOT}/templates/entrypoint.sh"
   assert_success
-  assert_output --partial '//|/'
+  assert_output --partial "def upsert"
+  assert_output --partial "model_provider"
 }
 
 # --- Entrypoint auto-approve ---

@@ -4,7 +4,9 @@ export interface DeployConfig {
   region: string;
   vmSize: string;
   volumeSize: number;
+  provider: string;
   apiKey: string;
+  authJsonB64?: string;
   model: string;
   reasoningEffort?: string;
   channel: "stable" | "preview" | "edge";

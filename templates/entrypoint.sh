@@ -14,6 +14,12 @@ done
 if [[ ! -d /root/.hermes/skills ]] && [[ -d /opt/hermes/defaults/skills ]]; then
   cp -r /opt/hermes/defaults/skills /root/.hermes/skills
 fi
+# Seed Hermes auth state on first deploy when an OAuth-backed provider is configured.
+if [[ -n "${HERMES_AUTH_JSON_B64:-}" ]] && [[ ! -f /root/.hermes/auth.json ]]; then
+  umask 077
+  printf '%s' "${HERMES_AUTH_JSON_B64}" | base64 -d > /root/.hermes/auth.json
+  chmod 600 /root/.hermes/auth.json
+fi
 # Bridge Fly secrets into /root/.hermes/.env on every boot (not just first deploy)
 for var in OPENROUTER_API_KEY LLM_MODEL LLM_BASE_URL LLM_API_KEY NOUS_API_KEY \
   HERMES_REASONING_EFFORT \
@@ -57,11 +63,56 @@ if [[ -n "${TELEGRAM_BOT_TOKEN:-}" ]]; then
     fi
   ) || true
 fi
-# Patch config.yaml model.default from LLM_MODEL on every boot
-if [[ -n "${LLM_MODEL:-}" ]]; then
-  _safe_model="${LLM_MODEL//|/\\|}"
-  sed -i "s|^  default: \".*\"|  default: \"${_safe_model}\"|" /root/.hermes/config.yaml
-fi
+# Patch config.yaml model settings from deploy secrets on every boot.
+python3 - <<'PYEOF'
+import os
+from pathlib import Path
+
+config_path = Path('/root/.hermes/config.yaml')
+if not config_path.exists():
+    raise SystemExit(0)
+
+lines = config_path.read_text(encoding='utf-8').splitlines()
+model_default = os.environ.get('LLM_MODEL', '').strip()
+model_provider = os.environ.get('HERMES_LLM_PROVIDER', '').strip()
+
+if not model_default and not model_provider:
+    raise SystemExit(0)
+
+model_index = next((i for i, line in enumerate(lines) if line.strip() == 'model:'), None)
+if model_index is None:
+    raise SystemExit(0)
+
+section_start = model_index + 1
+section_end = section_start
+while section_end < len(lines):
+    line = lines[section_end]
+    if line and not line.startswith(' '):
+        break
+    section_end += 1
+
+section = lines[section_start:section_end]
+
+def upsert(section_lines, key, value):
+    if not value:
+        return section_lines
+    rendered = []
+    updated = False
+    for line in section_lines:
+        if line.startswith(f'  {key}:'):
+            rendered.append(f'  {key}: "{value}"')
+            updated = True
+        else:
+            rendered.append(line)
+    if not updated:
+        rendered.append(f'  {key}: "{value}"')
+    return rendered
+
+section = upsert(section, 'default', model_default)
+section = upsert(section, 'provider', model_provider)
+lines = lines[:section_start] + section + lines[section_end:]
+config_path.write_text('\n'.join(lines) + '\n', encoding='utf-8')
+PYEOF
 # Clear rate limit entries for already-approved users on every boot
 if [[ -f /root/.hermes/pairing/_rate_limits.json ]]; then
   python3 - <<'PYEOF'

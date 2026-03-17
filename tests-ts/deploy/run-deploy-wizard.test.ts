@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PassThrough, Writable } from "node:stream";
@@ -31,6 +31,7 @@ const DEFAULT_CONFIG: DeployConfig = {
   region: "iad",
   vmSize: "shared-cpu-1x",
   volumeSize: 5,
+  provider: "openrouter",
   apiKey: "sk-test",
   model: "anthropic/claude-sonnet-4-20250514",
   channel: "stable",
@@ -182,6 +183,17 @@ function liveOpenRouterModelsFixture() {
       supported_parameters: ["max_tokens", "temperature"]
     }
   ];
+}
+
+function liveCodexModelsFixture() {
+  return {
+    models: [
+      { slug: "gpt-5.4", priority: 1 },
+      { slug: "gpt-5.3-codex", priority: 2 },
+      { slug: "gpt-5.1-codex-mini", priority: 3 },
+      { slug: "hidden-model", priority: 4, visibility: "hidden" }
+    ]
+  };
 }
 
 describe("RunDeployWizardUseCase - happy path", () => {
@@ -628,6 +640,7 @@ describe("FlyDeployWizard.collectConfig", () => {
       "",
       "",
       "",
+      "1",
       "sk-live",
       "",
       "",
@@ -652,6 +665,7 @@ describe("FlyDeployWizard.collectConfig", () => {
       "2",
       "2",
       "3",
+      "1",
       "sk-live",
       "2",
       "1",
@@ -734,6 +748,131 @@ describe("FlyDeployWizard.collectConfig", () => {
     assert.match(guidedCopy, /Review your setup/);
   });
 
+  it("offers ChatGPT subscription access through OpenAI Codex and can reuse existing Hermes auth", async () => {
+    const home = await mkdtemp(join(tmpdir(), "hermes-fly-codex-auth-"));
+    await mkdir(join(home, ".hermes"), { recursive: true });
+    await writeFile(join(home, ".hermes", "auth.json"), JSON.stringify({
+      version: 1,
+      providers: {
+        "openai-codex": {
+          tokens: {
+            access_token: "access-hermes",
+            refresh_token: "refresh-hermes"
+          },
+          last_refresh: "2026-03-17T07:00:00Z",
+          auth_mode: "chatgpt"
+        }
+      },
+      active_provider: "openai-codex"
+    }), "utf8");
+
+    const prompts = makePromptPort([
+      "",
+      "",
+      "",
+      "",
+      "",
+      "2",
+      "",
+      "1",
+      "2",
+      "y"
+    ], { interactive: true });
+    const runner = makeProcessRunner(async (command, args) => {
+      if (command === "curl" && args.includes("https://chatgpt.com/backend-api/codex/models?client_version=1.0.0")) {
+        return {
+          exitCode: 0,
+          stdout: JSON.stringify(liveCodexModelsFixture())
+        };
+      }
+      return { exitCode: 1 };
+    });
+
+    try {
+      const wizard = new FlyDeployWizard({ HOME: home }, { prompts, process: runner });
+
+      const config = await wizard.collectConfig({ channel: "stable" });
+
+      assert.equal(config.provider, "openai-codex");
+      assert.equal(config.apiKey, "");
+      assert.ok(config.authJsonB64);
+      assert.equal(config.model, "gpt-5.4");
+      const guidedCopy = prompts.writes.join("");
+      assert.match(guidedCopy, /How should Hermes access AI models/);
+      assert.match(guidedCopy, /ChatGPT subscription.*OpenAI Codex/);
+      assert.match(guidedCopy, /I found an existing Hermes OpenAI Codex login on this machine/);
+      assert.match(guidedCopy, /Which OpenAI Codex model should your agent use/);
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
+  it("guides the user through the OpenAI Codex device-code flow when no saved auth exists", async () => {
+    const prompts = makePromptPort([
+      "",
+      "",
+      "",
+      "",
+      "",
+      "2",
+      "2",
+      "2",
+      "y"
+    ], { interactive: true });
+    const runner = makeProcessRunner(async (command, args) => {
+      if (command !== "curl") {
+        return { exitCode: 1 };
+      }
+      const target = args.find((value) => value.startsWith("https://"));
+      if (target?.includes("/api/accounts/deviceauth/usercode")) {
+        return {
+          exitCode: 0,
+          stdout: JSON.stringify({
+            user_code: "ABCD-EFGH",
+            device_auth_id: "device-auth-123",
+            interval: 0
+          })
+        };
+      }
+      if (target?.includes("/api/accounts/deviceauth/token")) {
+        return {
+          exitCode: 0,
+          stdout: JSON.stringify({
+            authorization_code: "authorization-code-123",
+            code_verifier: "verifier-456"
+          })
+        };
+      }
+      if (target?.includes("/oauth/token")) {
+        return {
+          exitCode: 0,
+          stdout: JSON.stringify({
+            access_token: "access-device",
+            refresh_token: "refresh-device"
+          })
+        };
+      }
+      if (target?.includes("https://chatgpt.com/backend-api/codex/models?client_version=1.0.0")) {
+        return {
+          exitCode: 0,
+          stdout: JSON.stringify(liveCodexModelsFixture())
+        };
+      }
+      return { exitCode: 1 };
+    });
+    const wizard = new FlyDeployWizard({}, { prompts, process: runner });
+
+    const config = await wizard.collectConfig({ channel: "stable" });
+
+    assert.equal(config.provider, "openai-codex");
+    assert.ok(config.authJsonB64);
+    assert.equal(config.model, "gpt-5.3-codex");
+    const guidedCopy = prompts.writes.join("");
+    assert.match(guidedCopy, /https:\/\/auth\.openai\.com\/codex\/device/);
+    assert.match(guidedCopy, /ABCD-EFGH/);
+    assert.match(guidedCopy, /Fetching available Codex models from OpenAI/);
+  });
+
   it("fetches the full OpenRouter provider catalog and lets the user choose a specific model", async () => {
     const prompts = makePromptPort([
       "",
@@ -741,6 +880,7 @@ describe("FlyDeployWizard.collectConfig", () => {
       "",
       "",
       "",
+      "1",
       "sk-live",
       "2",
       "3",
@@ -801,6 +941,7 @@ describe("FlyDeployWizard.collectConfig", () => {
       "",
       "",
       "",
+      "1",
       "sk-live",
       "1",
       "1",
@@ -859,6 +1000,7 @@ describe("FlyDeployWizard.collectConfig", () => {
       "",
       "",
       "",
+      "1",
       "sk-live",
       "2",
       "5",
@@ -939,6 +1081,7 @@ describe("FlyDeployWizard.collectConfig", () => {
       "",
       "",
       "",
+      "1",
       "sk-live",
       "1",
       "1",
@@ -1016,6 +1159,7 @@ describe("FlyDeployWizard.collectConfig", () => {
       "",
       "",
       "",
+      "1",
       "sk-live",
       "2",
       "2",
@@ -1071,6 +1215,7 @@ describe("FlyDeployWizard.collectConfig", () => {
       "",
       "",
       "",
+      "1",
       "sk-live",
       "2",
       "3",
@@ -1121,6 +1266,7 @@ describe("FlyDeployWizard.collectConfig", () => {
       "",
       "",
       "",
+      "1",
       "sk-live",
       "2",
       "4",
@@ -1173,6 +1319,7 @@ describe("FlyDeployWizard.collectConfig", () => {
       "",
       "",
       "",
+      "1",
       "sk-live",
       "1",
       "2",
@@ -1261,6 +1408,7 @@ describe("FlyDeployWizard.collectConfig", () => {
       "",
       "",
       "",
+      "1",
       "sk-live",
       "",
       "",

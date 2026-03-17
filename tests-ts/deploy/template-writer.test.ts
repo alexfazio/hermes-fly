@@ -13,6 +13,7 @@ const DEFAULT_CONFIG: DeployConfig = {
   region: "fra",
   vmSize: "shared-cpu-2x",
   volumeSize: 5,
+  provider: "openrouter",
   apiKey: "sk-test",
   model: "anthropic/claude-sonnet-4-20250514",
   channel: "stable",

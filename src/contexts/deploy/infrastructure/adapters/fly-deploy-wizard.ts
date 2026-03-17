@@ -5,6 +5,11 @@ import { NodeProcessRunner, type ForegroundProcessRunner } from "../../../../ada
 import { DeploymentIntent } from "../../domain/deployment-intent.js";
 import { ReadlineDeployPrompts, type DeployPromptPort } from "./deploy-prompts.js";
 import { TerminalQrCodeRenderer, type QrCodeRendererPort } from "./qr-code.js";
+import {
+  OpenAICodexAuthAdapter,
+  type CodexModelOption,
+  type ResolvedCodexAuth,
+} from "./openai-codex-auth.js";
 import { MessagingPolicy, type MessagingPolicyMode } from "../../../messaging/domain/messaging-policy.js";
 import { randomBytes } from "node:crypto";
 import { constants } from "node:fs";
@@ -96,6 +101,14 @@ type TelegramSetup = {
 type TelegramBotIdentity = {
   username: string;
   firstName: string;
+};
+
+type AiAccessSelection = {
+  provider: "openrouter" | "openai-codex";
+  apiKey: string;
+  authJsonB64?: string;
+  model: string;
+  reasoningEffort?: string;
 };
 
 const STATIC_REGIONS: RegionOption[] = [
@@ -223,6 +236,7 @@ export interface FlyDeployWizardDeps {
   prompts?: DeployPromptPort;
   templateWriter?: TemplateWriter;
   qrRenderer?: QrCodeRendererPort;
+  codexAuth?: OpenAICodexAuthAdapter;
 }
 
 export class FlyDeployWizard implements DeployWizardPort {
@@ -231,6 +245,7 @@ export class FlyDeployWizard implements DeployWizardPort {
   private readonly process: ForegroundProcessRunner;
   private readonly prompts: DeployPromptPort;
   private readonly qrRenderer: QrCodeRendererPort;
+  private readonly codexAuth: OpenAICodexAuthAdapter;
   private readonly env: NodeJS.ProcessEnv;
   private readonly defaultAppName: string;
   private readonly modelLabels = new Map<string, string>();
@@ -244,6 +259,7 @@ export class FlyDeployWizard implements DeployWizardPort {
     this.templateWriter = deps.templateWriter ?? new TemplateWriter();
     this.prompts = deps.prompts ?? new ReadlineDeployPrompts();
     this.qrRenderer = deps.qrRenderer ?? new TerminalQrCodeRenderer();
+    this.codexAuth = deps.codexAuth ?? new OpenAICodexAuthAdapter(this.process, this.env);
     this.defaultAppName = this.buildDefaultAppName();
     this.rememberModelOptions(STATIC_MODEL_OPTIONS);
   }
@@ -332,9 +348,12 @@ export class FlyDeployWizard implements DeployWizardPort {
     const region = await this.collectRegion(env.HERMES_FLY_REGION);
     const vmSize = await this.collectVmSize(env.HERMES_FLY_VM_SIZE);
     const volumeSize = await this.collectVolumeSize(env.HERMES_FLY_VOLUME_SIZE);
-    const apiKey = await this.collectOpenRouterApiKey();
-    const model = await this.collectModel(env.HERMES_FLY_MODEL, apiKey);
-    const reasoningEffort = await this.collectReasoningEffort(env.HERMES_REASONING_EFFORT, model);
+    const aiAccess = await this.collectAiAccess({
+      provider: env.HERMES_LLM_PROVIDER ?? env.HERMES_FLY_PROVIDER,
+      model: env.HERMES_FLY_MODEL,
+      reasoningEffort: env.HERMES_REASONING_EFFORT,
+      authJsonB64: env.HERMES_AUTH_JSON_B64,
+    });
     const telegramSetup = await this.collectTelegramSetup({
       botToken: env.TELEGRAM_BOT_TOKEN,
       allowedUsers: env.TELEGRAM_ALLOWED_USERS,
@@ -347,9 +366,9 @@ export class FlyDeployWizard implements DeployWizardPort {
       appName,
       region,
       vmSize,
-      provider: "openrouter",
-      model,
-      reasoningEffort,
+      provider: aiAccess.provider,
+      model: aiAccess.model,
+      reasoningEffort: aiAccess.reasoningEffort,
       channel: opts.channel
     });
 
@@ -359,7 +378,9 @@ export class FlyDeployWizard implements DeployWizardPort {
       region: intent.region,
       vmSize: intent.vmSize,
       volumeSize,
-      apiKey,
+      provider: intent.provider,
+      apiKey: aiAccess.apiKey,
+      authJsonB64: aiAccess.authJsonB64,
       model: intent.model,
       reasoningEffort: intent.reasoningEffort.length > 0 ? intent.reasoningEffort : undefined,
       channel: intent.channel,
@@ -393,13 +414,18 @@ export class FlyDeployWizard implements DeployWizardPort {
     if (!volResult.ok) return volResult;
 
     const secrets: Record<string, string> = {
-      OPENROUTER_API_KEY: config.apiKey,
       LLM_MODEL: config.model,
       HERMES_AGENT_REF: config.hermesRef,
       HERMES_DEPLOY_CHANNEL: config.channel,
-      HERMES_LLM_PROVIDER: "openrouter",
+      HERMES_LLM_PROVIDER: config.provider,
       HERMES_APP_NAME: config.appName,
     };
+    if (config.provider === "openrouter") {
+      secrets.OPENROUTER_API_KEY = config.apiKey;
+    }
+    if (config.provider === "openai-codex" && config.authJsonB64) {
+      secrets.HERMES_AUTH_JSON_B64 = config.authJsonB64;
+    }
     if (config.reasoningEffort) {
       secrets.HERMES_REASONING_EFFORT = config.reasoningEffort;
     }
@@ -720,6 +746,194 @@ export class FlyDeployWizard implements DeployWizardPort {
     return selected.value;
   }
 
+  private async collectAiAccess(input: {
+    provider?: string;
+    model?: string;
+    reasoningEffort?: string;
+    authJsonB64?: string;
+  }): Promise<AiAccessSelection> {
+    const normalizedProvider = this.normalizeAiProvider(input.provider);
+    if (normalizedProvider === "openrouter") {
+      return this.collectOpenRouterAccess(input.model, input.reasoningEffort);
+    }
+    if (normalizedProvider === "openai-codex") {
+      return this.collectOpenAICodexAccess(input.model, input.reasoningEffort, input.authJsonB64);
+    }
+
+    if (!this.prompts.isInteractive()) {
+      const bundledCodexAuth = (input.authJsonB64 ?? "").trim();
+      if (bundledCodexAuth.length > 0) {
+        return this.collectOpenAICodexAccess(input.model, input.reasoningEffort, bundledCodexAuth);
+      }
+      return this.collectOpenRouterAccess(input.model, input.reasoningEffort);
+    }
+
+    this.prompts.write("How should Hermes access AI models?\n");
+    this.prompts.write("You can use your own OpenRouter API key, or sign in with your ChatGPT subscription through OpenAI Codex.\n\n");
+    this.prompts.write("   1  OpenRouter API key         Bring your own API key and choose from OpenRouter's model catalog\n");
+    this.prompts.write("   2  ChatGPT subscription       Sign in with ChatGPT / OpenAI through OpenAI Codex\n\n");
+
+    const selection = await this.chooseNumber("Choose an option [1]: ", 2, 1);
+    if (selection === 2) {
+      return this.collectOpenAICodexAccess(input.model, input.reasoningEffort, input.authJsonB64);
+    }
+    return this.collectOpenRouterAccess(input.model, input.reasoningEffort);
+  }
+
+  private async collectOpenRouterAccess(
+    envModel: string | undefined,
+    envReasoningEffort: string | undefined
+  ): Promise<AiAccessSelection> {
+    const apiKey = await this.collectOpenRouterApiKey();
+    const model = await this.collectModel(envModel, apiKey);
+    const reasoningEffort = await this.collectReasoningEffort(envReasoningEffort, model);
+    return {
+      provider: "openrouter",
+      apiKey,
+      model,
+      reasoningEffort,
+    };
+  }
+
+  private async collectOpenAICodexAccess(
+    envModel: string | undefined,
+    envReasoningEffort: string | undefined,
+    bundledAuthJsonB64?: string
+  ): Promise<AiAccessSelection> {
+    if ((envReasoningEffort ?? "").trim().length > 0) {
+      throw new Error("HERMES_REASONING_EFFORT is not currently supported for OpenAI Codex deployments.");
+    }
+
+    const auth = await this.collectCodexAuth(bundledAuthJsonB64);
+    const model = await this.collectCodexModel(envModel, auth.accessToken);
+    return {
+      provider: "openai-codex",
+      apiKey: "",
+      authJsonB64: auth.authJsonB64,
+      model,
+    };
+  }
+
+  private async collectCodexAuth(bundledAuthJsonB64?: string): Promise<ResolvedCodexAuth> {
+    const providedAuth = (bundledAuthJsonB64 ?? "").trim();
+    if (providedAuth.length > 0) {
+      return {
+        source: "hermes",
+        accessToken: this.accessTokenFromEncodedCodexAuth(providedAuth),
+        authJsonB64: providedAuth,
+      };
+    }
+
+    const stored = await this.codexAuth.resolveStoredAuth();
+    if (!this.prompts.isInteractive()) {
+      if (stored) {
+        return stored;
+      }
+      throw new Error("OpenAI Codex credentials are required in non-interactive mode. Export HERMES_AUTH_JSON_B64 or sign in interactively first.");
+    }
+
+    if (!stored) {
+      return this.codexAuth.runDeviceCodeLogin(this.prompts);
+    }
+
+    if (stored.source === "hermes") {
+      this.prompts.write("I found an existing Hermes OpenAI Codex login on this machine.\n\n");
+      this.prompts.write("   1  Reuse it        Use the saved ChatGPT subscription login for this deployment\n");
+      this.prompts.write("   2  Sign in again   Start a fresh OpenAI Codex login now\n\n");
+      const choice = await this.chooseNumber("Choose an option [1]: ", 2, 1);
+      if (choice === 1) {
+        return stored;
+      }
+      return this.codexAuth.runDeviceCodeLogin(this.prompts);
+    }
+
+    this.prompts.write("I found an existing Codex login on this machine.\n");
+    this.prompts.write("Hermes can import it into its own auth store for this deployment.\n\n");
+    this.prompts.write("   1  Import and use it   Reuse the saved Codex login\n");
+    this.prompts.write("   2  Sign in again       Start a fresh OpenAI Codex login now\n\n");
+    const choice = await this.chooseNumber("Choose an option [1]: ", 2, 1);
+    if (choice === 1) {
+      return stored;
+    }
+    return this.codexAuth.runDeviceCodeLogin(this.prompts);
+  }
+
+  private async collectCodexModel(envValue: string | undefined, accessToken: string): Promise<string> {
+    const preset = envValue?.trim();
+    const models = await this.fetchCodexModels(accessToken, this.prompts.isInteractive());
+    if (preset && preset.length > 0) {
+      return preset;
+    }
+    if (!this.prompts.isInteractive()) {
+      return models[0]?.value ?? "gpt-5.3-codex";
+    }
+
+    this.prompts.write("Which OpenAI Codex model should your agent use?\n\n");
+    models.forEach((option, index) => {
+      this.prompts.write(`  ${String(index + 1).padStart(2, " ")}  ${option.label.padEnd(24, " ")} ${option.bestFor}\n`);
+    });
+    const manualIndex = models.length + 1;
+    this.prompts.write(`  ${String(manualIndex).padStart(2, " ")}  Bring my own model        Enter a model ID manually\n\n`);
+
+    const selectedIndex = await this.chooseNumber("Choose a model [1]: ", manualIndex, 1);
+    if (selectedIndex === manualIndex) {
+      this.prompts.write("Model IDs come from the OpenAI Codex catalog. Example: gpt-5.3-codex\n\n");
+      while (true) {
+        const answer = (await this.prompts.ask("Model ID: ")).trim();
+        if (answer.length > 0) {
+          return answer;
+        }
+        this.prompts.write("Model ID cannot be empty.\n");
+      }
+    }
+
+    return models[selectedIndex - 1].value;
+  }
+
+  private async fetchCodexModels(accessToken: string, announce: boolean): Promise<CodexModelOption[]> {
+    if (announce) {
+      this.prompts.write("Fetching available Codex models from OpenAI...\n");
+    }
+
+    const models = await this.codexAuth.fetchModels(accessToken);
+    this.rememberModelOptions(models.map((option) => ({
+      value: option.value,
+      label: option.label,
+      bestFor: option.bestFor,
+      providerKey: option.providerKey,
+      providerLabel: option.providerLabel,
+      supportsReasoning: option.supportsReasoning,
+    })));
+    return models;
+  }
+
+  private accessTokenFromEncodedCodexAuth(authJsonB64: string): string {
+    try {
+      const raw = Buffer.from(authJsonB64, "base64").toString("utf8");
+      const parsed = JSON.parse(raw) as { providers?: Record<string, unknown> };
+      const state = parsed.providers?.["openai-codex"];
+      const tokens = typeof state === "object" && state !== null ? (state as { tokens?: unknown }).tokens : undefined;
+      const accessToken = typeof tokens === "object" && tokens !== null ? String((tokens as { access_token?: unknown }).access_token ?? "").trim() : "";
+      if (accessToken.length > 0) {
+        return accessToken;
+      }
+    } catch {
+      // handled below
+    }
+    throw new Error("HERMES_AUTH_JSON_B64 does not contain valid OpenAI Codex credentials.");
+  }
+
+  private normalizeAiProvider(value: string | undefined): "openrouter" | "openai-codex" | undefined {
+    const normalized = (value ?? "").trim().toLowerCase();
+    if (normalized === "openrouter") {
+      return "openrouter";
+    }
+    if (normalized === "openai-codex" || normalized === "codex" || normalized === "chatgpt") {
+      return "openai-codex";
+    }
+    return undefined;
+  }
+
   private async collectOpenRouterApiKey(): Promise<string> {
     const envKey = "OPENROUTER_API_KEY";
     const preset = (this.env[envKey] ?? "").trim();
@@ -953,6 +1167,7 @@ export class FlyDeployWizard implements DeployWizardPort {
     this.prompts.write(`  Location:        ${config.region}\n`);
     this.prompts.write(`  Server size:     ${this.describeVmSize(config.vmSize)}\n`);
     this.prompts.write(`  Storage:         ${config.volumeSize} GB\n`);
+    this.prompts.write(`  AI access:       ${this.describeAiAccess(config.provider)}\n`);
     this.prompts.write(`  AI model:        ${this.describeModel(config.model)}\n`);
     if (config.reasoningEffort) {
       this.prompts.write(`  Reasoning:       ${config.reasoningEffort}\n`);
@@ -1159,6 +1374,13 @@ export class FlyDeployWizard implements DeployWizardPort {
   private describeModel(model: string): string {
     const label = this.modelLabels.get(model);
     return label ? `${label} (${model})` : model;
+  }
+
+  private describeAiAccess(provider: string): string {
+    if (provider === "openai-codex") {
+      return "ChatGPT subscription (OpenAI Codex)";
+    }
+    return "OpenRouter API key";
   }
 
   private describeTelegramBot(setup: TelegramSetup): string {

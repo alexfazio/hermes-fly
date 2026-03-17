@@ -11,6 +11,7 @@ const DEFAULT_CONFIG: DeployConfig = {
   region: "iad",
   vmSize: "shared-cpu-1x",
   volumeSize: 5,
+  provider: "openrouter",
   apiKey: "sk-test",
   model: "anthropic/claude-sonnet-4-20250514",
   channel: "stable",
@@ -108,6 +109,35 @@ describe("ProvisionDeploymentUseCase - happy path", () => {
     assert.equal(capturedSecrets?.TELEGRAM_ALLOWED_USERS, "12345,67890");
     assert.equal(capturedSecrets?.TELEGRAM_HOME_CHANNEL, "12345");
     assert.equal(capturedSecrets?.GATEWAY_ALLOW_ALL_USERS, undefined);
+  });
+
+  it("sets Codex auth-store secrets when deploying with ChatGPT subscription access", async () => {
+    let capturedSecrets: Record<string, string> | null = null;
+    const io = makeIO();
+    const uc = new ProvisionDeploymentUseCase(makeRunner({
+      setSecrets: async (_appName, secrets) => {
+        capturedSecrets = secrets;
+        return { ok: true };
+      }
+    }));
+
+    const result = await uc.execute({
+      ...DEFAULT_CONFIG,
+      provider: "openai-codex",
+      apiKey: "",
+      authJsonB64: "eyJ2ZXJzaW9uIjoxfQ==",
+      model: "gpt-5.3-codex"
+    }, io.stderr);
+
+    assert.equal(result.ok, true);
+    assert.deepEqual(capturedSecrets, {
+      HERMES_AUTH_JSON_B64: "eyJ2ZXJzaW9uIjoxfQ==",
+      LLM_MODEL: "gpt-5.3-codex",
+      HERMES_LLM_PROVIDER: "openai-codex",
+      HERMES_APP_NAME: DEFAULT_CONFIG.appName,
+      HERMES_AGENT_REF: DEFAULT_CONFIG.hermesRef,
+      HERMES_DEPLOY_CHANNEL: DEFAULT_CONFIG.channel
+    });
   });
 });
 

@@ -30,13 +30,18 @@ export class ProvisionDeploymentUseCase {
 
     // Step 3: Set secrets
     const secrets: Record<string, string> = {
-      OPENROUTER_API_KEY: config.apiKey,
       LLM_MODEL: config.model,
-      HERMES_LLM_PROVIDER: "openrouter",
+      HERMES_LLM_PROVIDER: config.provider,
       HERMES_APP_NAME: config.appName,
       HERMES_AGENT_REF: config.hermesRef,
       HERMES_DEPLOY_CHANNEL: config.channel
     };
+    if (config.provider === "openrouter") {
+      secrets.OPENROUTER_API_KEY = config.apiKey;
+    }
+    if (config.provider === "openai-codex" && config.authJsonB64) {
+      secrets.HERMES_AUTH_JSON_B64 = config.authJsonB64;
+    }
     if (config.reasoningEffort) {
       secrets.HERMES_REASONING_EFFORT = config.reasoningEffort;
     }
