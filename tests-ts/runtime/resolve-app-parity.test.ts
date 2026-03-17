@@ -78,6 +78,24 @@ describe("resolve-app parity - explicit -a flag", () => {
 });
 
 describe("resolve-app parity - current_app fallback", () => {
+  it("bare positional app name wins over current_app from config.yaml", async () => {
+    const root = await mkdtemp(join(tmpdir(), "hermes-parity-positional-"));
+    try {
+      await mkdir(join(root, "config"), { recursive: true });
+      await writeFile(
+        join(root, "config", "config.yaml"),
+        "current_app: fallback-app\n",
+        "utf8"
+      );
+      const app = await resolveApp(["explicit-app"], {
+        env: { ...process.env, HERMES_FLY_CONFIG_DIR: join(root, "config") }
+      });
+      assert.equal(app, "explicit-app");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("no -a flag uses current_app from config.yaml", async () => {
     const root = await mkdtemp(join(tmpdir(), "hermes-parity-fallback-"));
     try {

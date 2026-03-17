@@ -54,6 +54,27 @@ describe("runDestroyCommand - --force flag", () => {
     });
     assert.equal(code, 0);
   });
+
+  it("bare positional app name is treated as the destroy target", async () => {
+    const destroyed: string[] = [];
+    const io = makeIO();
+    const code = await runDestroyCommand(["explicit-app", "--force"], {
+      runner: makeRunner({
+        destroyApp: async (appName) => {
+          destroyed.push(appName);
+          return { ok: true };
+        }
+      }),
+      env: {
+        HOME: "",
+        HERMES_FLY_CONFIG_DIR: ""
+      },
+      ...io
+    });
+
+    assert.equal(code, 0);
+    assert.deepEqual(destroyed, ["explicit-app"]);
+  });
 });
 
 describe("runDestroyCommand - confirmation flow", () => {

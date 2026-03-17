@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, it } from "node:test";
 import { tmpdir } from "node:os";
@@ -55,7 +55,7 @@ describe("flyctl adapter", () => {
       })
     };
 
-    const adapter = new FlyctlAdapter(runner);
+    const adapter = new FlyctlAdapter(runner, { HOME: "" });
     const machine = await adapter.getMachineSummary("test-app");
     const state = await adapter.getMachineState("test-app");
 
@@ -88,7 +88,7 @@ describe("flyctl adapter", () => {
       }
     };
 
-    const adapter = new FlyctlAdapter(runner);
+    const adapter = new FlyctlAdapter(runner, { HOME: "" });
     const machine = await adapter.getMachineSummary("test-app");
 
     assert.deepEqual(machine, { id: "machine789", state: "started", region: "ord" });
@@ -103,7 +103,7 @@ describe("flyctl adapter", () => {
       })
     };
 
-    const adapter = new FlyctlAdapter(runner);
+    const adapter = new FlyctlAdapter(runner, { HOME: "" });
     const state = await adapter.getMachineState("test-app");
 
     assert.equal(state, null);
@@ -118,7 +118,7 @@ describe("flyctl adapter", () => {
       })
     };
 
-    const adapter = new FlyctlAdapter(runner);
+    const adapter = new FlyctlAdapter(runner, { HOME: "" });
     const state = await adapter.getMachineState("test-app");
 
     assert.equal(state, null);
@@ -199,6 +199,45 @@ describe("runListCommand", () => {
     assert.match(output, /machine123 \(started\)/);
     assert.match(output, /@testhermesbot/);
     assert.match(output, /https:\/\/t\.me\/testhermesbot/);
+  });
+});
+
+describe("flyctl adapter - installed fly fallback", () => {
+  it("uses ~/.fly/bin/fly when it exists even if fly is not on PATH", async () => {
+    const root = await mkdtemp(join(tmpdir(), "flyctl-home-fallback-"));
+    const flyBinDir = join(root, ".fly", "bin");
+    const flyPath = join(flyBinDir, "fly");
+    const calls: Array<{ command: string; args: string[] }> = [];
+
+    try {
+      await mkdir(flyBinDir, { recursive: true });
+      await writeFile(flyPath, "#!/bin/sh\nexit 0\n", "utf8");
+      await chmod(flyPath, 0o755);
+
+      const adapter = new FlyctlAdapter(
+        {
+          run: async (command, args) => {
+            calls.push({ command, args });
+            if (args[0] === "machine" && args[1] === "list") {
+              return {
+                stdout: JSON.stringify([{ id: "machine123", state: "started", region: "fra" }]),
+                stderr: "",
+                exitCode: 0
+              };
+            }
+            return { stdout: "", stderr: "", exitCode: 0 };
+          }
+        },
+        { HOME: root }
+      );
+
+      const machine = await adapter.getMachineSummary("test-app");
+
+      assert.deepEqual(machine, { id: "machine123", state: "started", region: "fra" });
+      assert.equal(calls[0]?.command, flyPath);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   });
 });
 

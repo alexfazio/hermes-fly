@@ -1,4 +1,5 @@
 import type { ProcessResult, ProcessRunOptions, ProcessRunner } from "./process.js";
+import { resolveFlyCommand } from "./fly-command.js";
 import { telegramBotLink } from "../contexts/messaging/infrastructure/adapters/telegram-links.js";
 
 export type AppStatusOk = {
@@ -39,16 +40,20 @@ export interface FlyctlPort {
 }
 
 export class FlyctlAdapter implements FlyctlPort {
-  constructor(private readonly processRunner: ProcessRunner) {}
+  constructor(
+    private readonly processRunner: ProcessRunner,
+    private readonly env?: NodeJS.ProcessEnv
+  ) {}
 
   async getMachineSummary(appName: string): Promise<MachineSummary> {
-    const machineList = await this.runFlyJson("fly", ["machine", "list", "-a", appName, "--json"]);
+    const flyCommand = await resolveFlyCommand(this.env);
+    const machineList = await this.runFlyJson(flyCommand, ["machine", "list", "-a", appName, "--json"]);
     const listedMachine = parseMachineList(machineList);
     if (listedMachine !== null) {
       return listedMachine;
     }
 
-    const statusJson = await this.runFlyJson("fly", ["status", "--app", appName, "--json"]);
+    const statusJson = await this.runFlyJson(flyCommand, ["status", "--app", appName, "--json"]);
     const statusMachine = parseStatusMachine(statusJson);
     if (statusMachine !== null) {
       return statusMachine;
@@ -70,8 +75,9 @@ export class FlyctlAdapter implements FlyctlPort {
     }
 
     try {
+      const flyCommand = await resolveFlyCommand(this.env);
       const result = await this.processRunner.run(
-        "fly",
+        flyCommand,
         [
           "ssh",
           "console",
@@ -107,7 +113,8 @@ export class FlyctlAdapter implements FlyctlPort {
   async getAppStatus(appName: string): Promise<AppStatusResult> {
     let result;
     try {
-      result = await this.processRunner.run("fly", ["status", "--app", appName, "--json"]);
+      const flyCommand = await resolveFlyCommand(this.env);
+      result = await this.processRunner.run(flyCommand, ["status", "--app", appName, "--json"]);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       return { ok: false, error: msg };
@@ -175,16 +182,19 @@ export class FlyctlAdapter implements FlyctlPort {
   }
 
   async getAppLogs(appName: string): Promise<ProcessResult> {
-    return this.processRunner.run("fly", ["logs", "--app", appName]);
+    const flyCommand = await resolveFlyCommand(this.env);
+    return this.processRunner.run(flyCommand, ["logs", "--app", appName]);
   }
 
   async streamAppLogs(appName: string, options?: ProcessRunOptions): Promise<{ exitCode: number }> {
-    return this.processRunner.runStreaming("fly", ["logs", "--app", appName], options);
+    const flyCommand = await resolveFlyCommand(this.env);
+    return this.processRunner.runStreaming(flyCommand, ["logs", "--app", appName], options);
   }
 
   private async getSecretNames(appName: string): Promise<string[]> {
     try {
-      const result = await this.processRunner.run("fly", ["secrets", "list", "--app", appName, "--json"]);
+      const flyCommand = await resolveFlyCommand(this.env);
+      const result = await this.processRunner.run(flyCommand, ["secrets", "list", "--app", appName, "--json"]);
       if (result.exitCode !== 0 || result.stdout.trim().length === 0) {
         return [];
       }

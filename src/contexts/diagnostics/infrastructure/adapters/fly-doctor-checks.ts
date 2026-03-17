@@ -1,5 +1,6 @@
 import type { DoctorChecksPort } from "../../application/ports/doctor-checks.port.js";
 import type { ProcessRunner } from "../../../../adapters/process.js";
+import { resolveFlyCommand } from "../../../../adapters/fly-command.js";
 
 export class FlyDoctorChecks implements DoctorChecksPort {
   constructor(
@@ -9,8 +10,9 @@ export class FlyDoctorChecks implements DoctorChecksPort {
   ) {}
 
   async checkAppExists(appName: string): Promise<boolean> {
+    const flyCommand = await resolveFlyCommand(this.env);
     const result = await this.runner.run(
-      "fly",
+      flyCommand,
       ["status", "--app", appName, "--json"],
       { env: this.env }
     );
@@ -18,8 +20,9 @@ export class FlyDoctorChecks implements DoctorChecksPort {
   }
 
   async checkMachineRunning(appName: string): Promise<boolean> {
+    const flyCommand = await resolveFlyCommand(this.env);
     const result = await this.runner.run(
-      "fly",
+      flyCommand,
       ["machine", "list", "-a", appName, "--json"],
       { env: this.env }
     );
@@ -28,8 +31,9 @@ export class FlyDoctorChecks implements DoctorChecksPort {
   }
 
   async checkVolumesMounted(appName: string): Promise<boolean> {
+    const flyCommand = await resolveFlyCommand(this.env);
     const result = await this.runner.run(
-      "fly",
+      flyCommand,
       ["volumes", "list", "-a", appName, "--json"],
       { env: this.env }
     );
@@ -43,8 +47,9 @@ export class FlyDoctorChecks implements DoctorChecksPort {
   }
 
   async checkSecretsSet(appName: string): Promise<boolean> {
+    const flyCommand = await resolveFlyCommand(this.env);
     const result = await this.runner.run(
-      "fly",
+      flyCommand,
       ["secrets", "list", "--app", appName, "--json"],
       { env: this.env }
     );
@@ -63,14 +68,15 @@ export class FlyDoctorChecks implements DoctorChecksPort {
   }
 
   async checkGatewayHealth(appName: string): Promise<boolean> {
+    const flyCommand = await resolveFlyCommand(this.env);
     const secretsResult = await this.runner.run(
-      "fly",
+      flyCommand,
       ["secrets", "list", "--app", appName, "--json"],
       { env: this.env }
     );
     if (secretsResult.exitCode === 0 && this.hasSecret(secretsResult.stdout, "TELEGRAM_BOT_TOKEN")) {
       const sshResult = await this.runner.run(
-        "fly",
+        flyCommand,
         [
           "ssh", "console", "--app", appName, "-C",
           this.telegramGetMeProbeCommand()
@@ -114,7 +120,7 @@ export class FlyDoctorChecks implements DoctorChecksPort {
 
     // Fetch runtime manifest
     const manifestResult = await this.runner.run(
-      "fly",
+      await resolveFlyCommand(this.env),
       ["ssh", "console", "-a", appName, "-C", "cat /app/.hermes-manifest.json"],
       { env: this.env }
     );

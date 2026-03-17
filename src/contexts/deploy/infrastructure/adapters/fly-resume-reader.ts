@@ -1,5 +1,6 @@
 import type { ResumeChecksPort } from "../../application/ports/resume-checks.port.js";
 import type { ProcessRunner } from "../../../../adapters/process.js";
+import { resolveFlyCommand } from "../../../../adapters/fly-command.js";
 
 export class FlyResumeReader implements ResumeChecksPort {
   constructor(
@@ -8,8 +9,9 @@ export class FlyResumeReader implements ResumeChecksPort {
   ) {}
 
   async fetchStatus(appName: string): Promise<{ ok: boolean; region: string | null }> {
+    const flyCommand = await resolveFlyCommand(this.env);
     const result = await this.runner.run(
-      "fly",
+      flyCommand,
       ["status", "--app", appName, "--json"],
       { env: this.env }
     );
@@ -24,8 +26,9 @@ export class FlyResumeReader implements ResumeChecksPort {
   }
 
   async checkMachineRunning(appName: string): Promise<boolean> {
+    const flyCommand = await resolveFlyCommand(this.env);
     const result = await this.runner.run(
-      "fly",
+      flyCommand,
       ["status", "--app", appName, "--json"],
       { env: this.env }
     );

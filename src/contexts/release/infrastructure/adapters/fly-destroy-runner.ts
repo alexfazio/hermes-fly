@@ -1,5 +1,6 @@
 import type { DestroyRunnerPort } from "../../application/ports/destroy-runner.port.js";
 import type { ProcessRunner } from "../../../../adapters/process.js";
+import { resolveFlyCommand } from "../../../../adapters/fly-command.js";
 
 export class FlyDestroyRunner implements DestroyRunnerPort {
   constructor(
@@ -8,8 +9,9 @@ export class FlyDestroyRunner implements DestroyRunnerPort {
   ) {}
 
   async destroyApp(appName: string): Promise<{ ok: boolean }> {
+    const flyCommand = await this.resolveFlyCommand();
     const result = await this.processRunner.run(
-      "fly",
+      flyCommand,
       ["apps", "destroy", appName, "--yes"],
       { env: this.env }
     );
@@ -17,9 +19,10 @@ export class FlyDestroyRunner implements DestroyRunnerPort {
   }
 
   async cleanupVolumes(appName: string): Promise<void> {
+    const flyCommand = await this.resolveFlyCommand();
     // List and delete volumes for the app (fail-soft)
     const listResult = await this.processRunner.run(
-      "fly",
+      flyCommand,
       ["volumes", "list", "-a", appName, "--json"],
       { env: this.env }
     );
@@ -35,7 +38,7 @@ export class FlyDestroyRunner implements DestroyRunnerPort {
     for (const vol of volumes) {
       if (typeof vol.id === "string") {
         await this.processRunner.run(
-          "fly",
+          flyCommand,
           ["volumes", "delete", vol.id, "--yes"],
           { env: this.env }
         ).catch(() => {});
@@ -44,10 +47,11 @@ export class FlyDestroyRunner implements DestroyRunnerPort {
   }
 
   async telegramLogout(appName: string): Promise<void> {
+    const flyCommand = await this.resolveFlyCommand();
     // Best-effort: SSH into the app and call the Telegram logOut API.
     // Hermes stores the token as TELEGRAM_BOT_TOKEN; BOT_TOKEN is kept as a fallback.
     await this.processRunner.run(
-      "fly",
+      flyCommand,
       [
         "ssh",
         "console",
@@ -94,5 +98,9 @@ export class FlyDestroyRunner implements DestroyRunnerPort {
     }
 
     await writeFile(configPath, filtered.join("\n"), "utf8");
+  }
+
+  private async resolveFlyCommand(): Promise<string> {
+    return resolveFlyCommand(this.env);
   }
 }
