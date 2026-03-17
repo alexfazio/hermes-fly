@@ -73,7 +73,7 @@ export class FlyDoctorChecks implements DoctorChecksPort {
         "fly",
         [
           "ssh", "console", "--app", appName, "-C",
-          "curl -sf --max-time 10 \"https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/getMe\" >/dev/null 2>&1"
+          this.telegramGetMeProbeCommand()
         ],
         { env: this.env }
       );
@@ -153,5 +153,9 @@ export class FlyDoctorChecks implements DoctorChecksPort {
       // Fall back to substring check for older flyctl/plain-text output.
     }
     return stdout.includes(name);
+  }
+
+  private telegramGetMeProbeCommand(): string {
+    return "sh -lc 'curl -sf --max-time 10 \"https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/getMe\" >/dev/null 2>&1'";
   }
 }

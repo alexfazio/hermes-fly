@@ -51,7 +51,7 @@ describe("FlyDoctorChecks.checkGatewayHealth", () => {
     assert.deepEqual(runner.calls[0]?.args, ["secrets", "list", "--app", "test-app", "--json"]);
     assert.deepEqual(runner.calls[1]?.args, [
       "ssh", "console", "--app", "test-app", "-C",
-      "curl -sf --max-time 10 \"https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/getMe\" >/dev/null 2>&1"
+      "sh -lc 'curl -sf --max-time 10 \"https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/getMe\" >/dev/null 2>&1'"
     ]);
   });
 
