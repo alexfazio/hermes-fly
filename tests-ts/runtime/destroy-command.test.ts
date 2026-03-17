@@ -75,6 +75,27 @@ describe("runDestroyCommand - --force flag", () => {
     assert.equal(code, 0);
     assert.deepEqual(destroyed, ["explicit-app"]);
   });
+
+  it("multiple positional app names are destroyed sequentially", async () => {
+    const destroyed: string[] = [];
+    const io = makeIO();
+    const code = await runDestroyCommand(["app-one", "app-two", "app-three", "--force"], {
+      runner: makeRunner({
+        destroyApp: async (appName) => {
+          destroyed.push(appName);
+          return { ok: true };
+        }
+      }),
+      env: {
+        HOME: "",
+        HERMES_FLY_CONFIG_DIR: ""
+      },
+      ...io
+    });
+
+    assert.equal(code, 0);
+    assert.deepEqual(destroyed, ["app-one", "app-two", "app-three"]);
+  });
 });
 
 describe("runDestroyCommand - confirmation flow", () => {
@@ -111,6 +132,59 @@ describe("runDestroyCommand - confirmation flow", () => {
       ...io
     });
     assert.equal(code, 1);
+  });
+
+  it("pauses stdin after reading confirmation so the process can exit cleanly", async () => {
+    let paused = false;
+    let resumed = false;
+    let listener: ((chunk: string) => void) | null = null;
+    const stdin = {
+      setEncoding: (_encoding: BufferEncoding) => {},
+      once: (_event: "data", handler: (chunk: string) => void) => {
+        listener = handler;
+      },
+      resume: () => {
+        resumed = true;
+        listener?.("yes\n");
+      },
+      pause: () => {
+        paused = true;
+      }
+    };
+
+    const io = makeIO();
+    const code = await runDestroyCommand(["-a", "test-app"], {
+      runner: makeRunner(),
+      stdin,
+      ...io
+    });
+
+    assert.equal(code, 0);
+    assert.equal(resumed, true);
+    assert.equal(paused, true);
+  });
+
+  it("prompts once when destroying multiple apps interactively", async () => {
+    const destroyed: string[] = [];
+    const io = makeIO();
+    const code = await runDestroyCommand(["app-one", "app-two"], {
+      runner: makeRunner({
+        destroyApp: async (appName) => {
+          destroyed.push(appName);
+          return { ok: true };
+        }
+      }),
+      confirmationInput: "yes",
+      env: {
+        HOME: "",
+        HERMES_FLY_CONFIG_DIR: ""
+      },
+      ...io
+    });
+
+    assert.equal(code, 0);
+    assert.deepEqual(destroyed, ["app-one", "app-two"]);
+    assert.match(io.outText, /destroy 2 apps \(app-one, app-two\)/);
   });
 });
 

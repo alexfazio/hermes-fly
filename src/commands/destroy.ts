@@ -9,7 +9,7 @@ import {
   telegramBotLink
 } from "../contexts/messaging/infrastructure/adapters/telegram-links.js";
 import { readSavedDeploymentEntry } from "../contexts/runtime/infrastructure/adapters/fly-deployment-registry.js";
-import { resolveApp } from "./resolve-app.js";
+import { resolveApps } from "./resolve-app.js";
 
 export interface DestroyCommandOptions {
   runner?: DestroyRunnerPort;
@@ -17,10 +17,18 @@ export interface DestroyCommandOptions {
   qrRenderer?: QrCodeRendererPort;
   stdout?: { write: (s: string) => void };
   stderr?: { write: (s: string) => void };
+  stdin?: {
+    setEncoding: (encoding: BufferEncoding) => void;
+    once: (event: "data", listener: (chunk: string) => void) => void;
+    resume: () => void;
+    pause: () => void;
+  };
   /** Inject confirmation string for testing; if absent reads from process.stdin */
   confirmationInput?: string;
   /** Inject a pre-resolved app name (bypasses -a / config lookup) */
   appName?: string;
+  /** Inject pre-resolved app names for batch destruction. */
+  appNames?: string[];
   /** Inject available apps for interactive selection (empty = error in production path) */
   availableApps?: string[];
   env?: NodeJS.ProcessEnv;
@@ -36,15 +44,18 @@ function parseForce(args: string[]): boolean {
   return args.includes("--force") || args.includes("-f");
 }
 
-async function readLineFromStdin(): Promise<string> {
+async function readLineFromStdin(
+  stdin: DestroyCommandOptions["stdin"] = process.stdin
+): Promise<string> {
   return new Promise((resolve) => {
     let input = "";
-    process.stdin.setEncoding("utf8");
-    process.stdin.once("data", (chunk: string) => {
+    stdin.setEncoding("utf8");
+    stdin.once("data", (chunk: string) => {
       input = chunk.split("\n")[0].trim();
+      stdin.pause();
       resolve(input);
     });
-    process.stdin.resume();
+    stdin.resume();
   });
 }
 
@@ -59,65 +70,78 @@ export async function runDestroyCommand(
   const runner: DestroyRunnerPort =
     options.runner ?? new FlyDestroyRunner(new NodeProcessRunner(), options.env);
 
-  // Resolve app name
-  let appName = options.appName ?? null;
-  if (appName === null) {
-    appName = await resolveApp(args, { env: options.env });
+  let appNames = options.appNames ?? null;
+  if (appNames === null) {
+    if (options.appName) {
+      appNames = [options.appName];
+    } else {
+      appNames = await resolveApps(args, { env: options.env });
+    }
   }
 
   // No app resolved — error
-  if (appName === null) {
+  if (appNames === null || appNames.length === 0) {
     stderr.write("[error] No app specified. Use -a APP or run 'hermes-fly deploy' first.\n");
     return 1;
   }
 
   // Confirmation (unless --force)
   if (!force) {
-    stdout.write(`Are you sure you want to destroy ${appName}? Type 'yes' to confirm: `);
+    const prompt = appNames.length === 1
+      ? `Are you sure you want to destroy ${appNames[0]}? Type 'yes' to confirm: `
+      : `Are you sure you want to destroy ${appNames.length} apps (${appNames.join(", ")})? Type 'yes' to confirm: `;
+    stdout.write(prompt);
     const confirmInput =
       options.confirmationInput !== undefined
         ? options.confirmationInput
-        : await readLineFromStdin();
+        : await readLineFromStdin(options.stdin);
     if (confirmInput !== "yes") {
       stdout.write("Aborted.\n");
       return 1;
     }
   }
 
-  let telegramCleanup: TelegramCleanupContext | null = null;
-  try {
-    telegramCleanup = await resolveTelegramCleanupContext(appName, options);
-  } catch (error) {
-    if (isFlyCliMissing(error)) {
-      stderr.write("[error] Fly.io CLI not found. Install flyctl and retry.\n");
-      return 1;
-    }
-    throw error;
-  }
-
   const useCase = new DestroyDeploymentUseCase(runner);
   const io = { stdout, stderr };
-  let result;
-  try {
-    result = await useCase.execute(appName, io);
-  } catch (error) {
-    if (isFlyCliMissing(error)) {
-      stderr.write("[error] Fly.io CLI not found. Install flyctl and retry.\n");
-      return 1;
+  let hadFailure = false;
+
+  for (const appName of appNames) {
+    let telegramCleanup: TelegramCleanupContext | null = null;
+    try {
+      telegramCleanup = await resolveTelegramCleanupContext(appName, options);
+    } catch (error) {
+      if (isFlyCliMissing(error)) {
+        stderr.write("[error] Fly.io CLI not found. Install flyctl and retry.\n");
+        return 1;
+      }
+      throw error;
     }
-    throw error;
+
+    let result;
+    try {
+      result = await useCase.execute(appName, io);
+    } catch (error) {
+      if (isFlyCliMissing(error)) {
+        stderr.write("[error] Fly.io CLI not found. Install flyctl and retry.\n");
+        return 1;
+      }
+      throw error;
+    }
+
+    switch (result.kind) {
+      case "ok":
+      case "already_absent":
+        if (telegramCleanup?.configured) {
+          await writeTelegramDeletionGuidance(stdout, appName, telegramCleanup, options.qrRenderer);
+        }
+        break;
+      case "failed":
+        hadFailure = true;
+        break;
+      }
   }
 
-  switch (result.kind) {
-    case "ok":
-    case "already_absent":
-      if (telegramCleanup?.configured) {
-        await writeTelegramDeletionGuidance(stdout, telegramCleanup, options.qrRenderer);
-      }
-      return 0;
-    case "failed":
-      return 1;
-  }
+  return hadFailure ? 1 : 0;
 }
 
 async function resolveTelegramCleanupContext(
@@ -159,10 +183,11 @@ async function resolveTelegramCleanupContext(
 
 async function writeTelegramDeletionGuidance(
   stdout: { write: (s: string) => void },
+  appName: string,
   cleanup: TelegramCleanupContext,
   qrRenderer?: QrCodeRendererPort
 ): Promise<void> {
-  stdout.write("\nTelegram bot cleanup\n");
+  stdout.write(`\nTelegram bot cleanup for ${appName}\n`);
   stdout.write("Telegram does not document any Bot API method that permanently deletes a bot.\n");
   if (cleanup.username) {
     stdout.write(`Configured bot: @${cleanup.username}\n`);

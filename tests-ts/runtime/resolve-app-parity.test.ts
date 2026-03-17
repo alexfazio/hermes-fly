@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { describe, it } from "node:test";
 import { tmpdir } from "node:os";
 
-import { resolveApp } from "../../src/commands/resolve-app.ts";
+import { resolveApp, resolveApps } from "../../src/commands/resolve-app.ts";
 
 // Parity tests matching original Bash config module resolve-app behavior
 
@@ -140,6 +140,65 @@ describe("resolve-app parity - current_app fallback", () => {
         env: { ...process.env, HERMES_FLY_CONFIG_DIR: join(root, "config") }
       });
       assert.equal(app, null);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("resolve-apps parity - batch destroy support", () => {
+  it("returns all positional app names in order", async () => {
+    const root = await mkdtemp(join(tmpdir(), "hermes-parity-apps-positional-"));
+    try {
+      await mkdir(join(root, "config"), { recursive: true });
+      const apps = await resolveApps(["one", "two", "three"], {
+        env: { ...process.env, HERMES_FLY_CONFIG_DIR: join(root, "config") }
+      });
+      assert.deepEqual(apps, ["one", "two", "three"]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("returns all repeated -a values in order", async () => {
+    const root = await mkdtemp(join(tmpdir(), "hermes-parity-apps-explicit-"));
+    try {
+      await mkdir(join(root, "config"), { recursive: true });
+      const apps = await resolveApps(["-a", "one", "-a", "two"], {
+        env: { ...process.env, HERMES_FLY_CONFIG_DIR: join(root, "config") }
+      });
+      assert.deepEqual(apps, ["one", "two"]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("falls back to current_app as a singleton array", async () => {
+    const root = await mkdtemp(join(tmpdir(), "hermes-parity-apps-fallback-"));
+    try {
+      await mkdir(join(root, "config"), { recursive: true });
+      await writeFile(
+        join(root, "config", "config.yaml"),
+        "current_app: fallback-app\n",
+        "utf8"
+      );
+      const apps = await resolveApps([], {
+        env: { ...process.env, HERMES_FLY_CONFIG_DIR: join(root, "config") }
+      });
+      assert.deepEqual(apps, ["fallback-app"]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("returns null when -a is missing its value", async () => {
+    const root = await mkdtemp(join(tmpdir(), "hermes-parity-apps-missing-"));
+    try {
+      await mkdir(join(root, "config"), { recursive: true });
+      const apps = await resolveApps(["-a"], {
+        env: { ...process.env, HERMES_FLY_CONFIG_DIR: join(root, "config") }
+      });
+      assert.equal(apps, null);
     } finally {
       await rm(root, { recursive: true, force: true });
     }

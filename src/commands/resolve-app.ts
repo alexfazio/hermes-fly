@@ -4,6 +4,14 @@ interface ResolveAppOptions {
   env?: NodeJS.ProcessEnv;
 }
 
+interface ParsedAppArgs {
+  explicitFlagSeen: boolean;
+  explicitApps: string[];
+  hasMissingExplicitValue: boolean;
+  firstPositional: string | null;
+  positionalApps: string[];
+}
+
 /**
  * Resolves the target app name from CLI args and config.
  * Resolution order:
@@ -14,37 +22,78 @@ interface ResolveAppOptions {
  *   4. Otherwise return current_app from config.yaml (or null if absent).
  */
 export async function resolveApp(args: string[], options: ResolveAppOptions = {}): Promise<string | null> {
-  let seenExplicitFlag = false;
-  let appName: string | null = null;
-  let firstPositional: string | null = null;
+  const parsed = parseAppArgs(args);
 
-  for (let i = 0; i < args.length; i++) {
-    const arg = args[i];
+  if (parsed.explicitFlagSeen) {
+    if (parsed.hasMissingExplicitValue || parsed.explicitApps.length === 0) {
+      return null;
+    }
+    return parsed.explicitApps[parsed.explicitApps.length - 1] ?? null;
+  }
+
+  if (parsed.firstPositional !== null) {
+    return parsed.firstPositional;
+  }
+
+  return readCurrentApp({ env: options.env });
+}
+
+export async function resolveApps(args: string[], options: ResolveAppOptions = {}): Promise<string[] | null> {
+  const parsed = parseAppArgs(args);
+
+  if (parsed.explicitFlagSeen) {
+    if (parsed.hasMissingExplicitValue || parsed.explicitApps.length === 0) {
+      return null;
+    }
+    return dedupeApps(parsed.explicitApps);
+  }
+
+  if (parsed.positionalApps.length > 0) {
+    return dedupeApps(parsed.positionalApps);
+  }
+
+  const currentApp = await readCurrentApp({ env: options.env });
+  return currentApp ? [currentApp] : [];
+}
+
+function parseAppArgs(args: string[]): ParsedAppArgs {
+  let explicitFlagSeen = false;
+  let hasMissingExplicitValue = false;
+  let firstPositional: string | null = null;
+  const explicitApps: string[] = [];
+  const positionalApps: string[] = [];
+
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
     if (arg === "-a") {
-      seenExplicitFlag = true;
-      const next = args[i + 1];
+      explicitFlagSeen = true;
+      const next = args[index + 1];
       if (typeof next === "string" && next.length > 0) {
-        appName = next;
-        i++;
+        explicitApps.push(next);
+        index += 1;
       } else {
-        // -a with no following token: explicit flag present but value missing
-        appName = null;
+        hasMissingExplicitValue = true;
       }
       continue;
     }
 
-    if (firstPositional === null && !arg.startsWith("-")) {
-      firstPositional = arg;
+    if (!arg.startsWith("-")) {
+      if (firstPositional === null) {
+        firstPositional = arg;
+      }
+      positionalApps.push(arg);
     }
   }
 
-  if (seenExplicitFlag) {
-    return appName;
-  }
+  return {
+    explicitFlagSeen,
+    explicitApps,
+    hasMissingExplicitValue,
+    firstPositional,
+    positionalApps,
+  };
+}
 
-  if (firstPositional !== null) {
-    return firstPositional;
-  }
-
-  return readCurrentApp({ env: options.env });
+function dedupeApps(apps: string[]): string[] {
+  return [...new Set(apps)];
 }
