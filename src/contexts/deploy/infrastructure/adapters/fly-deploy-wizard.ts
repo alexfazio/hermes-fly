@@ -3370,6 +3370,9 @@ export class FlyDeployWizard implements DeployWizardPort {
       stdoutBuffer: "",
       stderrBuffer: "",
       suppressNextSteps: false,
+      rawQrPassthrough: false,
+      qrStream: null as "stdout" | "stderr" | null,
+      qrRecentText: "",
     };
 
     const flush = (kind: "stdout" | "stderr") => {
@@ -3380,16 +3383,57 @@ export class FlyDeployWizard implements DeployWizardPort {
         return;
       }
       state[key] = "";
-      const filtered = this.filterWhatsAppSetupLine(remainder, state);
+      if (state.rawQrPassthrough && state.qrStream === kind) {
+        sink.write(remainder);
+        return;
+      }
+      const filtered = this.filterWhatsAppSetupLine(remainder.replaceAll("\r", "\n"), state);
       if (filtered) {
         sink.write(filtered);
       }
     };
 
+    const handleRawQrChunk = (kind: "stdout" | "stderr", chunk: string) => {
+      const sink = kind === "stdout" ? stdout : stderr;
+
+      if (this.shouldSuppressWhatsAppQrChunk(chunk)) {
+        return;
+      }
+
+      const endMarker = this.findWhatsAppQrPassthroughEnd(chunk);
+      if (endMarker) {
+        const rawPrefix = chunk.slice(0, endMarker.index + endMarker.marker.length);
+        if (rawPrefix.length > 0) {
+          sink.write(rawPrefix);
+        }
+        state.rawQrPassthrough = false;
+        state.qrStream = null;
+        state.qrRecentText = "";
+        const remainder = chunk.slice(endMarker.index + endMarker.marker.length);
+        if (remainder.length > 0) {
+          handleChunk(kind, remainder);
+        }
+        return;
+      }
+
+      sink.write(chunk);
+      state.qrRecentText = (state.qrRecentText + chunk).slice(-4096);
+      if (this.shouldEndWhatsAppQrPassthrough(state.qrRecentText)) {
+        state.rawQrPassthrough = false;
+        state.qrStream = null;
+        state.qrRecentText = "";
+      }
+    };
+
     const handleChunk = (kind: "stdout" | "stderr", chunk: string) => {
+      if (state.rawQrPassthrough && state.qrStream === kind) {
+        handleRawQrChunk(kind, chunk);
+        return;
+      }
+
       const key = kind === "stdout" ? "stdoutBuffer" : "stderrBuffer";
       const sink = kind === "stdout" ? stdout : stderr;
-      state[key] += chunk.replaceAll("\r", "\n");
+      state[key] += chunk;
       while (true) {
         const newlineIndex = state[key].indexOf("\n");
         if (newlineIndex === -1) {
@@ -3397,9 +3441,21 @@ export class FlyDeployWizard implements DeployWizardPort {
         }
         const line = state[key].slice(0, newlineIndex + 1);
         state[key] = state[key].slice(newlineIndex + 1);
-        const filtered = this.filterWhatsAppSetupLine(line, state);
+        const normalizedLine = line.replaceAll("\r", "\n");
+        const filtered = this.filterWhatsAppSetupLine(normalizedLine, state);
         if (filtered) {
           sink.write(filtered);
+        }
+        if (this.shouldStartWhatsAppQrPassthrough(line)) {
+          state.rawQrPassthrough = true;
+          state.qrStream = kind;
+          state.qrRecentText = "";
+          const remainder = state[key];
+          state[key] = "";
+          if (remainder.length > 0) {
+            handleRawQrChunk(kind, remainder);
+          }
+          break;
         }
       }
     };
@@ -3455,6 +3511,33 @@ export class FlyDeployWizard implements DeployWizardPort {
       flush("stderr");
       return { ok: false, error: error instanceof Error ? error.message : String(error) };
     }
+  }
+
+  private shouldStartWhatsAppQrPassthrough(line: string): boolean {
+    return /Scan this QR code with WhatsApp on your phone:/i.test(line);
+  }
+
+  private shouldEndWhatsAppQrPassthrough(text: string): boolean {
+    return this.findWhatsAppQrPassthroughEnd(text) !== null;
+  }
+
+  private findWhatsAppQrPassthroughEnd(text: string): { index: number; marker: string } | null {
+    const markers = [
+      "✅ Pairing complete. Credentials saved.",
+      "✓ WhatsApp paired successfully!",
+    ];
+    for (const marker of markers) {
+      const index = text.indexOf(marker);
+      if (index !== -1) {
+        return { index, marker };
+      }
+    }
+    return null;
+  }
+
+  private shouldSuppressWhatsAppQrChunk(chunk: string): boolean {
+    const trimmed = chunk.trim();
+    return /^\{"level":\d+.*\}$/.test(trimmed);
   }
 
   private async checkRemoteWhatsAppSessionState(

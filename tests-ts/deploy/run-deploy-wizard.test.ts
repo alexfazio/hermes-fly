@@ -906,7 +906,7 @@ describe("FlyDeployWizard.postDeployActions", () => {
     assert.deepEqual(opened, ["https://discord.com/oauth2/authorize?client_id=123456789012345678&scope=bot%20applications.commands"]);
   });
 
-  it("runs filtered remote WhatsApp pairing, restarts the deployed app, and avoids local-machine guidance", async () => {
+  it("preserves raw WhatsApp QR terminal redraws, restarts the deployed app, and avoids local-machine guidance afterward", async () => {
     const prompts = makePromptPort(["y"], { interactive: true });
     const io = makeIO();
     const streamingCalls: Array<{ command: string; args: string[] }> = [];
@@ -935,10 +935,9 @@ describe("FlyDeployWizard.postDeployActions", () => {
         options?.onStdoutChunk?.("⚕ WhatsApp Setup\n");
         options?.onStdoutChunk?.("  Update allowed users? [y/N] ✓ Bridge dependencies already installed\n");
         options?.onStdoutChunk?.("📱 Scan this QR code with WhatsApp on your phone:\n");
-        options?.onStdoutChunk?.("▄▄▄▄ QR ▄▄▄▄\n");
+        options?.onStdoutChunk?.("▄▄▄▄ QR FRAME 1 ▄▄▄▄\r▄▄▄▄ QR FRAME 2 ▄▄▄▄\r");
+        options?.onStdoutChunk?.("Waiting for scan...\r");
         options?.onStdoutChunk?.("{\"level\":50,\"msg\":\"stream errored out\"}\n");
-        options?.onStdoutChunk?.("↻ WhatsApp requested restart (code 515). Reconnecting...\n");
-        options?.onStdoutChunk?.("✅ WhatsApp connected!\n");
         options?.onStdoutChunk?.("✅ Pairing complete. Credentials saved.\n");
         options?.onStdoutChunk?.("\n  Next steps:\n");
         options?.onStdoutChunk?.("    1. Start the gateway:  hermes gateway\n");
@@ -969,6 +968,8 @@ describe("FlyDeployWizard.postDeployActions", () => {
     assert.ok(backgroundCalls.some((call) => call.args.slice(0, 4).join(" ") === "machine restart -a test-app"));
     assert.ok(backgroundCalls.some((call) => call.args.slice(0, 4).join(" ") === "machine list -a test-app"));
     assert.match(io.outText, /Scan the QR code with WhatsApp on your phone/);
+    assert.match(io.outText, /▄▄▄▄ QR FRAME 1 ▄▄▄▄\r▄▄▄▄ QR FRAME 2 ▄▄▄▄\r/);
+    assert.doesNotMatch(io.outText, /▄▄▄▄ QR FRAME 1 ▄▄▄▄\n▄▄▄▄ QR FRAME 2 ▄▄▄▄\n/);
     assert.match(io.outText, /Restarting the deployed app so WhatsApp comes online/);
     assert.match(io.outText, /Message yourself/);
     assert.doesNotMatch(io.outText, /Update allowed users\?/);
