@@ -989,7 +989,7 @@ describe("FlyDeployWizard.postDeployActions", () => {
     assert.deepEqual(opened, ["https://discord.com/oauth2/authorize?client_id=123456789012345678&scope=bot%20applications.commands"]);
   });
 
-  it("preserves raw WhatsApp QR terminal redraws, restarts the deployed app, and avoids local-machine guidance afterward", async () => {
+  it("preserves raw WhatsApp QR terminal redraws, verifies the gateway after restart, and avoids local-machine guidance afterward", async () => {
     const prompts = makePromptPort(["y"], { interactive: true });
     const io = makeIO();
     const streamingCalls: Array<{ command: string; args: string[] }> = [];
@@ -997,6 +997,13 @@ describe("FlyDeployWizard.postDeployActions", () => {
     const runner: ForegroundProcessRunner = {
       run: async (command, args) => {
         backgroundCalls.push({ command, args });
+        if (args[0] === "ssh" && args[1] === "console" && /gateway.*status/.test(args.join(" "))) {
+          return {
+            exitCode: 0,
+            stdout: "Hermes gateway is running\n",
+            stderr: "",
+          };
+        }
         if (args[0] === "ssh" && args[1] === "console") {
           return {
             exitCode: 0,
@@ -1030,7 +1037,7 @@ describe("FlyDeployWizard.postDeployActions", () => {
       },
       runForeground: async () => ({ exitCode: 0 }),
     };
-    const wizard = new FlyDeployWizard({}, { prompts, process: runner });
+    const wizard = new FlyDeployWizard({}, { prompts, process: runner, sleep: async () => {} });
 
     await wizard.finalizeMessagingSetup({
       ...DEFAULT_CONFIG,
@@ -1050,6 +1057,7 @@ describe("FlyDeployWizard.postDeployActions", () => {
     assert.match(remoteSetupCommand, /WHATSAPP_ALLOWED_USERS=.*393406844897/);
     assert.ok(backgroundCalls.some((call) => call.args.slice(0, 5).join(" ") === "machine restart machine123 -a test-app"));
     assert.ok(backgroundCalls.some((call) => call.args.slice(0, 4).join(" ") === "machine list -a test-app"));
+    assert.ok(backgroundCalls.some((call) => /gateway.*status/.test(call.args.join(" "))));
     assert.match(io.outText, /Scan the QR code with WhatsApp on your phone/);
     assert.match(io.outText, /▄▄▄▄ QR FRAME 1 ▄▄▄▄\r▄▄▄▄ QR FRAME 2 ▄▄▄▄\r/);
     assert.doesNotMatch(io.outText, /▄▄▄▄ QR FRAME 1 ▄▄▄▄\n▄▄▄▄ QR FRAME 2 ▄▄▄▄\n/);
@@ -1085,7 +1093,7 @@ describe("FlyDeployWizard.postDeployActions", () => {
       },
       runForeground: async () => ({ exitCode: 0 }),
     };
-    const wizard = new FlyDeployWizard({}, { prompts, process: runner });
+    const wizard = new FlyDeployWizard({}, { prompts, process: runner, sleep: async () => {} });
 
     await wizard.finalizeMessagingSetup({
       ...DEFAULT_CONFIG,
@@ -1130,7 +1138,7 @@ describe("FlyDeployWizard.postDeployActions", () => {
       },
       runForeground: async () => ({ exitCode: 0 }),
     };
-    const wizard = new FlyDeployWizard({}, { prompts, process: runner });
+    const wizard = new FlyDeployWizard({}, { prompts, process: runner, sleep: async () => {} });
 
     await wizard.finalizeMessagingSetup({
       ...DEFAULT_CONFIG,
@@ -1143,6 +1151,62 @@ describe("FlyDeployWizard.postDeployActions", () => {
 
     assert.ok(!backgroundCalls.some((call) => call.args.slice(0, 2).join(" ") === "machine restart"));
     assert.match(io.errText, /could not determine which Fly machine to restart/i);
+  });
+
+  it("warns clearly when WhatsApp pairing succeeds but the gateway never becomes healthy after restart", async () => {
+    const prompts = makePromptPort(["y"], { interactive: true });
+    const io = makeIO();
+    const backgroundCalls: Array<{ command: string; args: string[] }> = [];
+    const runner: ForegroundProcessRunner = {
+      run: async (command, args) => {
+        backgroundCalls.push({ command, args });
+        if (args[0] === "ssh" && args[1] === "console" && !/gateway.*status/.test(args.join(" "))) {
+          return {
+            exitCode: 0,
+            stdout: "empty_session\n",
+            stderr: "",
+          };
+        }
+        if (args[0] === "machine" && args[1] === "list") {
+          return {
+            exitCode: 0,
+            stdout: JSON.stringify([{ id: "machine123", state: "started", region: "fra" }]),
+            stderr: "",
+          };
+        }
+        if (args[0] === "machine" && args[1] === "restart") {
+          return { exitCode: 0, stdout: "", stderr: "" };
+        }
+        if (args[0] === "ssh" && args[1] === "console" && /gateway.*status/.test(args.join(" "))) {
+          return {
+            exitCode: 1,
+            stdout: "Hermes gateway is not running\n",
+            stderr: "",
+          };
+        }
+        return { exitCode: 0, stdout: "", stderr: "" };
+      },
+      runStreaming: async (_command, _args, options) => {
+        options?.onStdoutChunk?.("✅ Pairing complete. Credentials saved.\n");
+        return { exitCode: 0 };
+      },
+      runForeground: async () => ({ exitCode: 0 }),
+    };
+    const wizard = new FlyDeployWizard({}, { prompts, process: runner, sleep: async () => {} });
+
+    const result = await wizard.finalizeMessagingSetup({
+      ...DEFAULT_CONFIG,
+      appName: "test-app",
+      whatsappEnabled: true,
+      whatsappMode: "self-chat",
+      whatsappAllowedUsers: "393406844897",
+      whatsappCompleteAccessDuringSetup: true,
+    }, io.stdout, io.stderr);
+
+    assert.deepEqual(result, {});
+    assert.ok(backgroundCalls.some((call) => /gateway.*status/.test(call.args.join(" "))));
+    assert.match(io.errText, /gateway status did not report a healthy Hermes gateway after WhatsApp pairing/i);
+    assert.doesNotMatch(io.outText, /WhatsApp setup completed on the deployed agent/);
   });
 });
 
@@ -1247,7 +1311,7 @@ describe("FlyDeployWizard.collectConfig", () => {
       "my-app",
       "2",
       "2",
-      "2",
+      "1",
       "3",
       "1",
       "sk-live",
@@ -1351,7 +1415,7 @@ describe("FlyDeployWizard.collectConfig", () => {
     assert.match(guidedCopy, /Review your setup/);
   });
 
-  it("automatically upgrades Starter to Standard when a messaging gateway is enabled", async () => {
+  it("does not offer Starter and keeps Standard as the lowest guided tier", async () => {
     const prompts = makePromptPort([
       "my-app",
       "2",
@@ -1362,12 +1426,7 @@ describe("FlyDeployWizard.collectConfig", () => {
       "sk-live",
       "2",
       "1",
-      "1",
-      "123:abc",
-      "y",
-      "1",
-      "",
-      "y",
+      "5",
       "y"
     ], { interactive: true });
     const runner = makeProcessRunner(async (command, args) => {
@@ -1429,8 +1488,10 @@ describe("FlyDeployWizard.collectConfig", () => {
     const config = await wizard.collectConfig({ channel: "stable" });
 
     assert.equal(config.vmSize, "shared-cpu-2x");
-    assert.match(prompts.writes.join(""), /Starter \(256 MB\) is not reliable once Hermes is keeping messaging gateways online/i);
-    assert.match(prompts.writes.join(""), /Switching this deployment to Standard \(512 MB\) automatically/i);
+    assert.match(prompts.writes.join(""), /How powerful should your agent's server be/);
+    assert.match(prompts.writes.join(""), /Standard\s+512 MB/);
+    assert.doesNotMatch(prompts.writes.join(""), /Starter\s+256 MB/);
+    assert.ok(prompts.asked.includes("Choose a tier [1]: "));
   });
 
   it("offers ChatGPT subscription access through OpenAI Codex and can reuse existing Hermes auth", async () => {

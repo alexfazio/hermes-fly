@@ -42,14 +42,22 @@ function makeProcessRunner(
 
 function makePromptPort(
   answers: string[],
-): DeployPromptPort & { writes: string[] } {
+): DeployPromptPort & { writes: string[]; asked: string[] } {
   const writes: string[] = [];
+  const asked: string[] = [];
   return {
     writes,
+    asked,
     isInteractive: () => true,
     write: (message: string) => { writes.push(message); },
-    ask: async () => answers.shift() ?? "",
-    askSecret: async () => answers.shift() ?? "",
+    ask: async (message: string) => {
+      asked.push(message);
+      return answers.shift() ?? "";
+    },
+    askSecret: async (message: string) => {
+      asked.push(message);
+      return answers.shift() ?? "";
+    },
     pause: async () => {},
   };
 }
@@ -61,24 +69,18 @@ function makeQrRenderer(output = "[[QR]]"): QrCodeRendererPort {
 }
 
 describe("FlyDeployWizard sizing guidance", () => {
-  it("upgrades Starter to Standard when Telegram is enabled", async () => {
+  it("does not offer Starter and defaults the guided flow to Standard", async () => {
     const prompts = makePromptPort([
       "my-app",
       "2",
       "2",
-      "1",
+      "",
       "2",
       "1",
       "sk-live",
       "2",
       "1",
-      "1",
-      "1",
-      "123:abc",
-      "y",
-      "1",
-      "",
-      "y",
+      "5",
       "y",
     ]);
     const runner = makeProcessRunner(async (command, args) => {
@@ -140,7 +142,10 @@ describe("FlyDeployWizard sizing guidance", () => {
     const config = await wizard.collectConfig({ channel: "stable" });
 
     assert.equal(config.vmSize, "shared-cpu-2x");
-    assert.match(prompts.writes.join(""), /Starter \(256 MB\) is not reliable once Hermes is keeping messaging gateways online/i);
-    assert.match(prompts.writes.join(""), /Switching this deployment to Standard \(shared-cpu-2x, 512 MB\) automatically/i);
+    const copy = prompts.writes.join("");
+    assert.match(copy, /How powerful should your agent's server be/);
+    assert.ok(prompts.asked.includes("Choose a tier [1]: "));
+    assert.match(copy, /Standard\s+512 MB/);
+    assert.doesNotMatch(copy, /Starter\s+256 MB/);
   });
 });

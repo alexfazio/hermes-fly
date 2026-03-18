@@ -50,7 +50,7 @@ import { dirname, join } from "node:path";
 
 const DEFAULT_APP_NAME_PREFIX = "hermes";
 const DEFAULT_REGION = "iad";
-const DEFAULT_VM_SIZE = "shared-cpu-1x";
+const DEFAULT_VM_SIZE = "shared-cpu-2x";
 const DEFAULT_VOLUME_SIZE = 1;
 const DEFAULT_MODEL = "anthropic/claude-3-5-sonnet";
 const DEFAULT_CHANNEL = "stable";
@@ -215,13 +215,6 @@ const REGION_AREA_ORDER = ["Americas", "Europe", "Asia-Pacific", "Oceania", "Sou
 
 const STATIC_VM_OPTIONS: VmOption[] = [
   {
-    value: "shared-cpu-1x",
-    tier: "Starter",
-    ramLabel: "256 MB",
-    costLabel: "~$2/mo",
-    bestFor: "Trying it out. Lowest cost.",
-  },
-  {
     value: "shared-cpu-2x",
     tier: "Standard",
     ramLabel: "512 MB",
@@ -322,6 +315,7 @@ export interface FlyDeployWizardDeps {
   anthropicAuth?: AnthropicAuthAdapter;
   nousAuth?: NousPortalAuthAdapter;
   zaiAuth?: ZaiApiKeyAdapter;
+  sleep?: (ms: number) => Promise<void>;
 }
 
 export class FlyDeployWizard implements DeployWizardPort {
@@ -337,6 +331,7 @@ export class FlyDeployWizard implements DeployWizardPort {
   private readonly nousAuth: NousPortalAuthAdapter;
   private readonly zaiAuth: ZaiApiKeyAdapter;
   private readonly env: NodeJS.ProcessEnv;
+  private readonly sleep: (ms: number) => Promise<void>;
   private readonly defaultAppName: string;
   private readonly modelLabels = new Map<string, string>();
   private readonly modelOptionsById = new Map<string, ModelOption>();
@@ -356,6 +351,7 @@ export class FlyDeployWizard implements DeployWizardPort {
     this.anthropicAuth = deps.anthropicAuth ?? new AnthropicAuthAdapter(this.process, this.env);
     this.nousAuth = deps.nousAuth ?? new NousPortalAuthAdapter(this.process, this.env);
     this.zaiAuth = deps.zaiAuth ?? new ZaiApiKeyAdapter(this.process, this.env);
+    this.sleep = deps.sleep ?? (async (ms: number) => { await new Promise((resolve) => setTimeout(resolve, ms)); });
     this.defaultAppName = this.buildDefaultAppName();
     this.rememberModelOptions(STATIC_MODEL_OPTIONS);
   }
@@ -788,6 +784,13 @@ export class FlyDeployWizard implements DeployWizardPort {
         if (!restarted.ok) {
           stderr.write(`[warn] WhatsApp paired, but the deployed app did not restart cleanly: ${restarted.error ?? "unknown error"}\n`);
           stderr.write(`Tip: run 'hermes-fly status -a ${config.appName}' and 'hermes-fly logs -a ${config.appName}' before testing WhatsApp.\n`);
+          return {};
+        }
+
+        const gatewayReady = await this.waitForGatewayHealthyAfterWhatsAppPairing(config.appName);
+        if (!gatewayReady.ok) {
+          stderr.write(`[warn] WhatsApp paired, but ${gatewayReady.error ?? "the Hermes gateway did not come online cleanly"}\n`);
+          stderr.write(`Tip: run 'hermes-fly doctor -a ${config.appName}' and 'hermes-fly logs -a ${config.appName}' before testing WhatsApp.\n`);
           return {};
         }
 
@@ -3760,6 +3763,7 @@ export class FlyDeployWizard implements DeployWizardPort {
       /Start the gateway:/i.test(trimmed)
       || /install as a service/i.test(trimmed)
       || /Agent responses are prefixed/i.test(trimmed)
+      || /tell them apart from your own messages/i.test(trimmed)
       || /Update allowed users\?\s*\[y\/N\]/i.test(trimmed)
     ) {
       return null;
@@ -3811,11 +3815,42 @@ export class FlyDeployWizard implements DeployWizardPort {
           }
         }
         if (attempt < 19) {
-          await new Promise((resolve) => setTimeout(resolve, 1_500));
+          await this.sleep(1_500);
         }
       }
 
       return { ok: false, error: `machine not running after WhatsApp restart (${lastState})` };
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  }
+
+  private async waitForGatewayHealthyAfterWhatsAppPairing(appName: string): Promise<{ ok: boolean; error?: string }> {
+    try {
+      const flyCommand = await resolveFlyCommand(this.env);
+      let lastOutput = "";
+
+      for (let attempt = 0; attempt < 20; attempt += 1) {
+        const result = await this.process.run(
+          flyCommand,
+          ["ssh", "console", "-a", appName, "-C", this.buildRemoteHermesCommand(["gateway", "status"])],
+          { env: this.env, timeoutMs: 15_000 }
+        );
+        if (result.exitCode === 0) {
+          return { ok: true };
+        }
+
+        lastOutput = (result.stderr || result.stdout || "").trim();
+        if (attempt < 19) {
+          await this.sleep(1_500);
+        }
+      }
+
+      const suffix = lastOutput.length > 0 ? `: ${lastOutput}` : "";
+      return {
+        ok: false,
+        error: `gateway status did not report a healthy Hermes gateway after WhatsApp pairing${suffix}`,
+      };
     } catch (error) {
       return { ok: false, error: error instanceof Error ? error.message : String(error) };
     }

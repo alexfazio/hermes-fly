@@ -55,7 +55,23 @@ describe("FlyDoctorChecks.checkGatewayHealth", () => {
     ]);
   });
 
-  it("falls back to machine state when no Telegram bot token is configured", async () => {
+  it("uses hermes gateway status over fly ssh when WhatsApp is configured", async () => {
+    const runner = new StubProcessRunner([
+      { exitCode: 0, stdout: JSON.stringify([{ Name: "HERMES_FLY_WHATSAPP_PENDING", Digest: "abc123" }]), stderr: "" },
+      { exitCode: 0, stdout: "Hermes gateway is running\n", stderr: "" }
+    ]);
+    const checks = new FlyDoctorChecks(runner, "test-app");
+
+    const result = await checks.checkGatewayHealth("test-app");
+
+    assert.equal(result, true);
+    assert.deepEqual(runner.calls[1]?.args, [
+      "ssh", "console", "--app", "test-app", "-C",
+      "sh -lc 'cd /root/.hermes && HERMES_DIR=/root/.hermes HOME=/root/.hermes /opt/hermes/hermes-agent/venv/bin/hermes gateway status'"
+    ]);
+  });
+
+  it("falls back to machine state when no messaging secrets are configured", async () => {
     const runner = new StubProcessRunner([
       { exitCode: 0, stdout: "[]", stderr: "" },
       { exitCode: 0, stdout: JSON.stringify([{ id: "machine123", state: "started" }]), stderr: "" }
