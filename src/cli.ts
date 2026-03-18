@@ -13,6 +13,7 @@ import { runDestroyCommand } from "./commands/destroy.js";
 import { runConsoleCommand } from "./commands/console.js";
 import { runExecCommand } from "./commands/exec.js";
 import { runAgentCommand } from "./commands/agent.js";
+import { runUpdateCommand } from "./commands/update.js";
 import { HERMES_FLY_TS_VERSION } from "./version.js";
 
 type CliHandlers = {
@@ -41,6 +42,18 @@ export function buildProgram(handlers: CliHandlers = {}): Command {
         channel: opts.channel,
         autoInstall: opts.autoInstall,
       });
+    });
+
+  program
+    .command("update")
+    .description("Update existing deployment to latest version")
+    .option("--channel <channel>", "Update channel: stable, preview, or edge", "stable")
+    .option("-a, --app <app>", "App name (defaults to current app)")
+    .action(async (opts) => {
+      const args: string[] = [];
+      if (opts.channel && opts.channel !== "stable") args.push("--channel", opts.channel);
+      if (opts.app) args.push("-a", opts.app);
+      process.exitCode = await runUpdateCommand(args);
     });
 
   program
