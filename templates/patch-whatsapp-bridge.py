@@ -15,6 +15,14 @@ def replace_once(source_text: str, old: str, new: str, label: str, marker: str) 
 
 HELPER_BLOCK = """let connectionState = 'disconnected';
 
+function getSelfJid() {
+  return (sock?.user?.id || '').replace(/:.*@/, '@');
+}
+
+function getSelfNumber() {
+  return getSelfJid().replace(/@.*/, '');
+}
+
 function logBridgeDiagnostic(event, payload = {}) {
   const entry = {
     event,
@@ -49,6 +57,48 @@ def patch_bridge(source_text: str) -> str:
         HELPER_BLOCK,
         "helpers",
         "function logBridgeDiagnostic(event, payload = {}) {",
+    )
+    source_text = replace_once(
+        source_text,
+        """    } else if (connection === 'open') {
+      connectionState = 'connected';
+      console.log('✅ WhatsApp connected!');
+      if (PAIR_ONLY) {
+""",
+        """    } else if (connection === 'open') {
+      connectionState = 'connected';
+      console.log('✅ WhatsApp connected!');
+      logBridgeDiagnostic('connection.open', {
+        selfJid: getSelfJid(),
+        selfNumber: getSelfNumber(),
+      });
+      if (PAIR_ONLY) {
+""",
+        "connection open identity",
+        "logBridgeDiagnostic('connection.open'",
+    )
+    source_text = replace_once(
+        source_text,
+        """app.get('/health', (req, res) => {
+  res.json({
+    status: connectionState,
+    queueLength: messageQueue.length,
+    uptime: process.uptime(),
+  });
+});
+""",
+        """app.get('/health', (req, res) => {
+  res.json({
+    status: connectionState,
+    queueLength: messageQueue.length,
+    uptime: process.uptime(),
+    selfJid: getSelfJid(),
+    selfNumber: getSelfNumber(),
+  });
+});
+""",
+        "health identity",
+        "selfNumber: getSelfNumber()",
     )
     source_text = replace_once(
         source_text,

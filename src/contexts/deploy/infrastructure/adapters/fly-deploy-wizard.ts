@@ -122,6 +122,14 @@ type ReasoningSupport = {
   unsupportedMessage?: string;
 };
 
+type WhatsAppBridgeHealth = {
+  status?: string;
+  queueLength?: number;
+  uptime?: number;
+  selfJid?: string;
+  selfNumber?: string;
+};
+
 type TelegramSetup = {
   botToken: string;
   botUsername?: string;
@@ -856,6 +864,12 @@ export class FlyDeployWizard implements DeployWizardPort {
         }
 
         if (config.whatsappMode === "self-chat") {
+          const identityVerified = await this.verifyWhatsAppSelfChatIdentity(config, bridgeReady.health);
+          if (!identityVerified.ok) {
+            stderr.write(`[warn] WhatsApp paired, but ${identityVerified.error ?? "the paired WhatsApp account number did not match the configured self-chat number"}\n`);
+            stderr.write("Tip: re-run pairing with the actual paired WhatsApp number, or link the intended WhatsApp account before pairing.\n");
+            return {};
+          }
           stdout.write("Send a short message to Message yourself now so hermes-fly can verify the deployed agent sees it.\n");
           await this.prompts.ask("Press Enter after sending your self-chat test message: ");
           stdout.write("Watching the deployed logs for your WhatsApp self-chat test...\n");
@@ -4048,22 +4062,17 @@ export class FlyDeployWizard implements DeployWizardPort {
     return { ok: false, error: `${notRunningPrefix} (${lastState})` };
   }
 
-  private async waitForWhatsAppBridgeConnectedAfterPairing(appName: string): Promise<{ ok: boolean; error?: string }> {
+  private async waitForWhatsAppBridgeConnectedAfterPairing(appName: string): Promise<{ ok: boolean; error?: string; health?: WhatsAppBridgeHealth }> {
     try {
-      const flyCommand = await resolveFlyCommand(this.env);
       let lastOutput = "";
 
       for (let attempt = 0; attempt < 20; attempt += 1) {
-        const result = await this.process.run(
-          flyCommand,
-          ["ssh", "console", "-a", appName, "-C", "sh -lc 'curl -sf --max-time 5 http://127.0.0.1:3000/health'"],
-          { env: this.env, timeoutMs: 15_000 }
-        );
-        if (result.exitCode === 0 && this.isWhatsAppBridgeConnected(result.stdout)) {
-          return { ok: true };
+        const result = await this.readWhatsAppBridgeHealth(appName);
+        if (result.health?.status === "connected") {
+          return { ok: true, health: result.health };
         }
 
-        lastOutput = (result.stderr || result.stdout || "").trim();
+        lastOutput = (result.error || result.raw || "").trim();
         if (attempt < 19) {
           await this.sleep(1_500);
         }
@@ -4078,6 +4087,39 @@ export class FlyDeployWizard implements DeployWizardPort {
     } catch (error) {
       return { ok: false, error: error instanceof Error ? error.message : String(error) };
     }
+  }
+
+  private async verifyWhatsAppSelfChatIdentity(
+    config: DeployConfig,
+    health?: WhatsAppBridgeHealth
+  ): Promise<{ ok: boolean; error?: string }> {
+    const configuredNumbers = (config.whatsappAllowedUsers ?? "")
+      .split(",")
+      .map((value) => value.trim())
+      .filter(Boolean);
+    if (configuredNumbers.length === 0) {
+      return { ok: true };
+    }
+
+    const pairedNumber = (health?.selfNumber ?? "").trim();
+    if (pairedNumber.length === 0) {
+      const bridgeLog = await this.readRecentWhatsAppBridgeLog(config.appName);
+      return {
+        ok: false,
+        error: `hermes-fly could not determine the phone number of the paired WhatsApp account after pairing${bridgeLog ? `.\nRecent bridge log:\n${bridgeLog}` : "."}`,
+      };
+    }
+
+    if (configuredNumbers.includes(pairedNumber)) {
+      return { ok: true };
+    }
+
+    const configuredSummary = configuredNumbers.join(", ");
+    const pairedJid = (health?.selfJid ?? "").trim();
+    return {
+      ok: false,
+      error: `you configured WhatsApp self-chat for ${configuredSummary}, but the paired WhatsApp account is ${pairedNumber}${pairedJid ? ` (${pairedJid})` : ""}`,
+    };
   }
 
   private async verifyWhatsAppSelfChatTest(appName: string): Promise<{ ok: boolean; error?: string }> {
@@ -4161,16 +4203,49 @@ export class FlyDeployWizard implements DeployWizardPort {
     }
   }
 
-  private isWhatsAppBridgeConnected(stdout: string): boolean {
+  private parseWhatsAppBridgeHealth(stdout: string): WhatsAppBridgeHealth | undefined {
     const trimmed = stdout.trim();
     if (trimmed.length === 0) {
-      return false;
+      return undefined;
     }
     try {
-      const parsed = JSON.parse(trimmed) as { status?: unknown };
-      return parsed.status === "connected";
+      const parsed = JSON.parse(trimmed) as Record<string, unknown>;
+      return {
+        status: typeof parsed.status === "string" ? parsed.status : undefined,
+        queueLength: typeof parsed.queueLength === "number" ? parsed.queueLength : undefined,
+        uptime: typeof parsed.uptime === "number" ? parsed.uptime : undefined,
+        selfJid: typeof parsed.selfJid === "string" ? parsed.selfJid.trim() : undefined,
+        selfNumber: typeof parsed.selfNumber === "string" && /^[0-9]{7,15}$/.test(parsed.selfNumber.trim())
+          ? parsed.selfNumber.trim()
+          : undefined,
+      };
     } catch {
-      return /"status"\s*:\s*"connected"/.test(trimmed);
+      const statusMatch = trimmed.match(/"status"\s*:\s*"([^"]+)"/);
+      const selfJidMatch = trimmed.match(/"selfJid"\s*:\s*"([^"]+)"/);
+      const selfNumberMatch = trimmed.match(/"selfNumber"\s*:\s*"([0-9]{7,15})"/);
+      return {
+        status: statusMatch?.[1],
+        selfJid: selfJidMatch?.[1],
+        selfNumber: selfNumberMatch?.[1],
+      };
+    }
+  }
+
+  private async readWhatsAppBridgeHealth(appName: string): Promise<{ health?: WhatsAppBridgeHealth; raw: string; error?: string }> {
+    try {
+      const flyCommand = await resolveFlyCommand(this.env);
+      const result = await this.process.run(
+        flyCommand,
+        ["ssh", "console", "-a", appName, "-C", "sh -lc 'curl -sf --max-time 5 http://127.0.0.1:3000/health'"],
+        { env: this.env, timeoutMs: 15_000 }
+      );
+      const raw = (result.stdout || "").trim();
+      if (result.exitCode !== 0) {
+        return { raw, error: (result.stderr || result.stdout || "").trim() };
+      }
+      return { raw, health: this.parseWhatsAppBridgeHealth(result.stdout) };
+    } catch (error) {
+      return { raw: "", error: error instanceof Error ? error.message : String(error) };
     }
   }
 
