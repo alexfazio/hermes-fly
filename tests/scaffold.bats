@@ -36,12 +36,20 @@ teardown() {
   assert_output --partial "ENTRYPOINT"
 }
 
-@test "templates/Dockerfile.template patches Hermes WhatsApp bridge with self-chat diagnostics" {
+@test "templates/Dockerfile.template runs the Hermes WhatsApp bridge patch script" {
   run cat "${PROJECT_ROOT}/templates/Dockerfile.template"
   assert_success
+  assert_output --partial "COPY patch-whatsapp-bridge.py /tmp/hermes-fly-patch-whatsapp-bridge.py"
   assert_output --partial "scripts/whatsapp-bridge/bridge.js"
+  assert_output --partial "hermes-fly-patch-whatsapp-bridge.py"
+}
+
+@test "templates/patch-whatsapp-bridge.py contains self-chat diagnostics markers" {
+  run cat "${PROJECT_ROOT}/templates/patch-whatsapp-bridge.py"
+  assert_success
   assert_output --partial "messages.upsert.skipped"
   assert_output --partial "messages.upsert.accepted"
+  assert_output --partial "messages.poll.drained"
 }
 
 @test "templates/fly.toml.template contains all placeholders" {

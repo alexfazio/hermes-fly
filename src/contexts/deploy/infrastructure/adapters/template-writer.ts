@@ -20,6 +20,7 @@ export class TemplateWriter {
     const flyTomlTemplate = await readFile(join(templateDir, "fly.toml.template"), "utf8");
     const entrypointTemplate = join(templateDir, "entrypoint.sh");
     const sitecustomizeTemplate = join(templateDir, "sitecustomize.py");
+    const patchBridgeTemplate = join(templateDir, "patch-whatsapp-bridge.py");
     const compatPolicy = await this.readCompatibilityPolicyVersion();
     const vmMemory = this.resolveVmMemory(config.vmSize);
 
@@ -41,6 +42,7 @@ export class TemplateWriter {
     await writeFile(join(buildDir, "fly.toml"), flyToml, "utf8");
     await copyFile(entrypointTemplate, join(buildDir, "entrypoint.sh"));
     await copyFile(sitecustomizeTemplate, join(buildDir, "sitecustomize.py"));
+    await copyFile(patchBridgeTemplate, join(buildDir, "patch-whatsapp-bridge.py"));
   }
 
   private replaceAll(template: string, replacements: Record<string, string>): string {
