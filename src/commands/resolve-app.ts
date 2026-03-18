@@ -97,3 +97,11 @@ function parseAppArgs(args: string[]): ParsedAppArgs {
 function dedupeApps(apps: string[]): string[] {
   return [...new Set(apps)];
 }
+
+/**
+ * Simple resolver for commands that just need the current target app.
+ * Returns null if no app can be determined.
+ */
+export async function resolveTargetApp(options: ResolveAppOptions = {}): Promise<string | null> {
+  return readCurrentApp({ env: options.env });
+}

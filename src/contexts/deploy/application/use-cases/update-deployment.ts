@@ -1,0 +1,119 @@
+import type { UpdateRunnerPort } from "../ports/update-runner.port.js";
+import type { DeployWizardPort } from "../ports/deploy-wizard.port.js";
+
+const HERMES_AGENT_DEFAULT_REF = "8eefbef91cd715cfe410bba8c13cfab4eb3040df";
+const HERMES_AGENT_EDGE_REF = "main";
+
+export type UpdateResult =
+  | { kind: "ok" }
+  | { kind: "failed"; error: string };
+
+export interface UpdateConfig {
+  appName: string;
+  channel: "stable" | "preview" | "edge";
+}
+
+export class UpdateDeploymentUseCase {
+  constructor(
+    private readonly runner: UpdateRunnerPort,
+    private readonly wizard: DeployWizardPort
+  ) {}
+
+  async execute(
+    config: UpdateConfig,
+    stderr: { write: (s: string) => void },
+    stdout: { write: (s: string) => void }
+  ): Promise<UpdateResult> {
+    // Phase 1: Pre-flight checks
+    const platformResult = await this.wizard.checkPlatform();
+    if (!platformResult.ok) {
+      stderr.write(`[error] Platform check failed: ${platformResult.error ?? "unsupported platform"}\n`);
+      return { kind: "failed", error: platformResult.error ?? "unsupported platform" };
+    }
+
+    const prereqResult = await this.wizard.checkPrerequisites({ autoInstall: true });
+    if (!prereqResult.ok) {
+      if (prereqResult.autoInstallDisabled) {
+        stderr.write(`[error] '${prereqResult.missing ?? "fly"}' not found (auto-install disabled).\n`);
+      } else if (prereqResult.error) {
+        stderr.write(`[error] ${prereqResult.error}\n`);
+      } else {
+        stderr.write(`[error] Missing prerequisite: ${prereqResult.missing ?? "unknown"}\n`);
+      }
+      return { kind: "failed", error: `Missing prerequisite: ${prereqResult.missing}` };
+    }
+
+    const authResult = await this.wizard.checkAuth();
+    if (!authResult.ok) {
+      stderr.write(`[error] Not authenticated. Run: fly auth login\n`);
+      return { kind: "failed", error: authResult.error ?? "not authenticated" };
+    }
+
+    // Phase 2: Verify app exists
+    const exists = await this.runner.checkAppExists(config.appName);
+    if (!exists) {
+      stderr.write(`[error] App '${config.appName}' not found. Run 'hermes-fly deploy' to create it.\n`);
+      return { kind: "failed", error: "app not found" };
+    }
+
+    // Phase 3: Generate update Dockerfile
+    stdout.write(`Updating '${config.appName}' to ${config.channel} channel...\n`);
+    const hermesRef = this.resolveHermesRef(config.channel);
+
+    try {
+      await this.wizard.createBuildContext({
+        orgSlug: "",
+        appName: config.appName,
+        region: "",
+        vmSize: "",
+        volumeSize: 0,
+        provider: "",
+        apiKey: "",
+        model: "",
+        hermesRef,
+        botToken: "",
+        channel: config.channel,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "failed to create build context";
+      stderr.write(`[error] ${message}\n`);
+      return { kind: "failed", error: message };
+    }
+
+    // Phase 4: Run update (skip provisioning - app and volume already exist)
+    stdout.write(`Building and deploying update...\n`);
+    const updateResult = await this.runner.runUpdate("", config.appName);
+    if (!updateResult.ok) {
+      stderr.write(`[error] Update failed: ${updateResult.error ?? "unknown error"}\n`);
+      return { kind: "failed", error: updateResult.error ?? "update failed" };
+    }
+
+    // Phase 5: Post-update check
+    const checkResult = await this.wizard.postDeployCheck(config.appName);
+    if (!checkResult.ok) {
+      stderr.write(`[warn] Post-update check failed. App may still be starting up.\n`);
+      stderr.write(`Tip: run 'hermes-fly status -a ${config.appName}' to check.\n`);
+    }
+
+    stdout.write(`\n✓ '${config.appName}' updated successfully to ${config.channel} channel.\n`);
+    stdout.write(`  Channel: ${config.channel}\n`);
+    stdout.write(`  Ref: ${hermesRef.slice(0, 8)}\n`);
+    stdout.write(`\nNext steps:\n`);
+    stdout.write(`  - Check status:  hermes-fly status -a ${config.appName}\n`);
+    stdout.write(`  - View logs:     hermes-fly logs -a ${config.appName}\n`);
+    stdout.write(`  - Run doctor:    hermes-fly doctor -a ${config.appName}\n`);
+
+    return { kind: "ok" };
+  }
+
+  private resolveHermesRef(channel: "stable" | "preview" | "edge"): string {
+    switch (channel) {
+      case "edge":
+        return HERMES_AGENT_EDGE_REF;
+      case "preview":
+        return HERMES_AGENT_DEFAULT_REF;
+      default:
+        return HERMES_AGENT_DEFAULT_REF;
+    }
+  }
+}
