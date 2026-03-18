@@ -14,7 +14,14 @@ export class FlyDeployRunner implements DeployRunnerPort {
       { env: this.env }
     );
     if (result.exitCode !== 0) {
-      return { ok: false, error: result.stderr || result.stdout };
+      const error = result.stderr || result.stdout;
+      if (/name has already been taken/i.test(error)) {
+        return {
+          ok: false,
+          error: `Deployment name '${appName}' is already taken on Fly.io. Choose another name and retry.`
+        };
+      }
+      return { ok: false, error };
     }
     return { ok: true };
   }

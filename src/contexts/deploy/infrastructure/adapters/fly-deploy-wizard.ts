@@ -844,28 +844,109 @@ export class FlyDeployWizard implements DeployWizardPort {
   }
 
   private async collectAppName(envValue: string | undefined): Promise<string> {
+    const liveAppNames = await this.fetchOwnedFlyAppNames();
     const preset = envValue?.trim();
     if (preset && preset.length > 0) {
-      return this.validateAppName(preset);
+      return this.requireAvailableAppName(this.validateAppName(preset), liveAppNames);
     }
+    const suggestedAppName = this.resolveSuggestedAppName(liveAppNames);
     if (!this.prompts.isInteractive()) {
-      return this.defaultAppName;
+      return suggestedAppName;
     }
 
     this.prompts.write("Each deployment needs a unique name on Fly.io.\n");
     this.prompts.write("This name is only for the server setup. People chatting with your agent will not see it.\n\n");
-    this.prompts.write(`Suggested: ${this.defaultAppName}\n`);
+    this.prompts.write(`Suggested: ${suggestedAppName}\n`);
     this.prompts.write("Press Enter to use it, or type your own.\n\n");
 
     while (true) {
-      const answer = await this.prompts.ask(`Deployment name [${this.defaultAppName}]: `);
-      const value = answer.length > 0 ? answer : this.defaultAppName;
+      const answer = await this.prompts.ask(`Deployment name [${suggestedAppName}]: `);
+      const value = answer.length > 0 ? answer : suggestedAppName;
       try {
-        return this.validateAppName(value);
+        return this.requireAvailableAppName(this.validateAppName(value), liveAppNames);
       } catch (error) {
         this.prompts.write(`${error instanceof Error ? error.message : "Deployment name is invalid."}\n`);
       }
     }
+  }
+
+  private async fetchOwnedFlyAppNames(): Promise<Set<string> | null> {
+    try {
+      const flyCommand = await resolveFlyCommand(this.env);
+      const result = await this.process.run(
+        flyCommand,
+        ["apps", "list", "--json"],
+        { env: this.env, timeoutMs: 10_000 }
+      );
+      if (result.exitCode !== 0 || result.stdout.trim().length === 0) {
+        return null;
+      }
+      return this.parseLiveAppNames(result.stdout);
+    } catch {
+      return null;
+    }
+  }
+
+  private parseLiveAppNames(stdout: string): Set<string> | null {
+    try {
+      const parsed = JSON.parse(stdout) as Array<Record<string, unknown>>;
+      if (!Array.isArray(parsed)) {
+        return null;
+      }
+
+      const names = parsed
+        .map((entry) => {
+          const direct = entry.name ?? entry.Name;
+          if (typeof direct === "string" && direct.trim().length > 0) {
+            return direct.trim().toLowerCase();
+          }
+
+          const app = entry.app;
+          if (app && typeof app === "object") {
+            const nested = (app as Record<string, unknown>).name;
+            if (typeof nested === "string" && nested.trim().length > 0) {
+              return nested.trim().toLowerCase();
+            }
+          }
+
+          return "";
+        })
+        .filter((value) => value.length > 0);
+
+      return new Set(names);
+    } catch {
+      return null;
+    }
+  }
+
+  private resolveSuggestedAppName(liveAppNames: Set<string> | null): string {
+    if (liveAppNames === null || !liveAppNames.has(this.defaultAppName)) {
+      return this.defaultAppName;
+    }
+
+    let candidate = this.defaultAppName;
+    for (let attempt = 0; attempt < 8; attempt += 1) {
+      candidate = this.buildAlternateAppName(candidate);
+      if (!liveAppNames.has(candidate)) {
+        return candidate;
+      }
+    }
+    return candidate;
+  }
+
+  private buildAlternateAppName(base: string): string {
+    const suffix = randomBytes(2).toString("hex");
+    const strippedBase = base.replace(/-[0-9a-f]{4}$/i, "");
+    const maxBaseLength = Math.max(2, 63 - suffix.length - 1);
+    const normalizedBase = strippedBase.slice(0, maxBaseLength).replace(/-+$/g, "");
+    return this.validateAppName(`${normalizedBase}-${suffix}`);
+  }
+
+  private requireAvailableAppName(value: string, liveAppNames: Set<string> | null): string {
+    if (liveAppNames !== null && liveAppNames.has(value)) {
+      throw new Error(`Deployment name '${value}' is already used by one of your Fly apps. Choose another name.`);
+    }
+    return value;
   }
 
   private readPrimaryMachineState(stdout: string): string | undefined {

@@ -1045,6 +1045,76 @@ describe("FlyDeployWizard.collectConfig", () => {
     assert.match(prompts.asked[0] ?? "", /Deployment name \[hermes-sprite-1001-[0-9a-f]{4}\]: /);
   });
 
+  it("regenerates the suggested deployment name when the default is already used by one of your Fly apps", async () => {
+    const prompts = makePromptPort([
+      "",
+      "",
+      "",
+      "",
+      "",
+      "1",
+      "sk-live",
+      "",
+      "",
+      ""
+    ], { interactive: true });
+    const runner = makeProcessRunner(async (command, args) => {
+      if (isFlyCommand(command) && args[0] === "apps" && args[1] === "list" && args[2] === "--json") {
+        return {
+          exitCode: 0,
+          stdout: JSON.stringify([{ name: "taken-name" }]),
+          stderr: ""
+        };
+      }
+      return { exitCode: 1, stdout: "", stderr: "" };
+    });
+    const wizard = new FlyDeployWizard({
+      HERMES_FLY_DEFAULT_APP_NAME: "taken-name"
+    }, { prompts, process: runner });
+
+    const config = await wizard.collectConfig({ channel: "stable" });
+
+    assert.notEqual(config.appName, "taken-name");
+    assert.match(config.appName, /^taken-name-[0-9a-f]{4}$/);
+    assert.match(prompts.asked[0] ?? "", /Deployment name \[taken-name-[0-9a-f]{4}\]: /);
+  });
+
+  it("reprompts before continuing when the chosen deployment name is already used by one of your Fly apps", async () => {
+    const prompts = makePromptPort([
+      "taken-name",
+      "fresh-name",
+      "",
+      "",
+      "",
+      "",
+      "1",
+      "sk-live",
+      "",
+      "",
+      ""
+    ], { interactive: true });
+    const runner = makeProcessRunner(async (command, args) => {
+      if (isFlyCommand(command) && args[0] === "apps" && args[1] === "list" && args[2] === "--json") {
+        return {
+          exitCode: 0,
+          stdout: JSON.stringify([{ name: "taken-name" }]),
+          stderr: ""
+        };
+      }
+      return { exitCode: 1, stdout: "", stderr: "" };
+    });
+    const wizard = new FlyDeployWizard({
+      UID: "1001",
+      USER: "sprite"
+    }, { prompts, process: runner });
+
+    const config = await wizard.collectConfig({ channel: "stable" });
+
+    assert.equal(config.appName, "fresh-name");
+    assert.equal(prompts.asked.filter((message) => message.startsWith("Deployment name [")).length, 2);
+    assert.match(prompts.writes.join(""), /already used by one of your Fly apps/i);
+  });
+
   it("uses guided menus and friendly copy in interactive mode", async () => {
     const prompts = makePromptPort([
       "my-app",

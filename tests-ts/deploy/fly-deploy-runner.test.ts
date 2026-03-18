@@ -36,6 +36,20 @@ describe("FlyDeployRunner", () => {
     assert.equal(runner.calls[0]?.env?.TEST_ENV, "1");
   });
 
+  it("returns a friendly name-taken error when Fly rejects an app name", async () => {
+    const runner = new StubProcessRunner([
+      { exitCode: 1, stdout: "", stderr: "Validation failed: Name has already been taken" }
+    ]);
+    const deployRunner = new FlyDeployRunner(runner);
+
+    const result = await deployRunner.createApp("taken-app", "personal");
+
+    assert.deepEqual(result, {
+      ok: false,
+      error: "Deployment name 'taken-app' is already taken on Fly.io. Choose another name and retry."
+    });
+  });
+
   it("retries volume creation with -r when fly rejects --region", async () => {
     const runner = new StubProcessRunner([
       { exitCode: 1, stdout: "", stderr: "Error: unknown flag: --region" },
