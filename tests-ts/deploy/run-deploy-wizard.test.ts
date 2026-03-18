@@ -989,8 +989,8 @@ describe("FlyDeployWizard.postDeployActions", () => {
     assert.deepEqual(opened, ["https://discord.com/oauth2/authorize?client_id=123456789012345678&scope=bot%20applications.commands"]);
   });
 
-  it("preserves raw WhatsApp QR terminal redraws, verifies the WhatsApp bridge after restart, and avoids local-machine guidance afterward", async () => {
-    const prompts = makePromptPort(["y"], { interactive: true });
+  it("preserves raw WhatsApp QR terminal redraws, verifies the WhatsApp bridge after restart, verifies a real self-chat test, and avoids local-machine guidance afterward", async () => {
+    const prompts = makePromptPort(["y", ""], { interactive: true });
     const io = makeIO();
     const streamingCalls: Array<{ command: string; args: string[] }> = [];
     const backgroundCalls: Array<{ command: string; args: string[] }> = [];
@@ -1001,6 +1001,13 @@ describe("FlyDeployWizard.postDeployActions", () => {
           return {
             exitCode: 0,
             stdout: "{\"status\":\"connected\"}\n",
+            stderr: "",
+          };
+        }
+        if (args[0] === "logs") {
+          return {
+            exitCode: 0,
+            stdout: "2026-03-18T16:55:00Z app[test] [info] [whatsapp] Sending response (42 chars) to 393406844897@s.whatsapp.net\n",
             stderr: "",
           };
         }
@@ -1058,10 +1065,13 @@ describe("FlyDeployWizard.postDeployActions", () => {
     assert.ok(backgroundCalls.some((call) => call.args.slice(0, 5).join(" ") === "machine restart machine123 -a test-app"));
     assert.ok(backgroundCalls.some((call) => call.args.slice(0, 4).join(" ") === "machine list -a test-app"));
     assert.ok(backgroundCalls.some((call) => /127\.0\.0\.1:3000\/health/.test(call.args.join(" "))));
+    assert.ok(backgroundCalls.some((call) => call.args[0] === "logs" && call.args.includes("--no-tail")));
     assert.match(io.outText, /Scan the QR code with WhatsApp on your phone/);
     assert.match(io.outText, /▄▄▄▄ QR FRAME 1 ▄▄▄▄\r▄▄▄▄ QR FRAME 2 ▄▄▄▄\r/);
     assert.doesNotMatch(io.outText, /▄▄▄▄ QR FRAME 1 ▄▄▄▄\n▄▄▄▄ QR FRAME 2 ▄▄▄▄\n/);
     assert.match(io.outText, /Restarting the deployed app so WhatsApp comes online/);
+    assert.match(io.outText, /send a short message to Message yourself now/i);
+    assert.match(io.outText, /Self-chat test confirmed/i);
     assert.match(io.outText, /Message yourself/);
     assert.doesNotMatch(io.outText, /Update allowed users\?/);
     assert.doesNotMatch(io.outText, /Start the gateway:  hermes gateway/);
@@ -1218,6 +1228,77 @@ describe("FlyDeployWizard.postDeployActions", () => {
     assert.doesNotMatch(io.outText, /WhatsApp setup completed on the deployed agent/);
   });
 
+  it("warns clearly when WhatsApp self-chat is paired but the test message is denied by the runtime allowlist", async () => {
+    const prompts = makePromptPort(["y", ""], { interactive: true });
+    const io = makeIO();
+    const backgroundCalls: Array<{ command: string; args: string[] }> = [];
+    const runner: ForegroundProcessRunner = {
+      run: async (command, args) => {
+        backgroundCalls.push({ command, args });
+        if (args[0] === "ssh" && args[1] === "console" && !/127\.0\.0\.1:3000\/health/.test(args.join(" ")) && !/bridge\.log/.test(args.join(" "))) {
+          return {
+            exitCode: 0,
+            stdout: "empty_session\n",
+            stderr: "",
+          };
+        }
+        if (args[0] === "machine" && args[1] === "list") {
+          return {
+            exitCode: 0,
+            stdout: JSON.stringify([{ id: "machine123", state: "started", region: "fra" }]),
+            stderr: "",
+          };
+        }
+        if (args[0] === "machine" && args[1] === "restart") {
+          return { exitCode: 0, stdout: "", stderr: "" };
+        }
+        if (args[0] === "ssh" && args[1] === "console" && /127\.0\.0\.1:3000\/health/.test(args.join(" "))) {
+          return {
+            exitCode: 0,
+            stdout: "{\"status\":\"connected\"}\n",
+            stderr: "",
+          };
+        }
+        if (args[0] === "logs") {
+          return {
+            exitCode: 0,
+            stdout: "2026-03-18T16:55:00Z app[test] [warning] Unauthorized user: 393406844897@s.whatsapp.net (Alex) on whatsapp\n",
+            stderr: "",
+          };
+        }
+        if (args[0] === "ssh" && args[1] === "console" && /bridge\.log/.test(args.join(" "))) {
+          return {
+            exitCode: 0,
+            stdout: "🌉 WhatsApp bridge listening on port 3000 (mode: self-chat)\n",
+            stderr: "",
+          };
+        }
+        return { exitCode: 0, stdout: "", stderr: "" };
+      },
+      runStreaming: async (_command, _args, options) => {
+        options?.onStdoutChunk?.("✅ Pairing complete. Credentials saved.\n");
+        return { exitCode: 0 };
+      },
+      runForeground: async () => ({ exitCode: 0 }),
+    };
+    const wizard = new FlyDeployWizard({}, { prompts, process: runner, sleep: async () => {} });
+
+    const result = await wizard.finalizeMessagingSetup({
+      ...DEFAULT_CONFIG,
+      appName: "test-app",
+      whatsappEnabled: true,
+      whatsappMode: "self-chat",
+      whatsappAllowedUsers: "393406844897",
+      whatsappCompleteAccessDuringSetup: true,
+    }, io.stdout, io.stderr);
+
+    assert.deepEqual(result, {});
+    assert.ok(backgroundCalls.some((call) => call.args[0] === "logs"));
+    assert.match(io.errText, /self-chat test message reached Hermes, but it was denied as an unauthorized whatsapp user/i);
+    assert.match(io.errText, /Unauthorized user/i);
+    assert.doesNotMatch(io.outText, /WhatsApp setup completed on the deployed agent/);
+  });
+
   it("disconnects older WhatsApp self-chat deployments before pairing a takeover app", async () => {
     const dir = await mkdtemp(join(tmpdir(), "whatsapp-takeover-finalize-"));
     try {
@@ -1251,6 +1332,13 @@ describe("FlyDeployWizard.postDeployActions", () => {
           }
           if (args[0] === "ssh" && args[1] === "console" && /127\.0\.0\.1:3000\/health/.test(args.join(" "))) {
             return { exitCode: 0, stdout: "{\"status\":\"connected\"}\n", stderr: "" };
+          }
+          if (args[0] === "logs") {
+            return {
+              exitCode: 0,
+              stdout: "2026-03-18T16:55:00Z app[test] [info] [whatsapp] Sending response (42 chars) to 393406844897@s.whatsapp.net\n",
+              stderr: "",
+            };
           }
           if (args[0] === "ssh" && args[1] === "console") {
             return { exitCode: 0, stdout: "empty_session\n", stderr: "" };

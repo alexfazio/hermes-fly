@@ -855,9 +855,22 @@ export class FlyDeployWizard implements DeployWizardPort {
           return {};
         }
 
+        if (config.whatsappMode === "self-chat") {
+          stdout.write("Send a short message to Message yourself now so hermes-fly can verify the deployed agent sees it.\n");
+          await this.prompts.ask("Press Enter after sending your self-chat test message: ");
+          stdout.write("Watching the deployed logs for your WhatsApp self-chat test...\n");
+          const selfChatTest = await this.verifyWhatsAppSelfChatTest(config.appName);
+          if (!selfChatTest.ok) {
+            stderr.write(`[warn] WhatsApp paired, but ${selfChatTest.error ?? "the self-chat test did not complete cleanly"}\n`);
+            stderr.write(`Tip: run 'hermes-fly logs -a ${config.appName}' and 'hermes-fly doctor -a ${config.appName}' for more detail.\n`);
+            return {};
+          }
+          stdout.write("Self-chat test confirmed. Hermes received the message and started responding.\n");
+        }
+
         stdout.write("WhatsApp setup completed on the deployed agent.\n");
         if (config.whatsappMode === "self-chat") {
-          stdout.write("Next step: open WhatsApp, go to Message yourself, and send a test message.\n");
+          stdout.write("Next step: open WhatsApp, go to Message yourself, and keep chatting.\n");
         } else {
           stdout.write("Next step: send a test message to the WhatsApp number linked to Hermes.\n");
         }
@@ -4013,6 +4026,56 @@ export class FlyDeployWizard implements DeployWizardPort {
     }
   }
 
+  private async verifyWhatsAppSelfChatTest(appName: string): Promise<{ ok: boolean; error?: string }> {
+    try {
+      const machine = await this.readPrimaryMachineForApp(appName);
+      const machineId = machine.machineId;
+      let lastLogs = "";
+
+      for (let attempt = 0; attempt < 20; attempt += 1) {
+        const logs = await this.readRecentAppLogs(appName, machineId);
+        if (logs) {
+          lastLogs = logs;
+          const diagnosis = this.diagnoseWhatsAppSelfChatLogs(logs);
+          if (diagnosis.kind === "success") {
+            return { ok: true };
+          }
+          if (diagnosis.kind === "unauthorized") {
+            const bridgeLog = await this.readRecentWhatsAppBridgeLog(appName);
+            return {
+              ok: false,
+              error: `the self-chat test message reached Hermes, but it was denied as an unauthorized WhatsApp user.\nRecent app log:\n${this.extractRelevantWhatsAppLogLines(logs)}${bridgeLog ? `\nRecent bridge log:\n${bridgeLog}` : ""}`,
+            };
+          }
+          if (diagnosis.kind === "send_failed") {
+            const bridgeLog = await this.readRecentWhatsAppBridgeLog(appName);
+            return {
+              ok: false,
+              error: `Hermes received your self-chat message, but failed while sending the reply.\nRecent app log:\n${this.extractRelevantWhatsAppLogLines(logs)}${bridgeLog ? `\nRecent bridge log:\n${bridgeLog}` : ""}`,
+            };
+          }
+          if (diagnosis.kind === "empty_response") {
+            return {
+              ok: false,
+              error: `Hermes received your self-chat message, but the gateway handler returned an empty response.\nRecent app log:\n${this.extractRelevantWhatsAppLogLines(logs)}`,
+            };
+          }
+        }
+        if (attempt < 19) {
+          await this.sleep(1_500);
+        }
+      }
+
+      const bridgeLog = await this.readRecentWhatsAppBridgeLog(appName);
+      return {
+        ok: false,
+        error: `no inbound WhatsApp self-chat activity was observed after the test message.\nRecent app log:\n${this.extractRelevantWhatsAppLogLines(lastLogs)}${bridgeLog ? `\nRecent bridge log:\n${bridgeLog}` : ""}`,
+      };
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  }
+
   private isWhatsAppBridgeConnected(stdout: string): boolean {
     const trimmed = stdout.trim();
     if (trimmed.length === 0) {
@@ -4039,6 +4102,72 @@ export class FlyDeployWizard implements DeployWizardPort {
     } catch {
       return undefined;
     }
+  }
+
+  private async readRecentAppLogs(appName: string, machineId?: string): Promise<string> {
+    const flyCommand = await resolveFlyCommand(this.env);
+    const args = ["logs", "-a", appName];
+    if (machineId) {
+      args.push("--machine", machineId);
+    }
+    args.push("--no-tail");
+    const result = await this.process.run(
+      flyCommand,
+      args,
+      { env: this.env, timeoutMs: 15_000 }
+    );
+    return result.stdout || result.stderr || "";
+  }
+
+  private async readPrimaryMachineForApp(appName: string): Promise<{ machineId?: string; state?: string }> {
+    const flyCommand = await resolveFlyCommand(this.env);
+    const machines = await this.process.run(
+      flyCommand,
+      ["machine", "list", "-a", appName, "--json"],
+      { env: this.env, timeoutMs: 4_000 }
+    );
+    if (machines.exitCode !== 0) {
+      return {};
+    }
+    return {
+      machineId: this.readPrimaryMachineId(machines.stdout),
+      state: this.readPrimaryMachineState(machines.stdout),
+    };
+  }
+
+  private diagnoseWhatsAppSelfChatLogs(logs: string): { kind: "success" | "unauthorized" | "send_failed" | "empty_response" | "unknown" } {
+    if (/Sending response \(/i.test(logs)) {
+      return { kind: "success" };
+    }
+    if (/Unauthorized user: .* on whatsapp/i.test(logs)) {
+      return { kind: "unauthorized" };
+    }
+    if (/Failed to send response:/i.test(logs) || /Fallback send also failed:/i.test(logs)) {
+      return { kind: "send_failed" };
+    }
+    if (/Handler returned empty\/None response/i.test(logs)) {
+      return { kind: "empty_response" };
+    }
+    return { kind: "unknown" };
+  }
+
+  private extractRelevantWhatsAppLogLines(logs: string): string {
+    const lines = logs
+      .split(/\r?\n/)
+      .map((line) => line.trimEnd())
+      .filter((line) =>
+        /whatsapp/i.test(line)
+        || /Sending response \(/i.test(line)
+        || /Failed to send response:/i.test(line)
+        || /Fallback send also failed:/i.test(line)
+        || /Handler returned empty\/None response/i.test(line)
+        || /Unauthorized user:/i.test(line)
+      );
+    if (lines.length === 0) {
+      const trimmed = logs.trim();
+      return trimmed.length > 0 ? trimmed : "(no relevant app log lines captured)";
+    }
+    return lines.slice(-20).join("\n");
   }
 
   private buildRemoteHermesCommand(
