@@ -377,7 +377,7 @@ MOCK
   assert_output "edge"
 }
 
-@test "resolve_install_channel unknown value falls back to stable with warning" {
+@test "resolve_install_channel unknown value falls back to latest with warning" {
   run bash -c '
     export HERMES_FLY_CHANNEL="nightly"
     source "'"${PROJECT_ROOT}"'/scripts/install.sh"
@@ -388,14 +388,23 @@ MOCK
   assert_output --partial "Warning"
 }
 
-@test "resolve_install_ref uses main by default" {
+@test "resolve_install_ref uses latest GitHub release for latest channel" {
+  local mock_dir="${TEST_TEMP_DIR}/mock_bin"
+  mkdir -p "$mock_dir"
+  cat > "$mock_dir/curl" <<'MOCK'
+#!/usr/bin/env bash
+printf '{"tag_name":"v0.1.12"}\n'
+MOCK
+  chmod +x "$mock_dir/curl"
+
   run bash -c '
     unset HERMES_FLY_VERSION
+    export PATH="'"$mock_dir"':${PATH}"
     source "'"${PROJECT_ROOT}"'/scripts/install.sh"
     resolve_install_ref latest
   '
   assert_success
-  assert_output "main"
+  assert_output "v0.1.12"
 }
 
 @test "resolve_install_ref uses latest GitHub release for stable channel" {
@@ -448,7 +457,7 @@ MOCK
 
 # --- main() install flow ---
 
-@test "install main prefers packaged release asset when available" {
+@test "install latest prefers packaged release asset when available" {
   local mock_dir="${TEST_TEMP_DIR}/mock_bin"
   mkdir -p "$mock_dir"
   local node_args_file="${TEST_TEMP_DIR}/node_args"
@@ -514,7 +523,7 @@ MOCK
   local install_home="${TEST_TEMP_DIR}/hermes_home"
   local install_bin="${TEST_TEMP_DIR}/install_bin"
   run bash -c '
-    export HERMES_FLY_CHANNEL="stable"
+    export HERMES_FLY_CHANNEL="latest"
     export HERMES_FLY_HOME="'"$install_home"'"
     export HERMES_FLY_INSTALL_DIR="'"$install_bin"'"
     export MOCK_NODE_ARGS_FILE="'"$node_args_file"'"
@@ -527,6 +536,8 @@ MOCK
   assert_success
   assert_output --partial "hermes-fly installed successfully"
   assert_output --partial "Downloading hermes-fly release asset"
+  assert_output --partial "Channel: latest"
+  assert_output --partial "Release: v0.1.12"
   assert_output --partial "hermes-fly 0.1.12"
   assert [ -f "${install_home}/hermes-fly" ]
   assert [ -f "${install_home}/dist/cli.js" ]
@@ -536,7 +547,7 @@ MOCK
   assert_success
 }
 
-@test "install main downloads the latest main snapshot and builds runtime by default" {
+@test "install edge downloads the latest main snapshot and builds runtime by default" {
   local mock_dir="${TEST_TEMP_DIR}/mock_bin"
   mkdir -p "$mock_dir"
   local npm_args_file="${TEST_TEMP_DIR}/npm_args_latest"
@@ -577,6 +588,7 @@ MOCK
   local install_home="${TEST_TEMP_DIR}/hermes_home_latest"
   local install_bin="${TEST_TEMP_DIR}/install_bin_latest"
   run bash -c '
+    export HERMES_FLY_CHANNEL="edge"
     export HERMES_FLY_HOME="'"$install_home"'"
     export HERMES_FLY_INSTALL_DIR="'"$install_bin"'"
     export MOCK_SOURCE_ARCHIVE_FILE="'"$snapshot_archive"'"
@@ -587,7 +599,7 @@ MOCK
     main
   '
   assert_success
-  assert_output --partial "Channel: latest"
+  assert_output --partial "Channel: edge"
   assert_output --partial "Release: main"
   assert_output --partial "Downloading hermes-fly source..."
   assert_output --partial "Preparing hermes-fly runtime dependencies"
@@ -596,9 +608,9 @@ MOCK
 
   run cat "$npm_args_file"
   assert_success
-  assert_output --partial "ci"
+  assert_output --partial "ci --no-audit --no-fund"
   assert_output --partial "run build"
-  assert_output --partial "prune --omit=dev"
+  assert_output --partial "prune --omit=dev --no-audit --no-fund"
 }
 
 @test "install stable falls back to source clone and build when packaged asset is unavailable" {
@@ -674,12 +686,12 @@ MOCK
   assert_output --partial "--branch v0.1.12"
   run cat "$npm_args_file"
   assert_success
-  assert_output --partial "ci"
+  assert_output --partial "ci --no-audit --no-fund"
   assert_output --partial "run build"
-  assert_output --partial "prune --omit=dev"
+  assert_output --partial "prune --omit=dev --no-audit --no-fund"
 }
 
-@test "install main uses main branch and builds runtime when HERMES_FLY_CHANNEL=edge" {
+@test "install edge uses main branch and builds runtime when HERMES_FLY_CHANNEL=edge" {
   local mock_dir="${TEST_TEMP_DIR}/mock_bin"
   mkdir -p "$mock_dir"
   local git_args_file="${TEST_TEMP_DIR}/git_args_edge"
@@ -735,7 +747,7 @@ MOCK
   assert_output --partial "--branch main"
 }
 
-@test "install main fails when installed version does not match requested release" {
+@test "install stable fails when installed version does not match requested release" {
   local mock_dir="${TEST_TEMP_DIR}/mock_bin"
   mkdir -p "$mock_dir"
   local git_args_file="${TEST_TEMP_DIR}/git_args_mismatch"

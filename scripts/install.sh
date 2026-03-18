@@ -108,7 +108,7 @@ resolve_install_ref() {
 
   case "$channel" in
     latest)
-      printf 'main\n'
+      resolve_latest_release_tag
       ;;
     edge)
       # Edge is explicitly moving/non-reproducible.
@@ -222,9 +222,9 @@ prepare_runtime_artifacts() {
   echo "Preparing hermes-fly runtime dependencies..."
   if ! (
     cd "$src_dir"
-    run_with_sanitized_env npm ci
+    run_with_sanitized_env npm ci --no-audit --no-fund
     run_with_sanitized_env npm run build
-    run_with_sanitized_env npm prune --omit=dev
+    run_with_sanitized_env npm prune --omit=dev --no-audit --no-fund
   ); then
     echo "Error: Failed to prepare hermes-fly runtime artifacts" >&2
     return 1
