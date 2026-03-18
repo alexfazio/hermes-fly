@@ -69,6 +69,15 @@ if [[ -z "${WHATSAPP_ENABLED:-}" ]] && [[ "${HERMES_FLY_WHATSAPP_PENDING:-}" =~ 
     sed -i '/^WHATSAPP_ALLOWED_USERS=/d' /root/.hermes/.env 2>/dev/null || true
   fi
 fi
+if [[ -z "${WHATSAPP_ENABLED:-}" ]]; then
+  sed -i '/^WHATSAPP_ENABLED=/d' /root/.hermes/.env 2>/dev/null || true
+fi
+if [[ -z "${WHATSAPP_MODE:-}" ]]; then
+  sed -i '/^WHATSAPP_MODE=/d' /root/.hermes/.env 2>/dev/null || true
+fi
+if [[ -z "${WHATSAPP_ALLOWED_USERS:-}" ]]; then
+  sed -i '/^WHATSAPP_ALLOWED_USERS=/d' /root/.hermes/.env 2>/dev/null || true
+fi
 # Bridge Fly secrets into /root/.hermes/.env on every boot (not just first deploy)
 for var in OPENROUTER_API_KEY GLM_API_KEY GLM_BASE_URL LLM_MODEL LLM_BASE_URL LLM_API_KEY NOUS_API_KEY \
   HERMES_ZAI_THINKING \

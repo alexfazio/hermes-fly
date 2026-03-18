@@ -64,6 +64,10 @@ describe("TemplateWriter", () => {
       assert.match(entrypoint, /HERMES_FLY_WHATSAPP_MODE/);
       assert.match(entrypoint, /HERMES_FLY_WHATSAPP_ALLOWED_USERS/);
       assert.match(entrypoint, /find \/root\/\.hermes\/whatsapp\/session -mindepth 1/);
+      assert.match(entrypoint, /if \[\[ -z "\$\{WHATSAPP_ENABLED:-\}" \]\]; then/);
+      assert.match(entrypoint, /sed -i '\/\^WHATSAPP_ENABLED=\/d' \/root\/\.hermes\/\.env/);
+      assert.match(entrypoint, /sed -i '\/\^WHATSAPP_MODE=\/d' \/root\/\.hermes\/\.env/);
+      assert.match(entrypoint, /sed -i '\/\^WHATSAPP_ALLOWED_USERS=\/d' \/root\/\.hermes\/\.env/);
 
       assert.match(sitecustomize, /HERMES_ZAI_THINKING/);
       assert.match(sitecustomize, /thinking/);

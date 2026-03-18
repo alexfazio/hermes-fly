@@ -3895,6 +3895,7 @@ export class FlyDeployWizard implements DeployWizardPort {
           "HERMES_FLY_WHATSAPP_PENDING",
           "HERMES_FLY_WHATSAPP_MODE",
           "HERMES_FLY_WHATSAPP_ALLOWED_USERS",
+          "--stage",
           "-a",
           appName,
         ],
@@ -3915,7 +3916,7 @@ export class FlyDeployWizard implements DeployWizardPort {
           "-a",
           appName,
           "-C",
-          "sh -lc 'rm -rf /root/.hermes/whatsapp/session && mkdir -p /root/.hermes/whatsapp/session && chmod 700 /root/.hermes/whatsapp/session'"
+          "sh -lc 'rm -rf /root/.hermes/whatsapp/session && mkdir -p /root/.hermes/whatsapp/session && chmod 700 /root/.hermes/whatsapp/session && if [ -f /root/.hermes/.env ]; then sed -i \"/^WHATSAPP_ENABLED=/d\" /root/.hermes/.env && sed -i \"/^WHATSAPP_MODE=/d\" /root/.hermes/.env && sed -i \"/^WHATSAPP_ALLOWED_USERS=/d\" /root/.hermes/.env; fi'"
         ],
         { env: this.env, timeoutMs: 20_000 }
       );
@@ -3926,13 +3927,13 @@ export class FlyDeployWizard implements DeployWizardPort {
         };
       }
 
-      const restarted = await this.restartPrimaryAppMachine(
+      const recycled = await this.recyclePrimaryAppMachine(
         appName,
-        `could not determine which Fly machine to restart after disconnecting WhatsApp from ${appName}`,
+        `could not determine which Fly machine to recycle after disconnecting WhatsApp from ${appName}`,
         `machine not running after disconnecting WhatsApp from ${appName}`
       );
-      if (!restarted.ok) {
-        return restarted;
+      if (!recycled.ok) {
+        return recycled;
       }
 
       return { ok: true };
@@ -3969,6 +3970,59 @@ export class FlyDeployWizard implements DeployWizardPort {
     if (restart.exitCode !== 0) {
       return { ok: false, error: restart.stderr || restart.stdout || "app restart failed" };
     }
+
+    return this.waitForPrimaryAppMachineStarted(appName, notRunningPrefix);
+  }
+
+  private async recyclePrimaryAppMachine(
+    appName: string,
+    missingMachineError: string,
+    notRunningPrefix: string
+  ): Promise<{ ok: boolean; error?: string }> {
+    const flyCommand = await resolveFlyCommand(this.env);
+    const machines = await this.process.run(
+      flyCommand,
+      ["machine", "list", "-a", appName, "--json"],
+      { env: this.env, timeoutMs: 4_000 }
+    );
+    if (machines.exitCode !== 0) {
+      return { ok: false, error: machines.stderr || machines.stdout || "machine status check failed before recycling" };
+    }
+
+    const machineId = this.readPrimaryMachineId(machines.stdout);
+    if (!machineId) {
+      return { ok: false, error: missingMachineError };
+    }
+
+    const machineState = this.readPrimaryMachineState(machines.stdout);
+    if (machineState === "started") {
+      const stop = await this.process.run(
+        flyCommand,
+        ["machine", "stop", machineId, "-a", appName, "--wait-timeout", "60s"],
+        { env: this.env, timeoutMs: 60_000 }
+      );
+      if (stop.exitCode !== 0) {
+        return { ok: false, error: stop.stderr || stop.stdout || `failed to stop machine ${machineId}` };
+      }
+    }
+
+    const start = await this.process.run(
+      flyCommand,
+      ["machine", "start", machineId, "-a", appName],
+      { env: this.env, timeoutMs: 60_000 }
+    );
+    if (start.exitCode !== 0) {
+      return { ok: false, error: start.stderr || start.stdout || `failed to start machine ${machineId}` };
+    }
+
+    return this.waitForPrimaryAppMachineStarted(appName, notRunningPrefix);
+  }
+
+  private async waitForPrimaryAppMachineStarted(
+    appName: string,
+    notRunningPrefix: string
+  ): Promise<{ ok: boolean; error?: string }> {
+    const flyCommand = await resolveFlyCommand(this.env);
 
     let lastState = "unknown";
     for (let attempt = 0; attempt < 20; attempt += 1) {

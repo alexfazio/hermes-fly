@@ -1321,6 +1321,7 @@ describe("FlyDeployWizard.postDeployActions", () => {
       const io = makeIO();
       const backgroundCalls: Array<{ command: string; args: string[] }> = [];
       const streamingCalls: Array<{ command: string; args: string[] }> = [];
+      let oldMachineState = "started";
       const runner: ForegroundProcessRunner = {
         run: async (command, args) => {
           backgroundCalls.push({ command, args });
@@ -1345,11 +1346,16 @@ describe("FlyDeployWizard.postDeployActions", () => {
           }
           if (args[0] === "machine" && args[1] === "list") {
             if (args.includes("old-whatsapp-app")) {
-              return { exitCode: 0, stdout: JSON.stringify([{ id: "oldmachine", state: "started", region: "fra" }]), stderr: "" };
+              return { exitCode: 0, stdout: JSON.stringify([{ id: "oldmachine", state: oldMachineState, region: "fra" }]), stderr: "" };
             }
             return { exitCode: 0, stdout: JSON.stringify([{ id: "newmachine", state: "started", region: "fra" }]), stderr: "" };
           }
-          if (args[0] === "machine" && args[1] === "restart") {
+          if (args[0] === "machine" && args[1] === "stop") {
+            oldMachineState = "stopped";
+            return { exitCode: 0, stdout: "", stderr: "" };
+          }
+          if (args[0] === "machine" && args[1] === "start") {
+            oldMachineState = "started";
             return { exitCode: 0, stdout: "", stderr: "" };
           }
           return { exitCode: 0, stdout: "", stderr: "" };
@@ -1374,8 +1380,9 @@ describe("FlyDeployWizard.postDeployActions", () => {
       }, io.stdout, io.stderr);
 
       assert.deepEqual(result, { whatsappSessionConfirmed: true });
-      assert.ok(backgroundCalls.some((call) => call.args.slice(0, 2).join(" ") === "secrets unset"));
-      assert.ok(backgroundCalls.some((call) => call.args.slice(0, 5).join(" ") === "machine restart oldmachine -a old-whatsapp-app"));
+      assert.ok(backgroundCalls.some((call) => call.args.slice(0, 3).join(" ") === "secrets unset WHATSAPP_ENABLED" && call.args.includes("--stage")));
+      assert.ok(backgroundCalls.some((call) => call.args.slice(0, 5).join(" ") === "machine stop oldmachine -a old-whatsapp-app"));
+      assert.ok(backgroundCalls.some((call) => call.args.slice(0, 5).join(" ") === "machine start oldmachine -a old-whatsapp-app"));
       assert.ok(backgroundCalls.some((call) => call.args.slice(0, 5).join(" ") === "machine restart newmachine -a test-app"));
       assert.ok(streamingCalls.some((call) => call.args.join(" ").includes("whatsapp")));
       const saved = await readFile(join(dir, "config.yaml"), "utf8");
@@ -1386,6 +1393,62 @@ describe("FlyDeployWizard.postDeployActions", () => {
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
+  });
+
+  it("stages WhatsApp secret removal before recycling the older takeover deployment", async () => {
+    const prompts = makePromptPort(["y"], { interactive: true });
+    const io = makeIO();
+    const backgroundCalls: Array<{ command: string; args: string[] }> = [];
+    const runner: ForegroundProcessRunner = {
+      run: async (command, args) => {
+        backgroundCalls.push({ command, args });
+        if (args[0] === "secrets" && args[1] === "unset") {
+          return { exitCode: 0, stdout: "", stderr: "" };
+        }
+        if (args[0] === "ssh" && args[1] === "console" && !/127\.0\.0\.1:3000\/health/.test(args.join(" "))) {
+          return { exitCode: 0, stdout: "empty_session\n", stderr: "" };
+        }
+        if (args[0] === "machine" && args[1] === "list") {
+          return {
+            exitCode: 0,
+            stdout: JSON.stringify([{ id: "oldmachine", state: "started", region: "fra" }]),
+            stderr: "",
+          };
+        }
+        if (args[0] === "machine" && (args[1] === "stop" || args[1] === "start" || args[1] === "restart")) {
+          return { exitCode: 0, stdout: "", stderr: "" };
+        }
+        if (args[0] === "logs") {
+          return {
+            exitCode: 0,
+            stdout: "2026-03-18T16:55:00Z app[test] [info] [whatsapp] Sending response (42 chars) to 393406844897@s.whatsapp.net\n",
+            stderr: "",
+          };
+        }
+        return { exitCode: 0, stdout: "", stderr: "" };
+      },
+      runStreaming: async (_command, _args, options) => {
+        options?.onStdoutChunk?.("✅ Pairing complete. Credentials saved.\n");
+        return { exitCode: 0 };
+      },
+      runForeground: async () => ({ exitCode: 0 }),
+    };
+    const wizard = new FlyDeployWizard({}, { prompts, process: runner, sleep: async () => {} });
+
+    await wizard.finalizeMessagingSetup({
+      ...DEFAULT_CONFIG,
+      appName: "test-app",
+      whatsappEnabled: true,
+      whatsappMode: "self-chat",
+      whatsappAllowedUsers: "393406844897",
+      whatsappCompleteAccessDuringSetup: true,
+      whatsappTakeoverAppNames: ["old-whatsapp-app"],
+    }, io.stdout, io.stderr);
+
+    const unsetCall = backgroundCalls.find((call) => call.args[0] === "secrets" && call.args[1] === "unset");
+    assert.ok(unsetCall);
+    assert.ok(unsetCall?.args.includes("--stage"));
+    assert.ok(!backgroundCalls.some((call) => call.args[0] === "secrets" && call.args[1] === "deploy"));
   });
 
   it("stops before pairing when takeover cleanup of the older WhatsApp deployment fails", async () => {
