@@ -53,7 +53,7 @@ export async function runUpdateCommand(
   // Run update
   const runner = new FlyUpdateRunner(new NodeProcessRunner(), options.env);
   const wizard = new FlyDeployWizard(options.env);
-  const useCase = new UpdateDeploymentUseCase(runner, wizard);
+  const useCase = new UpdateDeploymentUseCase(runner, wizard, options.env);
 
   const result = await useCase.execute(
     { appName, channel: channel as "stable" | "preview" | "edge" },

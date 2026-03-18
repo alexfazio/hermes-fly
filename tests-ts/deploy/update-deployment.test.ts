@@ -5,10 +5,13 @@ import type { UpdateRunnerPort } from "../../src/contexts/deploy/application/por
 import type { DeployWizardPort } from "../../src/contexts/deploy/application/ports/deploy-wizard.port.js";
 
 describe("UpdateDeploymentUseCase", () => {
-  function makeRunner(overrides: Partial<UpdateRunnerPort> = {}): UpdateRunnerPort {
+  function makeRunner(overrides: Partial<UpdateRunnerPort> & { capturedBuildDir?: string } = {}): UpdateRunnerPort {
     return {
       checkAppExists: async () => true,
-      runUpdate: async () => ({ ok: true }),
+      runUpdate: async (buildDir: string) => {
+        overrides.capturedBuildDir = buildDir;
+        return { ok: true };
+      },
       ...overrides,
     };
   }
@@ -32,7 +35,7 @@ describe("UpdateDeploymentUseCase", () => {
         botToken: "",
         channel: "edge",
       }),
-      createBuildContext: async () => ({ buildDir: "/tmp/test" }),
+      createBuildContext: async () => ({ buildDir: "/tmp/hermes-deploy-test-app-1234567890" }),
       provisionResources: async () => ({ ok: true }),
       runDeploy: async () => ({ ok: true }),
       postDeployCheck: async () => ({ ok: true }),
@@ -146,5 +149,119 @@ describe("UpdateDeploymentUseCase", () => {
 
     assert.notStrictEqual(capturedRef, "main"); // Should be a pinned commit
     assert.ok(capturedRef.length > 8); // Should be a full commit hash
+  });
+
+  // REGRESSION TEST: Issue 1 - must use generated build directory
+  it("uses the generated build directory during update (regression test)", async () => {
+    const expectedBuildDir = "/tmp/hermes-deploy-test-app-9999999999";
+    let capturedBuildDir: string | undefined;
+    
+    const runner = makeRunner({
+      runUpdate: async (buildDir: string) => {
+        capturedBuildDir = buildDir;
+        return { ok: true };
+      },
+    });
+    
+    const wizard = makeWizard({
+      createBuildContext: async () => ({ buildDir: expectedBuildDir }),
+    });
+    
+    const useCase = new UpdateDeploymentUseCase(runner, wizard);
+
+    const stderr = { output: "", write(s: string) { this.output += s; } };
+    const stdout = { output: "", write(s: string) { this.output += s; } };
+
+    await useCase.execute(
+      { appName: "test-app", channel: "edge" },
+      stderr,
+      stdout
+    );
+
+    assert.strictEqual(capturedBuildDir, expectedBuildDir, 
+      "runUpdate must be called with the buildDir from createBuildContext, not empty string");
+  });
+
+  // REGRESSION TEST: Issue 2 - must honor HERMES_AGENT_REF override
+  it("honors HERMES_AGENT_REF environment override (regression test)", async () => {
+    const overrideRef = "abc123def456 emergency-patch";
+    let capturedRef = "";
+    
+    const runner = makeRunner();
+    const wizard = makeWizard({
+      createBuildContext: async (config) => {
+        capturedRef = config.hermesRef;
+        return { buildDir: "/tmp/test" };
+      },
+    });
+    
+    const env = { HERMES_AGENT_REF: overrideRef };
+    const useCase = new UpdateDeploymentUseCase(runner, wizard, env);
+
+    const stderr = { output: "", write(s: string) { this.output += s; } };
+    const stdout = { output: "", write(s: string) { this.output += s; } };
+
+    await useCase.execute(
+      { appName: "test-app", channel: "stable" }, // stable channel, but override should win
+      stderr,
+      stdout
+    );
+
+    assert.strictEqual(capturedRef, overrideRef, 
+      "HERMES_AGENT_REF environment variable must override channel default");
+  });
+
+  it("uses channel default when HERMES_AGENT_REF is empty", async () => {
+    let capturedRef = "";
+    
+    const runner = makeRunner();
+    const wizard = makeWizard({
+      createBuildContext: async (config) => {
+        capturedRef = config.hermesRef;
+        return { buildDir: "/tmp/test" };
+      },
+    });
+    
+    const env = { HERMES_AGENT_REF: "" }; // empty override
+    const useCase = new UpdateDeploymentUseCase(runner, wizard, env);
+
+    const stderr = { output: "", write(s: string) { this.output += s; } };
+    const stdout = { output: "", write(s: string) { this.output += s; } };
+
+    await useCase.execute(
+      { appName: "test-app", channel: "edge" },
+      stderr,
+      stdout
+    );
+
+    assert.strictEqual(capturedRef, "main", 
+      "Empty HERMES_AGENT_REF should fall back to channel default");
+  });
+
+  it("uses channel default when HERMES_AGENT_REF is whitespace only", async () => {
+    let capturedRef = "";
+    
+    const runner = makeRunner();
+    const wizard = makeWizard({
+      createBuildContext: async (config) => {
+        capturedRef = config.hermesRef;
+        return { buildDir: "/tmp/test" };
+      },
+    });
+    
+    const env = { HERMES_AGENT_REF: "   \t\n  " }; // whitespace only
+    const useCase = new UpdateDeploymentUseCase(runner, wizard, env);
+
+    const stderr = { output: "", write(s: string) { this.output += s; } };
+    const stdout = { output: "", write(s: string) { this.output += s; } };
+
+    await useCase.execute(
+      { appName: "test-app", channel: "edge" },
+      stderr,
+      stdout
+    );
+
+    assert.strictEqual(capturedRef, "main", 
+      "Whitespace-only HERMES_AGENT_REF should fall back to channel default");
   });
 });

@@ -16,7 +16,8 @@ export interface UpdateConfig {
 export class UpdateDeploymentUseCase {
   constructor(
     private readonly runner: UpdateRunnerPort,
-    private readonly wizard: DeployWizardPort
+    private readonly wizard: DeployWizardPort,
+    private readonly env: NodeJS.ProcessEnv = process.env
   ) {}
 
   async execute(
@@ -60,8 +61,9 @@ export class UpdateDeploymentUseCase {
     stdout.write(`Updating '${config.appName}' to ${config.channel} channel...\n`);
     const hermesRef = this.resolveHermesRef(config.channel);
 
+    let buildDir: string;
     try {
-      await this.wizard.createBuildContext({
+      const result = await this.wizard.createBuildContext({
         orgSlug: "",
         appName: config.appName,
         region: "",
@@ -74,6 +76,7 @@ export class UpdateDeploymentUseCase {
         botToken: "",
         channel: config.channel,
       });
+      buildDir = result.buildDir;
     } catch (error) {
       const message = error instanceof Error ? error.message : "failed to create build context";
       stderr.write(`[error] ${message}\n`);
@@ -82,7 +85,7 @@ export class UpdateDeploymentUseCase {
 
     // Phase 4: Run update (skip provisioning - app and volume already exist)
     stdout.write(`Building and deploying update...\n`);
-    const updateResult = await this.runner.runUpdate("", config.appName);
+    const updateResult = await this.runner.runUpdate(buildDir, config.appName);
     if (!updateResult.ok) {
       stderr.write(`[error] Update failed: ${updateResult.error ?? "unknown error"}\n`);
       return { kind: "failed", error: updateResult.error ?? "update failed" };
@@ -107,6 +110,12 @@ export class UpdateDeploymentUseCase {
   }
 
   private resolveHermesRef(channel: "stable" | "preview" | "edge"): string {
+    // Honor HERMES_AGENT_REF override for emergency rollback/pinned ref
+    const override = (this.env.HERMES_AGENT_REF ?? "").trim();
+    if (override.length > 0) {
+      return override;
+    }
+
     switch (channel) {
       case "edge":
         return HERMES_AGENT_EDGE_REF;
