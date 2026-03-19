@@ -554,9 +554,9 @@ export class FlyDeployWizard implements DeployWizardPort {
     return config;
   }
 
-  async createBuildContext(config: DeployConfig): Promise<{ buildDir: string }> {
+  async createBuildContext(config: DeployConfig, opts?: { update?: boolean }): Promise<{ buildDir: string }> {
     const buildDir = join(tmpdir(), `hermes-deploy-${config.appName}-${Date.now()}`);
-    await this.templateWriter.createBuildContext(config, buildDir);
+    await this.templateWriter.createBuildContext(config, buildDir, opts);
     return { buildDir };
   }
 
