@@ -8,7 +8,7 @@ const DEFAULT_VM_MEMORY_BY_SIZE: Record<string, string> = {
 };
 
 export class TemplateWriter {
-  async createBuildContext(config: DeployConfig, buildDir: string): Promise<void> {
+  async createBuildContext(config: DeployConfig, buildDir: string, opts?: { update?: boolean }): Promise<void> {
     const { copyFile, mkdir, readFile, writeFile } = await import("node:fs/promises");
     const { dirname, join } = await import("node:path");
     const { fileURLToPath } = await import("node:url");
@@ -16,7 +16,9 @@ export class TemplateWriter {
     await mkdir(buildDir, { recursive: true });
 
     const templateDir = join(dirname(fileURLToPath(import.meta.url)), "../../../../../templates");
-    const dockerfileTemplate = await readFile(join(templateDir, "Dockerfile.template"), "utf8");
+    const isUpdate = opts?.update ?? false;
+    const dockerfileName = isUpdate ? "Dockerfile.update.template" : "Dockerfile.template";
+    const dockerfileTemplate = await readFile(join(templateDir, dockerfileName), "utf8");
     const flyTomlTemplate = await readFile(join(templateDir, "fly.toml.template"), "utf8");
     const entrypointTemplate = join(templateDir, "entrypoint.sh");
     const supervisorTemplate = join(templateDir, "gateway-supervisor.sh");

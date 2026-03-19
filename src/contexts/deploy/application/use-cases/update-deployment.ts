@@ -94,19 +94,22 @@ export class UpdateDeploymentUseCase {
     // Phase 4: Generate update Dockerfile
     let buildDir: string;
     try {
-      const result = await this.wizard.createBuildContext({
-        orgSlug: "",
-        appName: config.appName,
-        region: deployConfig.region,
-        vmSize: deployConfig.vmSize,
-        volumeSize: deployConfig.volumeSize,
-        provider: "",
-        apiKey: "",
-        model: "",
-        hermesRef,
-        botToken: "",
-        channel: config.channel,
-      });
+      const result = await this.wizard.createBuildContext(
+        {
+          orgSlug: "",
+          appName: config.appName,
+          region: deployConfig.region,
+          vmSize: deployConfig.vmSize,
+          volumeSize: deployConfig.volumeSize,
+          provider: "",
+          apiKey: "",
+          model: "",
+          hermesRef,
+          botToken: "",
+          channel: config.channel,
+        },
+        { update: true }
+      );
       buildDir = result.buildDir;
     } catch (error) {
       const message = error instanceof Error ? error.message : "failed to create build context";

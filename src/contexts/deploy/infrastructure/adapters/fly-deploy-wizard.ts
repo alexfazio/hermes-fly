@@ -542,7 +542,6 @@ export class FlyDeployWizard implements DeployWizardPort {
     const env = this.env;
     if (this.prompts.isInteractive()) {
       this.writeHero();
-      this.writeHostingPlatformSection();
     }
 
     const orgSlug = await this.collectOrgSlug(env.HERMES_FLY_ORG ?? env.DEPLOY_ORG ?? env.FLY_ORG);
@@ -645,32 +644,9 @@ export class FlyDeployWizard implements DeployWizardPort {
     return config;
   }
 
-  private writeHostingPlatformSection(): void {
-    const platforms = listHostingPlatforms();
-    const defaultPlatform = resolveDefaultHostingPlatform();
-    const defaultIndex = Math.max(1, platforms.findIndex((platform) => platform.key === defaultPlatform.key) + 1);
-
-    this.writeChoiceSection(
-      "Hosting Platform",
-      "",
-      renderDeployChoiceOptions(
-        platforms.map((platform) => ({
-          label: platform.displayLabel,
-          disabled: platform.disabled,
-        })),
-        defaultIndex,
-        {
-          numbered: false,
-          colorizeDisabled: true,
-          disabledStyleStream: this.prompts.outputStream?.(),
-        }
-      )
-    );
-  }
-
-  async createBuildContext(config: DeployConfig): Promise<{ buildDir: string }> {
+  async createBuildContext(config: DeployConfig, opts?: { update?: boolean }): Promise<{ buildDir: string }> {
     const buildDir = join(tmpdir(), `hermes-deploy-${config.appName}-${Date.now()}`);
-    await this.templateWriter.createBuildContext(config, buildDir);
+    await this.templateWriter.createBuildContext(config, buildDir, opts);
     return { buildDir };
   }
 
