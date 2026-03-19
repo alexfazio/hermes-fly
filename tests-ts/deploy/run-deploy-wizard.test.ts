@@ -281,7 +281,6 @@ describe("RunDeployWizardUseCase - happy path", () => {
         messagingPlatforms: ["whatsapp"],
         whatsappEnabled: true,
         whatsappMode: "self-chat",
-        whatsappAllowedUsers: "393406844897",
         whatsappCompleteAccessDuringSetup: true,
       }),
       saveApp: async (config) => { saved.push(config); },
@@ -380,7 +379,6 @@ describe("RunDeployWizardUseCase - happy path", () => {
         slackUsePairing: true,
         whatsappEnabled: true,
         whatsappMode: "self-chat",
-        whatsappAllowedUsers: "393406844897",
         whatsappCompleteAccessDuringSetup: true,
       })
     }));
@@ -392,7 +390,7 @@ describe("RunDeployWizardUseCase - happy path", () => {
     assert.match(io.outText, /Slack:\s+Hermes Workspace/);
     assert.match(io.outText, /Slack access:\s+Only me \(DM pairing\)/);
     assert.match(io.outText, /WhatsApp:\s+Self-chat/);
-    assert.match(io.outText, /WhatsApp access:\s+Only me \(393406844897\)/);
+    assert.match(io.outText, /WhatsApp access:\s+Only me \(detected after pairing\)/);
   });
 
   it("runs post-deploy messaging finalization after the completion summary", async () => {
@@ -1051,7 +1049,6 @@ describe("FlyDeployWizard.postDeployActions", () => {
       appName: "test-app",
       whatsappEnabled: true,
       whatsappMode: "self-chat",
-      whatsappAllowedUsers: "393406844897",
       whatsappCompleteAccessDuringSetup: true,
     }, io.stdout, io.stderr);
 
@@ -1061,7 +1058,8 @@ describe("FlyDeployWizard.postDeployActions", () => {
     assert.match(remoteSetupCommand, /printf %s/);
     assert.match(remoteSetupCommand, /WHATSAPP_ENABLED=.*true/);
     assert.match(remoteSetupCommand, /WHATSAPP_MODE=.*self-chat/);
-    assert.match(remoteSetupCommand, /WHATSAPP_ALLOWED_USERS=.*393406844897/);
+    assert.doesNotMatch(remoteSetupCommand, /WHATSAPP_ALLOWED_USERS=/);
+    assert.ok(backgroundCalls.some((call) => call.args.slice(0, 5).join(" ") === "secrets set --app test-app --stage"));
     assert.ok(backgroundCalls.some((call) => call.args.slice(0, 5).join(" ") === "machine restart machine123 -a test-app"));
     assert.ok(backgroundCalls.some((call) => call.args.slice(0, 4).join(" ") === "machine list -a test-app"));
     assert.ok(backgroundCalls.some((call) => /127\.0\.0\.1:3000\/health/.test(call.args.join(" "))));
@@ -1070,10 +1068,13 @@ describe("FlyDeployWizard.postDeployActions", () => {
     assert.match(io.outText, /▄▄▄▄ QR FRAME 1 ▄▄▄▄\r▄▄▄▄ QR FRAME 2 ▄▄▄▄\r/);
     assert.doesNotMatch(io.outText, /▄▄▄▄ QR FRAME 1 ▄▄▄▄\n▄▄▄▄ QR FRAME 2 ▄▄▄▄\n/);
     assert.match(io.outText, /Restarting the deployed app so WhatsApp comes online/);
+    assert.match(io.outText, /Detecting the paired WhatsApp account and adopting it for self-chat/i);
     assert.match(io.outText, /send a short message to Message yourself now/i);
     assert.match(io.outText, /Self-chat test confirmed/i);
     assert.match(io.outText, /Message yourself/);
     assert.doesNotMatch(io.outText, /Update allowed users\?/);
+    assert.doesNotMatch(io.outText, /Your phone number \(e\.g\./i);
+    assert.doesNotMatch(io.outText, /No allowlist/i);
     assert.doesNotMatch(io.outText, /Start the gateway:  hermes gateway/);
     assert.doesNotMatch(io.outText, /Or install as a service: hermes gateway install/);
     assert.doesNotMatch(io.outText, /stream errored out/);
@@ -1110,7 +1111,6 @@ describe("FlyDeployWizard.postDeployActions", () => {
       appName: "test-app",
       whatsappEnabled: true,
       whatsappMode: "self-chat",
-      whatsappAllowedUsers: "393406844897",
       whatsappCompleteAccessDuringSetup: true,
     }, io.stdout, io.stderr);
 
@@ -1155,7 +1155,6 @@ describe("FlyDeployWizard.postDeployActions", () => {
       appName: "test-app",
       whatsappEnabled: true,
       whatsappMode: "self-chat",
-      whatsappAllowedUsers: "393406844897",
       whatsappCompleteAccessDuringSetup: true,
     }, io.stdout, io.stderr);
 
@@ -1216,7 +1215,6 @@ describe("FlyDeployWizard.postDeployActions", () => {
       appName: "test-app",
       whatsappEnabled: true,
       whatsappMode: "self-chat",
-      whatsappAllowedUsers: "393406844897",
       whatsappCompleteAccessDuringSetup: true,
     }, io.stdout, io.stderr);
 
@@ -1442,10 +1440,17 @@ describe("FlyDeployWizard.postDeployActions", () => {
     assert.doesNotMatch(io.outText, /WhatsApp setup completed on the deployed agent/);
   });
 
-  it("stops before the self-chat test when the paired WhatsApp account number does not match the configured self-chat number", async () => {
+  it("adopts the paired WhatsApp number as the self-chat identity after QR pairing", async () => {
     const prompts = makePromptPort(["y"], { interactive: true });
     const io = makeIO();
     const backgroundCalls: Array<{ command: string; args: string[] }> = [];
+    const config: DeployConfig = {
+      ...DEFAULT_CONFIG,
+      appName: "test-app",
+      whatsappEnabled: true,
+      whatsappMode: "self-chat",
+      whatsappCompleteAccessDuringSetup: true,
+    };
     const runner: ForegroundProcessRunner = {
       run: async (command, args) => {
         backgroundCalls.push({ command, args });
@@ -1466,10 +1471,20 @@ describe("FlyDeployWizard.postDeployActions", () => {
         if (args[0] === "machine" && args[1] === "restart") {
           return { exitCode: 0, stdout: "", stderr: "" };
         }
+        if (args[0] === "secrets" && args[1] === "set") {
+          return { exitCode: 0, stdout: "", stderr: "" };
+        }
         if (args[0] === "ssh" && args[1] === "console" && /127\.0\.0\.1:3000\/health/.test(args.join(" "))) {
           return {
             exitCode: 0,
             stdout: "{\"status\":\"connected\",\"selfJid\":\"447871172820@s.whatsapp.net\",\"selfNumber\":\"447871172820\"}\n",
+            stderr: "",
+          };
+        }
+        if (args[0] === "logs") {
+          return {
+            exitCode: 0,
+            stdout: "2026-03-18T16:55:00Z app[test] [info] [whatsapp] Sending response (42 chars) to 447871172820@s.whatsapp.net\n",
             stderr: "",
           };
         }
@@ -1483,20 +1498,132 @@ describe("FlyDeployWizard.postDeployActions", () => {
     };
     const wizard = new FlyDeployWizard({}, { prompts, process: runner, sleep: async () => {} });
 
-    const result = await wizard.finalizeMessagingSetup({
-      ...DEFAULT_CONFIG,
-      appName: "test-app",
-      whatsappEnabled: true,
-      whatsappMode: "self-chat",
-      whatsappAllowedUsers: "393406844897",
-      whatsappCompleteAccessDuringSetup: true,
-    }, io.stdout, io.stderr);
+    const result = await wizard.finalizeMessagingSetup(config, io.stdout, io.stderr);
 
-    assert.deepEqual(result, {});
-    assert.match(io.errText, /you configured WhatsApp self-chat for 393406844897, but the paired WhatsApp account is 447871172820/i);
-    assert.match(io.errText, /447871172820@s\.whatsapp\.net/);
-    assert.doesNotMatch(io.outText, /Send a short message to Message yourself now/i);
-    assert.ok(!prompts.asked.some((message) => message.includes("Press Enter after sending your self-chat test message")));
+    assert.deepEqual(result, { whatsappSessionConfirmed: true });
+    assert.equal(config.whatsappAllowedUsers, "447871172820");
+    const stagedSetCall = backgroundCalls.find((call) => call.args[0] === "secrets" && call.args[1] === "set");
+    assert.ok(stagedSetCall);
+    assert.ok(stagedSetCall?.args.includes("--stage"));
+    assert.ok(stagedSetCall?.args.includes("HERMES_FLY_WHATSAPP_ALLOWED_USERS=447871172820"));
+    assert.match(io.outText, /Detecting the paired WhatsApp account and adopting it for self-chat/i);
+    assert.match(io.outText, /Send a short message to Message yourself now/i);
+    assert.doesNotMatch(io.errText, /you configured WhatsApp self-chat/i);
+  });
+
+  it("takes over an older WhatsApp self-chat deployment after QR once the paired number is detected", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "whatsapp-post-pair-takeover-"));
+    try {
+      await writeFile(
+        join(dir, "config.yaml"),
+        [
+          "current_app: old-whatsapp-app",
+          "apps:",
+          "  - name: old-whatsapp-app",
+          "    region: fra",
+          "    provider: zai",
+          "    platform: whatsapp",
+          "    whatsapp_mode: self-chat",
+          "    whatsapp_allowed_users: 447871172820",
+        ].join("\n") + "\n",
+        "utf8"
+      );
+
+      const prompts = makePromptPort(["y"], { interactive: true });
+      const io = makeIO();
+      const backgroundCalls: Array<{ command: string; args: string[] }> = [];
+      let oldMachineState = "started";
+      const config: DeployConfig = {
+        ...DEFAULT_CONFIG,
+        appName: "test-app",
+        whatsappEnabled: true,
+        whatsappMode: "self-chat",
+        whatsappCompleteAccessDuringSetup: true,
+      };
+      const runner: ForegroundProcessRunner = {
+        run: async (command, args) => {
+          backgroundCalls.push({ command, args });
+          if (args[0] === "apps" && args[1] === "list") {
+            return {
+              exitCode: 0,
+              stdout: JSON.stringify([{ name: "old-whatsapp-app" }, { name: "test-app" }]),
+              stderr: "",
+            };
+          }
+          if (args[0] === "ssh" && args[1] === "console" && !/127\.0\.0\.1:3000\/health/.test(args.join(" ")) && !/bridge\.log/.test(args.join(" ")) && !/tail -n 80/.test(args.join(" "))) {
+            if (args.includes("old-whatsapp-app")) {
+              return { exitCode: 0, stdout: "has_session\n447871172820", stderr: "" };
+            }
+            return { exitCode: 0, stdout: "empty_session\n", stderr: "" };
+          }
+          if (args[0] === "machine" && args[1] === "list") {
+            if (args.includes("old-whatsapp-app")) {
+              return {
+                exitCode: 0,
+                stdout: JSON.stringify([{ id: "oldmachine", state: oldMachineState, region: "fra" }]),
+                stderr: "",
+              };
+            }
+            return {
+              exitCode: 0,
+              stdout: JSON.stringify([{ id: "newmachine", state: "started", region: "fra" }]),
+              stderr: "",
+            };
+          }
+          if (args[0] === "machine" && args[1] === "stop") {
+            oldMachineState = "stopped";
+            return { exitCode: 0, stdout: "", stderr: "" };
+          }
+          if (args[0] === "machine" && args[1] === "start") {
+            oldMachineState = "started";
+            return { exitCode: 0, stdout: "", stderr: "" };
+          }
+          if (args[0] === "machine" && args[1] === "restart") {
+            return { exitCode: 0, stdout: "", stderr: "" };
+          }
+          if (args[0] === "secrets" && args[1] === "unset") {
+            return { exitCode: 0, stdout: "", stderr: "" };
+          }
+          if (args[0] === "secrets" && args[1] === "set") {
+            return { exitCode: 0, stdout: "", stderr: "" };
+          }
+          if (args[0] === "ssh" && args[1] === "console" && /127\.0\.0\.1:3000\/health/.test(args.join(" "))) {
+            return {
+              exitCode: 0,
+              stdout: "{\"status\":\"connected\",\"selfJid\":\"447871172820@s.whatsapp.net\",\"selfNumber\":\"447871172820\",\"selfLid\":\"242137421639836@lid\"}\n",
+              stderr: "",
+            };
+          }
+          if (args[0] === "logs") {
+            return {
+              exitCode: 0,
+              stdout: "2026-03-18T16:55:00Z app[test] [info] [whatsapp] Sending response (42 chars) to 242137421639836@lid\n",
+              stderr: "",
+            };
+          }
+          return { exitCode: 0, stdout: "", stderr: "" };
+        },
+        runStreaming: async (_command, _args, options) => {
+          options?.onStdoutChunk?.("✅ Pairing complete. Credentials saved.\n");
+          return { exitCode: 0 };
+        },
+        runForeground: async () => ({ exitCode: 0 }),
+      };
+      const wizard = new FlyDeployWizard({ HERMES_FLY_CONFIG_DIR: dir, HOME: dir }, { prompts, process: runner, sleep: async () => {} });
+
+      const result = await wizard.finalizeMessagingSetup(config, io.stdout, io.stderr);
+
+      assert.deepEqual(result, { whatsappSessionConfirmed: true });
+      assert.equal(config.whatsappAllowedUsers, "447871172820");
+      assert.ok(backgroundCalls.some((call) => call.args.slice(0, 3).join(" ") === "secrets unset WHATSAPP_ENABLED" && call.args.includes("--stage") && call.args.includes("old-whatsapp-app")));
+      assert.ok(backgroundCalls.some((call) => call.args.slice(0, 5).join(" ") === "machine stop oldmachine -a old-whatsapp-app"));
+      assert.ok(backgroundCalls.some((call) => call.args.slice(0, 5).join(" ") === "machine start oldmachine -a old-whatsapp-app"));
+      assert.ok(backgroundCalls.some((call) => call.args[0] === "secrets" && call.args[1] === "set" && call.args.includes("HERMES_FLY_WHATSAPP_ALLOWED_USERS=447871172820")));
+      assert.match(io.outText, /Taking over WhatsApp from deployment old-whatsapp-app/i);
+      assert.doesNotMatch(io.errText, /could not disconnect/i);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 
   it("waits for the paired WhatsApp number to appear after restart before watching automatically for the self-chat test", async () => {
@@ -2544,7 +2671,7 @@ describe("FlyDeployWizard.collectConfig", () => {
       "1",
       "1",
       "1",
-      "2",
+      "5",
       "y"
     ], { interactive: true });
     const runner = makeProcessRunner(async (command, args) => {
@@ -2686,7 +2813,7 @@ describe("FlyDeployWizard.collectConfig", () => {
       "1",
       "",
       "",
-      "2",
+      "5",
       "y"
     ], { interactive: true });
     const runner = makeProcessRunner(async () => ({ exitCode: 1 }));
@@ -2724,7 +2851,7 @@ describe("FlyDeployWizard.collectConfig", () => {
       "5",
       "glm-live-key",
       "",
-      "2",
+      "5",
       "y"
     ], { interactive: true });
     const runner = makeProcessRunner(async (command, args) => {
@@ -2774,7 +2901,7 @@ describe("FlyDeployWizard.collectConfig", () => {
       "/Users/alex/Desktop/Screenshot · Fly.png",
       "glm-live-key",
       "",
-      "2",
+      "5",
       "y"
     ], { interactive: true });
     const runner = makeProcessRunner(async (command, args) => {
@@ -2945,7 +3072,8 @@ describe("FlyDeployWizard.collectConfig", () => {
       "1",
       "sk-live",
       "2",
-      "5",
+      "1",
+      "1",
       "1",
       "123:abc",
       "y",
@@ -3044,6 +3172,7 @@ describe("FlyDeployWizard.collectConfig", () => {
       "",
       "1",
       "sk-live",
+      "1",
       "1",
       "1",
       "1",
@@ -3306,7 +3435,7 @@ describe("FlyDeployWizard.collectConfig", () => {
     assert.match(guidedCopy, /Connected Slack workspace: Hermes Workspace/);
   });
 
-  it("configures WhatsApp, normalizes the user's own phone number locally, and keeps pairing for after deploy", async () => {
+  it("configures WhatsApp self-chat without asking for a phone number before pairing", async () => {
     const prompts = makePromptPort([
       "",
       "",
@@ -3319,7 +3448,6 @@ describe("FlyDeployWizard.collectConfig", () => {
       "",
       "4",
       "2",
-      "+39 340 6844897",
       "y"
     ], { interactive: true });
     const runner = makeProcessRunner(async (command, args) => {
@@ -3344,7 +3472,7 @@ describe("FlyDeployWizard.collectConfig", () => {
     assert.deepEqual(config.messagingPlatforms, ["whatsapp"]);
     assert.equal(config.whatsappEnabled, true);
     assert.equal(config.whatsappMode, "self-chat");
-    assert.equal(config.whatsappAllowedUsers, "393406844897");
+    assert.equal(config.whatsappAllowedUsers, undefined);
     assert.equal(config.whatsappCompleteAccessDuringSetup, true);
     const guidedCopy = prompts.writes.join("");
     assert.match(guidedCopy, /WhatsApp has two setup styles/);
@@ -3353,9 +3481,12 @@ describe("FlyDeployWizard.collectConfig", () => {
     assert.match(guidedCopy, /a dedicated WhatsApp number is the recommended setup/);
     assert.match(guidedCopy, /Hermes will finish WhatsApp pairing after deploy by opening the remote WhatsApp setup flow in this terminal/);
     assert.match(guidedCopy, /Recommended for safe personal testing/);
-    assert.match(guidedCopy, /Enter the WhatsApp number of the account you will link now/);
+    assert.match(guidedCopy, /detect the linked WhatsApp account from the QR pairing step/i);
+    assert.match(guidedCopy, /You do not need to enter your phone number here/i);
+    assert.match(guidedCopy, /Only me \(detected after pairing\)/);
     assert.doesNotMatch(guidedCopy, /Who should be able to talk to your WhatsApp setup/i);
     assert.doesNotMatch(guidedCopy, /Specific people/i);
+    assert.doesNotMatch(guidedCopy, /Your WhatsApp number:/i);
   });
 
   it("keeps the WhatsApp allowlist flow for bot mode", async () => {
@@ -3404,7 +3535,7 @@ describe("FlyDeployWizard.collectConfig", () => {
     assert.match(guidedCopy, /Specific people\s+Enter the phone numbers that should be allowed/i);
   });
 
-  it("warns early when the same self-chat WhatsApp number is already used by another saved deployment and lets the user skip WhatsApp", async () => {
+  it("does not probe or warn about self-chat number conflicts before QR pairing", async () => {
     const dir = await mkdtemp(join(tmpdir(), "whatsapp-conflict-"));
     try {
       await writeFile(
@@ -3433,149 +3564,6 @@ describe("FlyDeployWizard.collectConfig", () => {
         "",
         "",
         "4",
-        "2",
-        "1",
-        "+39 340 6844897",
-        "2",
-        "y"
-      ], { interactive: true });
-      const runner = makeProcessRunner(async (command, args) => {
-        if (isFlyCommand(command) && args[0] === "platform" && args[1] === "regions") {
-          return { exitCode: 0, stdout: JSON.stringify([{ code: "iad", name: "Ashburn, Virginia (US)" }]) };
-        }
-        if (isFlyCommand(command) && args[0] === "platform" && args[1] === "vm-sizes") {
-          return { exitCode: 0, stdout: JSON.stringify([{ name: "shared-cpu-1x", memory_mb: 256 }]) };
-        }
-        if (isFlyCommand(command) && args[0] === "apps" && args[1] === "list") {
-          return { exitCode: 0, stdout: JSON.stringify([{ name: "old-whatsapp-app" }]) };
-        }
-        if (isFlyCommand(command) && args[0] === "ssh" && args[1] === "console") {
-          return { exitCode: 0, stdout: "has_session\n393406844897", stderr: "" };
-        }
-        if (command === "curl" && args.includes("https://openrouter.ai/api/v1/key")) {
-          return { exitCode: 0, stdout: JSON.stringify({ data: { is_free_tier: false, usage: 10 } }) };
-        }
-        if (command === "curl" && args.includes("https://openrouter.ai/api/v1/models")) {
-          return { exitCode: 0, stdout: JSON.stringify({ data: liveOpenRouterModelsFixture() }) };
-        }
-        return { exitCode: 1 };
-      });
-      const wizard = new FlyDeployWizard({ HERMES_FLY_CONFIG_DIR: dir, HOME: dir }, { prompts, process: runner });
-
-      const config = await wizard.collectConfig({ channel: "stable" });
-
-      assert.deepEqual(config.messagingPlatforms ?? [], []);
-      assert.equal(config.whatsappEnabled, undefined);
-      const guidedCopy = prompts.writes.join("");
-      assert.match(guidedCopy, /still appears tied with deployment old-whatsapp-app/i);
-      assert.match(guidedCopy, /Skip WhatsApp for now/);
-      assert.match(guidedCopy, /Take over this number/i);
-    } finally {
-      await rm(dir, { recursive: true, force: true });
-    }
-  });
-
-  it("captures a WhatsApp takeover intent when the user chooses to move a self-chat number from an older deployment", async () => {
-    const dir = await mkdtemp(join(tmpdir(), "whatsapp-takeover-"));
-    try {
-      await writeFile(
-        join(dir, "config.yaml"),
-        [
-          "current_app: old-whatsapp-app",
-          "apps:",
-          "  - name: old-whatsapp-app",
-          "    region: fra",
-          "    provider: zai",
-          "    platform: whatsapp",
-          "    whatsapp_mode: self-chat",
-          "    whatsapp_allowed_users: 393406844897",
-        ].join("\n") + "\n",
-        "utf8"
-      );
-
-      const prompts = makePromptPort([
-        "",
-        "",
-        "",
-        "",
-        "",
-        "1",
-        "sk-live",
-        "",
-        "",
-        "4",
-        "2",
-        "1",
-        "+39 340 6844897",
-        "3",
-        "y"
-      ], { interactive: true });
-      const runner = makeProcessRunner(async (command, args) => {
-        if (isFlyCommand(command) && args[0] === "platform" && args[1] === "regions") {
-          return { exitCode: 0, stdout: JSON.stringify([{ code: "iad", name: "Ashburn, Virginia (US)" }]) };
-        }
-        if (isFlyCommand(command) && args[0] === "platform" && args[1] === "vm-sizes") {
-          return { exitCode: 0, stdout: JSON.stringify([{ name: "shared-cpu-2x", memory_mb: 512 }]) };
-        }
-        if (isFlyCommand(command) && args[0] === "apps" && args[1] === "list") {
-          return { exitCode: 0, stdout: JSON.stringify([{ name: "old-whatsapp-app" }]) };
-        }
-        if (isFlyCommand(command) && args[0] === "ssh" && args[1] === "console") {
-          return { exitCode: 0, stdout: "has_session\n393406844897", stderr: "" };
-        }
-        if (command === "curl" && args.includes("https://openrouter.ai/api/v1/key")) {
-          return { exitCode: 0, stdout: JSON.stringify({ data: { is_free_tier: false, usage: 10 } }) };
-        }
-        if (command === "curl" && args.includes("https://openrouter.ai/api/v1/models")) {
-          return { exitCode: 0, stdout: JSON.stringify({ data: liveOpenRouterModelsFixture() }) };
-        }
-        return { exitCode: 1 };
-      });
-      const wizard = new FlyDeployWizard({ HERMES_FLY_CONFIG_DIR: dir, HOME: dir }, { prompts, process: runner });
-
-      const config = await wizard.collectConfig({ channel: "stable" });
-
-      assert.deepEqual(config.messagingPlatforms, ["whatsapp"]);
-      assert.equal(config.whatsappEnabled, true);
-      assert.deepEqual(config.whatsappTakeoverAppNames, ["old-whatsapp-app"]);
-      const guidedCopy = prompts.writes.join("");
-      assert.match(guidedCopy, /Take over this number/i);
-      assert.match(guidedCopy, /disconnect WhatsApp from the deployment above before pairing/i);
-    } finally {
-      await rm(dir, { recursive: true, force: true });
-    }
-  });
-
-  it("probes older WhatsApp deployments without saved number metadata and warns before the remote setup step", async () => {
-    const dir = await mkdtemp(join(tmpdir(), "whatsapp-live-probe-"));
-    try {
-      await writeFile(
-        join(dir, "config.yaml"),
-        [
-          "current_app: old-whatsapp-app",
-          "apps:",
-          "  - name: old-whatsapp-app",
-          "    region: fra",
-          "    provider: zai",
-          "    platform: whatsapp",
-        ].join("\n") + "\n",
-        "utf8"
-      );
-
-      const prompts = makePromptPort([
-        "",
-        "",
-        "",
-        "",
-        "",
-        "1",
-        "sk-live",
-        "",
-        "",
-        "4",
-        "2",
-        "1",
-        "+39 340 6844897",
         "2",
         "y"
       ], { interactive: true });
@@ -3606,79 +3594,15 @@ describe("FlyDeployWizard.collectConfig", () => {
 
       const config = await wizard.collectConfig({ channel: "stable" });
 
-      assert.equal(probed, true);
-      assert.deepEqual(config.messagingPlatforms ?? [], []);
-      const guidedCopy = prompts.writes.join("");
-      assert.match(guidedCopy, /still appears tied with deployment old-whatsapp-app/i);
-      assert.match(guidedCopy, /Skip WhatsApp for now/);
-    } finally {
-      await rm(dir, { recursive: true, force: true });
-    }
-  });
-
-  it("does not warn when another deployment has the same WhatsApp number configured but no active session", async () => {
-    const dir = await mkdtemp(join(tmpdir(), "whatsapp-no-session-"));
-    try {
-      await writeFile(
-        join(dir, "config.yaml"),
-        [
-          "current_app: old-whatsapp-app",
-          "apps:",
-          "  - name: old-whatsapp-app",
-          "    region: fra",
-          "    provider: zai",
-          "    platform: whatsapp",
-          "    whatsapp_mode: self-chat",
-          "    whatsapp_allowed_users: 393406844897",
-        ].join("\n") + "\n",
-        "utf8"
-      );
-
-      const prompts = makePromptPort([
-        "",
-        "",
-        "",
-        "",
-        "",
-        "1",
-        "sk-live",
-        "",
-        "",
-        "4",
-        "2",
-        "1",
-        "+39 340 6844897",
-        "y"
-      ], { interactive: true });
-      const runner = makeProcessRunner(async (command, args) => {
-        if (isFlyCommand(command) && args[0] === "platform" && args[1] === "regions") {
-          return { exitCode: 0, stdout: JSON.stringify([{ code: "iad", name: "Ashburn, Virginia (US)" }]) };
-        }
-        if (isFlyCommand(command) && args[0] === "platform" && args[1] === "vm-sizes") {
-          return { exitCode: 0, stdout: JSON.stringify([{ name: "shared-cpu-1x", memory_mb: 256 }]) };
-        }
-        if (isFlyCommand(command) && args[0] === "apps" && args[1] === "list") {
-          return { exitCode: 0, stdout: JSON.stringify([{ name: "old-whatsapp-app" }] ) };
-        }
-        if (isFlyCommand(command) && args[0] === "ssh" && args[1] === "console") {
-          return { exitCode: 0, stdout: "empty_session\n393406844897", stderr: "" };
-        }
-        if (command === "curl" && args.includes("https://openrouter.ai/api/v1/key")) {
-          return { exitCode: 0, stdout: JSON.stringify({ data: { is_free_tier: false, usage: 10 } }) };
-        }
-        if (command === "curl" && args.includes("https://openrouter.ai/api/v1/models")) {
-          return { exitCode: 0, stdout: JSON.stringify({ data: liveOpenRouterModelsFixture() }) };
-        }
-        return { exitCode: 1 };
-      });
-      const wizard = new FlyDeployWizard({ HERMES_FLY_CONFIG_DIR: dir, HOME: dir }, { prompts, process: runner });
-
-      const config = await wizard.collectConfig({ channel: "stable" });
-
+      assert.equal(probed, false);
       assert.deepEqual(config.messagingPlatforms, ["whatsapp"]);
       assert.equal(config.whatsappEnabled, true);
+      assert.equal(config.whatsappMode, "self-chat");
+      assert.equal(config.whatsappAllowedUsers, undefined);
+      assert.equal(config.whatsappTakeoverAppNames, undefined);
       const guidedCopy = prompts.writes.join("");
-      assert.doesNotMatch(guidedCopy, /still appears tied with deployment/i);
+      assert.doesNotMatch(guidedCopy, /still appears tied with deployment old-whatsapp-app/i);
+      assert.doesNotMatch(guidedCopy, /Take over this number/i);
     } finally {
       await rm(dir, { recursive: true, force: true });
     }

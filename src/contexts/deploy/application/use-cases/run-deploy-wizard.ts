@@ -19,6 +19,7 @@ const VM_SIZE_LABELS = new Map<string, string>([
   ["performance-1x", "Pro (performance-1x, 2 GB)"],
   ["performance-2x", "Power (performance-2x, 4 GB)"],
 ]);
+const WHATSAPP_SELF_CHAT_DETECTED_ACCESS_LABEL = "Only me (detected after pairing)";
 
 function resolveChannel(input: string): DeployChannel {
   return VALID_CHANNELS.has(input) ? (input as DeployChannel) : "stable";
@@ -146,6 +147,9 @@ function describeWhatsAppAccess(config: DeployConfig): string | undefined {
     return "Anyone";
   }
   if (config.whatsappCompleteAccessDuringSetup) {
+    if (config.whatsappMode === "self-chat" && !config.whatsappAllowedUsers) {
+      return WHATSAPP_SELF_CHAT_DETECTED_ACCESS_LABEL;
+    }
     if (config.whatsappAllowedUsers) {
       const ownNumber = config.whatsappAllowedUsers.split(",").map((value) => value.trim()).filter(Boolean)[0];
       if (ownNumber) {

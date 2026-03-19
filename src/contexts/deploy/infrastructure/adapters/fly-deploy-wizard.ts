@@ -62,6 +62,7 @@ const OPENROUTER_MODELS_API_URL = "https://openrouter.ai/api/v1/models";
 const CHATGPT_SECURITY_SETTINGS_URL = "https://chatgpt.com/#settings/Security";
 const DISCORD_DEVELOPER_PORTAL_URL = "https://discord.com/developers/applications";
 const SLACK_APPS_URL = "https://api.slack.com/apps";
+const WHATSAPP_SELF_CHAT_DETECTED_ACCESS_LABEL = "Only me (detected after pairing)";
 
 type RegionOption = {
   code: string;
@@ -867,13 +868,14 @@ export class FlyDeployWizard implements DeployWizardPort {
         }
 
         if (config.whatsappMode === "self-chat") {
-          const identityVerified = await this.verifyWhatsAppSelfChatIdentity(config, bridgeReady.health);
-          if (!identityVerified.ok) {
-            stderr.write(`[warn] WhatsApp paired, but ${identityVerified.error ?? "the paired WhatsApp account number did not match the configured self-chat number"}\n`);
-            stderr.write("Tip: re-run pairing with the actual paired WhatsApp number, or link the intended WhatsApp account before pairing.\n");
+          stdout.write("Detecting the paired WhatsApp account and adopting it for self-chat...\n");
+          const adoptedIdentity = await this.adoptWhatsAppSelfChatIdentity(config, bridgeReady.health, stdout);
+          if (!adoptedIdentity.ok) {
+            stderr.write(`[warn] WhatsApp paired, but ${adoptedIdentity.error ?? "hermes-fly could not adopt the paired WhatsApp account for self-chat"}\n`);
+            stderr.write(`Tip: run 'hermes-fly logs -a ${config.appName}' and 'hermes-fly doctor -a ${config.appName}' before retrying self-chat.\n`);
             return {};
           }
-          const approvalSeeded = await this.seedWhatsAppSelfChatApproval(config.appName, bridgeReady.health);
+          const approvalSeeded = await this.seedWhatsAppSelfChatApproval(config.appName, adoptedIdentity.health ?? bridgeReady.health);
           if (!approvalSeeded.ok) {
             stderr.write(`[warn] WhatsApp paired, but ${approvalSeeded.error ?? "hermes-fly could not auto-approve the paired WhatsApp self-chat identity"}\n`);
             stderr.write(`Tip: run 'hermes-fly logs -a ${config.appName}' and then approve the WhatsApp pairing code manually if Hermes asks for one.\n`);
@@ -2664,7 +2666,7 @@ export class FlyDeployWizard implements DeployWizardPort {
     const modeChoice = await this.chooseNumber("Choose a mode [1]: ", 2, 1);
     const mode: "bot" | "self-chat" = modeChoice === 2 ? "self-chat" : "bot";
     const access = mode === "self-chat"
-      ? await this.collectWhatsAppSelfChatAccessPolicy(options.appName)
+      ? await this.collectWhatsAppSelfChatAccessPolicy()
       : await this.collectWhatsAppAccessPolicy({
           ...options,
           mode,
@@ -2682,39 +2684,18 @@ export class FlyDeployWizard implements DeployWizardPort {
     };
   }
 
-  private async collectWhatsAppSelfChatAccessPolicy(
-    appName: string
-  ): Promise<{ allowedUsers?: string; completeAccessDuringSetup?: boolean; skipSetup?: boolean; takeoverAppNames?: string[] }> {
+  private async collectWhatsAppSelfChatAccessPolicy(): Promise<{
+    allowedUsers?: string;
+    completeAccessDuringSetup?: boolean;
+    skipSetup?: boolean;
+    takeoverAppNames?: string[];
+  }> {
     this.prompts.write("\nSelf-chat only works in your own built-in Message yourself chat.\n");
-    this.prompts.write("Enter the WhatsApp number of the account you will link now. You can paste it with +, spaces, or dashes — hermes-fly will normalize it.\n");
-
-    while (true) {
-      const answer = (await this.prompts.ask("Your WhatsApp number: ")).trim();
-      try {
-        const normalized = this.parseWhatsAppNumbers(answer).join(",");
-        const conflicts = await this.findWhatsAppConflicts(appName, normalized, "self-chat");
-        if (conflicts.length > 0) {
-          const resolution = await this.resolveWhatsAppConflict(conflicts);
-          if (resolution.action === "retry") {
-            continue;
-          }
-          if (resolution.action === "skip") {
-            return { skipSetup: true };
-          }
-          return {
-            allowedUsers: normalized,
-            completeAccessDuringSetup: true,
-            takeoverAppNames: resolution.appNames,
-          };
-        }
-        return {
-          allowedUsers: normalized,
-          completeAccessDuringSetup: true,
-        };
-      } catch {
-        this.prompts.write("Enter a valid WhatsApp number with country code. Example: +39 340 6844897\n");
-      }
-    }
+    this.prompts.write("hermes-fly will detect the linked WhatsApp account from the QR pairing step and use that as the self-chat identity.\n");
+    this.prompts.write("You do not need to enter your phone number here.\n");
+    return {
+      completeAccessDuringSetup: true,
+    };
   }
 
   private async collectWhatsAppAccessPolicy(
@@ -2900,7 +2881,11 @@ export class FlyDeployWizard implements DeployWizardPort {
       }
       const lines = result.stdout.replaceAll("\r", "").split("\n");
       const status = lines[0]?.trim() ?? "";
-      const allowedUsers = lines.slice(1).join("\n").trim();
+      let allowedUsers = lines.slice(1).join("\n").trim();
+      if (status === "has_session" && allowedUsers.length === 0) {
+        const health = await this.readWhatsAppBridgeHealth(appName);
+        allowedUsers = (health.health?.selfNumber ?? "").trim();
+      }
       const binding = {
         hasSession: status === "has_session",
         allowedUsers: allowedUsers.length > 0 ? allowedUsers : null,
@@ -3569,6 +3554,9 @@ export class FlyDeployWizard implements DeployWizardPort {
       return "Anyone";
     }
     if (config.whatsappCompleteAccessDuringSetup) {
+      if (config.whatsappMode === "self-chat" && !config.whatsappAllowedUsers) {
+        return WHATSAPP_SELF_CHAT_DETECTED_ACCESS_LABEL;
+      }
       if (config.whatsappAllowedUsers) {
         const ownNumber = config.whatsappAllowedUsers.split(",").map((value) => value.trim()).filter(Boolean)[0];
         if (ownNumber) {
@@ -3776,6 +3764,8 @@ export class FlyDeployWizard implements DeployWizardPort {
       }
 
       const flyCommand = await resolveFlyCommand(this.env);
+      const initialAllowedUsers = this.resolveInitialWhatsAppAllowedUsers(config);
+      const stdinText = this.resolveInitialWhatsAppSetupStdin(config, initialAllowedUsers);
       const result = await this.process.runStreaming(
         flyCommand,
         [
@@ -3788,12 +3778,9 @@ export class FlyDeployWizard implements DeployWizardPort {
           this.buildRemoteHermesCommand(["whatsapp"], {
             WHATSAPP_ENABLED: "true",
             WHATSAPP_MODE: config.whatsappMode,
-            WHATSAPP_ALLOWED_USERS: config.whatsappAllowedUsers,
+            WHATSAPP_ALLOWED_USERS: initialAllowedUsers,
           }, {
-            // The wizard already collected the allowed users locally, so
-            // answer Hermes' follow-up "Update allowed users?" prompt
-            // non-interactively and proceed straight to QR pairing.
-            stdinText: "n\n",
+            stdinText,
           })
         ],
         {
@@ -3904,6 +3891,8 @@ export class FlyDeployWizard implements DeployWizardPort {
       || /Agent responses are prefixed/i.test(trimmed)
       || /tell them apart from your own messages/i.test(trimmed)
       || /Update allowed users\?\s*\[y\/N\]/i.test(trimmed)
+      || /Your phone number \(e\.g\.\s*[0-9]+\):/i.test(trimmed)
+      || /No allowlist\s+— the agent will respond to ALL incoming messages/i.test(trimmed)
     ) {
       return null;
     }
@@ -4165,18 +4154,26 @@ export class FlyDeployWizard implements DeployWizardPort {
     }
   }
 
-  private async verifyWhatsAppSelfChatIdentity(
-    config: DeployConfig,
-    health?: WhatsAppBridgeHealth
-  ): Promise<{ ok: boolean; error?: string }> {
-    const configuredNumbers = (config.whatsappAllowedUsers ?? "")
-      .split(",")
-      .map((value) => value.trim())
-      .filter(Boolean);
-    if (configuredNumbers.length === 0) {
-      return { ok: true };
-    }
+  private resolveInitialWhatsAppAllowedUsers(config: DeployConfig): string | undefined {
+    const allowedUsers = (config.whatsappAllowedUsers ?? "").trim();
+    return allowedUsers.length > 0 ? allowedUsers : undefined;
+  }
 
+  private resolveInitialWhatsAppSetupStdin(config: DeployConfig, initialAllowedUsers: string | undefined): string | undefined {
+    if (initialAllowedUsers) {
+      return "n\n";
+    }
+    if (config.whatsappMode === "self-chat") {
+      return "\n";
+    }
+    return undefined;
+  }
+
+  private async adoptWhatsAppSelfChatIdentity(
+    config: DeployConfig,
+    health?: WhatsAppBridgeHealth,
+    stdout?: { write: (s: string) => void }
+  ): Promise<{ ok: boolean; error?: string; health?: WhatsAppBridgeHealth }> {
     const pairedNumber = (health?.selfNumber ?? "").trim();
     if (pairedNumber.length === 0) {
       const bridgeLog = await this.readRecentWhatsAppBridgeLog(config.appName);
@@ -4186,16 +4183,70 @@ export class FlyDeployWizard implements DeployWizardPort {
       };
     }
 
-    if (configuredNumbers.includes(pairedNumber)) {
-      return { ok: true };
+    const previousAllowedUsers = (config.whatsappAllowedUsers ?? "").trim();
+    const conflicts = await this.findWhatsAppConflicts(config.appName, pairedNumber, "self-chat");
+    if (conflicts.length > 0) {
+      const takeover = await this.takeOverWhatsAppSelfChat(conflicts.map((entry) => entry.name), stdout ?? { write: () => {} });
+      if (!takeover.ok) {
+        return {
+          ok: false,
+          error: `the paired WhatsApp account is still tied to ${conflicts.map((entry) => entry.name).join(", ")}, and hermes-fly could not disconnect it cleanly: ${takeover.error ?? "unknown error"}`,
+        };
+      }
     }
 
-    const configuredSummary = configuredNumbers.join(", ");
-    const pairedJid = (health?.selfJid ?? "").trim();
-    return {
-      ok: false,
-      error: `you configured WhatsApp self-chat for ${configuredSummary}, but the paired WhatsApp account is ${pairedNumber}${pairedJid ? ` (${pairedJid})` : ""}`,
-    };
+    config.whatsappAllowedUsers = pairedNumber;
+    if (previousAllowedUsers === pairedNumber && conflicts.length === 0) {
+      this.whatsappBindingCache.set(config.appName, { hasSession: true, allowedUsers: pairedNumber });
+      return { ok: true, health };
+    }
+
+    const secretsResult = await this.stageWhatsAppSelfChatAllowedUsers(config.appName, pairedNumber);
+    if (!secretsResult.ok) {
+      return {
+        ok: false,
+        error: `hermes-fly could not persist the paired WhatsApp number for self-chat: ${secretsResult.error ?? "secret update failed"}`,
+      };
+    }
+
+    this.whatsappBindingCache.set(config.appName, { hasSession: true, allowedUsers: pairedNumber });
+
+    const restarted = await this.restartAppAfterWhatsAppPairing(config.appName);
+    if (!restarted.ok) {
+      return {
+        ok: false,
+        error: `the deployed app did not restart cleanly after hermes-fly adopted the paired WhatsApp number: ${restarted.error ?? "unknown error"}`,
+      };
+    }
+
+    const bridgeReady = await this.waitForWhatsAppBridgeConnectedAfterPairing(config.appName, {
+      requireSelfNumber: true,
+    });
+    if (!bridgeReady.ok) {
+      return {
+        ok: false,
+        error: `the WhatsApp bridge did not reconnect cleanly after hermes-fly adopted the paired WhatsApp number: ${bridgeReady.error ?? "unknown error"}`,
+      };
+    }
+
+    return { ok: true, health: bridgeReady.health };
+  }
+
+  private async stageWhatsAppSelfChatAllowedUsers(appName: string, allowedUsers: string): Promise<{ ok: boolean; error?: string }> {
+    try {
+      const flyCommand = await resolveFlyCommand(this.env);
+      const result = await this.process.run(
+        flyCommand,
+        ["secrets", "set", "--app", appName, "--stage", `HERMES_FLY_WHATSAPP_ALLOWED_USERS=${allowedUsers}`],
+        { env: this.env, timeoutMs: 60_000 }
+      );
+      if (result.exitCode !== 0) {
+        return { ok: false, error: result.stderr || result.stdout || "secret update failed" };
+      }
+      return { ok: true };
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : String(error) };
+    }
   }
 
   private async seedWhatsAppSelfChatApproval(
