@@ -5511,4 +5511,93 @@ export class FlyDeployWizard implements DeployWizardPort {
       LC_ALL: SAFE_PROCESS_LOCALE,
     };
   }
+
+  async fetchExistingConfig(appName: string): Promise<import("../../application/ports/deploy-wizard.port.js").ExistingAppConfig | null> {
+    const runner = new NodeProcessRunner();
+    
+    // Get app info from fly apps list
+    const appsResult = await runner.run("fly", ["apps", "list", "--json"], { env: this.env });
+    if (appsResult.exitCode !== 0 || !appsResult.stdout) {
+      return null;
+    }
+    
+    let region = DEFAULT_REGION;
+    try {
+      const apps = JSON.parse(appsResult.stdout) as Array<{ Name?: string; name?: string; Region?: string; region?: string }>;
+      const app = apps.find(a => (a.Name ?? a.name) === appName);
+      if (app) {
+        region = (app.Region ?? app.region ?? DEFAULT_REGION);
+      }
+    } catch {
+      // use default
+    }
+
+    // Get machine info for vmSize
+    const statusResult = await runner.run("fly", ["status", "--app", appName, "--json"], { env: this.env });
+    let vmSize = DEFAULT_VM_SIZE;
+    let volumeSize = DEFAULT_VOLUME_SIZE;
+    
+    if (statusResult.exitCode === 0 && statusResult.stdout) {
+      try {
+        const status = JSON.parse(statusResult.stdout) as { 
+          Machines?: Array<{ Config?: { Guest?: { Cpus?: number; CpuKind?: string; MemoryMb?: number } } }>;
+          Volumes?: Array<{ SizeGb?: number; size_gb?: number }>;
+        };
+        const machine = status.Machines?.[0];
+        if (machine?.Config?.Guest) {
+          const guest = machine.Config.Guest;
+          const cpus = guest.Cpus ?? 1;
+          const cpuKind = guest.CpuKind ?? "shared";
+          vmSize = cpuKind === "performance" ? `performance-${cpus}x` : `shared-cpu-${cpus}x`;
+        }
+        const volume = status.Volumes?.[0];
+        if (volume) {
+          volumeSize = volume.SizeGb ?? volume.size_gb ?? DEFAULT_VOLUME_SIZE;
+        }
+      } catch {
+        // use defaults
+      }
+    }
+
+    return { region, vmSize, volumeSize };
+  }
+
+  async promptUpdateConfigChoice(
+    existing: import("../../application/ports/deploy-wizard.port.js").ExistingAppConfig
+  ): Promise<{ keep: boolean; config?: import("../../application/ports/deploy-wizard.port.js").DeployConfig }> {
+    if (!this.prompts.isInteractive()) {
+      return { keep: true };
+    }
+
+    this.prompts.write("\nExisting deployment configuration found:\n");
+    this.prompts.write(`  Region:      ${existing.region}\n`);
+    this.prompts.write(`  VM Size:     ${existing.vmSize}\n`);
+    this.prompts.write(`  Volume Size: ${existing.volumeSize} GB\n\n`);
+
+    const choice = await this.chooseNumber(
+      "Choose an option:\n  1. Keep existing configuration\n  2. Modify configuration (region, VM size, etc.)\n\nOption [1]: ",
+      2,
+      1
+    );
+
+    if (choice === 1) {
+      return { keep: true };
+    }
+
+    // User wants to modify - collect new config
+    this.prompts.write("\n--- Update Configuration ---\n");
+    const region = await this.collectRegion(this.env.HERMES_FLY_REGION);
+    const vmSize = await this.collectVmSize(this.env.HERMES_FLY_VM_SIZE);
+    const volumeSize = await this.collectVolumeSize(this.env.HERMES_FLY_VOLUME_SIZE);
+
+    return {
+      keep: false,
+      config: {
+        ...existing,
+        region,
+        vmSize,
+        volumeSize,
+      } as import("../../application/ports/deploy-wizard.port.js").DeployConfig,
+    };
+  }
 }

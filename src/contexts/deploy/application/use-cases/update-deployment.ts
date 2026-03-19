@@ -1,5 +1,5 @@
 import type { UpdateRunnerPort } from "../ports/update-runner.port.js";
-import type { DeployWizardPort } from "../ports/deploy-wizard.port.js";
+import type { DeployWizardPort, ExistingAppConfig } from "../ports/deploy-wizard.port.js";
 
 const HERMES_AGENT_DEFAULT_REF = "8eefbef91cd715cfe410bba8c13cfab4eb3040df";
 const HERMES_AGENT_EDGE_REF = "main";
@@ -57,18 +57,45 @@ export class UpdateDeploymentUseCase {
       return { kind: "failed", error: "app not found" };
     }
 
-    // Phase 3: Generate update Dockerfile
+    // Phase 3: Fetch existing config and prompt for choice
     stdout.write(`Updating '${config.appName}' to ${config.channel} channel...\n`);
     const hermesRef = this.resolveHermesRef(config.channel);
 
+    const existingConfig = await this.wizard.fetchExistingConfig(config.appName);
+    let deployConfig: ExistingAppConfig;
+
+    if (existingConfig) {
+      const choice = await this.wizard.promptUpdateConfigChoice(existingConfig);
+      if (choice.keep) {
+        deployConfig = existingConfig;
+      } else if (choice.config) {
+        deployConfig = {
+          region: choice.config.region,
+          vmSize: choice.config.vmSize,
+          volumeSize: choice.config.volumeSize,
+        };
+      } else {
+        deployConfig = existingConfig;
+      }
+    } else {
+      // Could not fetch config, use defaults
+      stderr.write(`[warn] Could not fetch existing config, using defaults.\n`);
+      deployConfig = {
+        region: "iad",
+        vmSize: "shared-cpu-2x",
+        volumeSize: 1,
+      };
+    }
+
+    // Phase 4: Generate update Dockerfile
     let buildDir: string;
     try {
       const result = await this.wizard.createBuildContext({
         orgSlug: "",
         appName: config.appName,
-        region: "",
-        vmSize: "",
-        volumeSize: 1,  // Min valid size; ignored for updates since volume exists
+        region: deployConfig.region,
+        vmSize: deployConfig.vmSize,
+        volumeSize: deployConfig.volumeSize,
         provider: "",
         apiKey: "",
         model: "",
@@ -83,7 +110,7 @@ export class UpdateDeploymentUseCase {
       return { kind: "failed", error: message };
     }
 
-    // Phase 4: Run update (skip provisioning - app and volume already exist)
+    // Phase 5: Run update (skip provisioning - app and volume already exist)
     stdout.write(`Building and deploying update...\n`);
     const updateResult = await this.runner.runUpdate(buildDir, config.appName);
     if (!updateResult.ok) {
@@ -91,7 +118,7 @@ export class UpdateDeploymentUseCase {
       return { kind: "failed", error: updateResult.error ?? "update failed" };
     }
 
-    // Phase 5: Post-update check
+    // Phase 6: Post-update check
     const checkResult = await this.wizard.postDeployCheck(config.appName);
     if (!checkResult.ok) {
       stderr.write(`[warn] Post-update check failed. App may still be starting up.\n`);

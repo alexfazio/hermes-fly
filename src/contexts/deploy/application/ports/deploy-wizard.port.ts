@@ -48,12 +48,20 @@ export interface FinalizeMessagingSetupResult {
 
 export type SuccessfulDeploymentAction = "conclude" | "destroy";
 
+export interface ExistingAppConfig {
+  region: string;
+  vmSize: string;
+  volumeSize: number;
+}
+
 export interface DeployWizardPort {
   checkPlatform(): Promise<{ ok: boolean; error?: string }>;
   checkPrerequisites(opts: { autoInstall: boolean }): Promise<{ ok: boolean; missing?: string; autoInstallDisabled?: boolean; error?: string }>;
   checkAuth(): Promise<{ ok: boolean; error?: string }>;
   checkConnectivity(): Promise<{ ok: boolean; error?: string }>;
   collectConfig(opts: { channel: "stable" | "preview" | "edge" }): Promise<DeployConfig>;
+  fetchExistingConfig(appName: string): Promise<ExistingAppConfig | null>;
+  promptUpdateConfigChoice(existing: ExistingAppConfig): Promise<{ keep: boolean; config?: DeployConfig }>;
   createBuildContext(config: DeployConfig): Promise<{ buildDir: string }>;
   provisionResources(config: DeployConfig): Promise<{ ok: boolean; error?: string }>;
   runDeploy(buildDir: string, config: DeployConfig): Promise<{ ok: boolean; error?: string }>;
