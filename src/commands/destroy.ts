@@ -8,12 +8,15 @@ import {
   TELEGRAM_BOTFATHER_DELETEBOT_URL,
   telegramBotLink
 } from "../contexts/messaging/infrastructure/adapters/telegram-links.js";
-import { readSavedDeploymentEntry } from "../contexts/runtime/infrastructure/adapters/fly-deployment-registry.js";
+import {
+  readSavedDeploymentEntries,
+  readSavedDeploymentEntry,
+} from "../contexts/runtime/infrastructure/adapters/fly-deployment-registry.js";
 import { resolveApps } from "./resolve-app.js";
 
 export interface DestroyCommandOptions {
   runner?: DestroyRunnerPort;
-  flyctl?: Pick<FlyctlPort, "getTelegramBotIdentity">;
+  flyctl?: Pick<FlyctlPort, "getTelegramBotIdentity" | "getMachineSummary">;
   qrRenderer?: QrCodeRendererPort;
   stdout?: { write: (s: string) => void };
   stderr?: { write: (s: string) => void };
@@ -83,6 +86,16 @@ export async function runDestroyCommand(
   if (appNames === null || appNames.length === 0) {
     stderr.write("[error] No app specified. Use -a APP or run 'hermes-fly deploy' first.\n");
     return 1;
+  }
+
+  try {
+    appNames = await resolveDestroyTargets(appNames, options);
+  } catch (error) {
+    if (isFlyCliMissing(error)) {
+      stderr.write("[error] Fly.io CLI not found. Install flyctl and retry.\n");
+      return 1;
+    }
+    throw error;
   }
 
   // Confirmation (unless --force)
@@ -181,6 +194,42 @@ async function resolveTelegramCleanupContext(
   };
 }
 
+async function resolveDestroyTargets(
+  targets: string[],
+  options: DestroyCommandOptions
+): Promise<string[]> {
+  const env = options.env ?? process.env;
+  const savedEntries = await readSavedDeploymentEntries(env);
+  if (savedEntries.length === 0) {
+    return dedupeInOrder(targets);
+  }
+
+  const savedNames = new Set(savedEntries.map((entry) => entry.name));
+  const unresolvedTargets = targets.filter((target) => !savedNames.has(target));
+  if (unresolvedTargets.length === 0) {
+    return dedupeInOrder(targets);
+  }
+
+  const flyctl =
+    options.flyctl
+    ?? (options.runner === undefined ? new FlyctlAdapter(new NodeProcessRunner()) : null);
+  if (flyctl === null) {
+    return dedupeInOrder(targets);
+  }
+
+  const machineToApp = new Map<string, string>();
+  for (const entry of savedEntries) {
+    const machine = await flyctl.getMachineSummary(entry.name);
+    const machineId = machine.id?.trim();
+    if (!machineId || !unresolvedTargets.includes(machineId)) {
+      continue;
+    }
+    machineToApp.set(machineId, entry.name);
+  }
+
+  return dedupeInOrder(targets.map((target) => machineToApp.get(target) ?? target));
+}
+
 async function writeTelegramDeletionGuidance(
   stdout: { write: (s: string) => void },
   appName: string,
@@ -220,4 +269,8 @@ function isFlyCliMissing(error: unknown): boolean {
 
   const errWithCode = error as Error & { code?: string };
   return errWithCode.code === "ENOENT" || error.message.includes("spawn fly ENOENT");
+}
+
+function dedupeInOrder(values: string[]): string[] {
+  return [...new Set(values)];
 }

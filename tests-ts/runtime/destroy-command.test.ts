@@ -18,9 +18,12 @@ function makeRunner(overrides: Partial<DestroyRunnerPort> = {}): DestroyRunnerPo
   };
 }
 
-function makeFlyctl(overrides: Partial<Pick<FlyctlPort, "getTelegramBotIdentity">> = {}): Pick<FlyctlPort, "getTelegramBotIdentity"> {
+function makeFlyctl(
+  overrides: Partial<Pick<FlyctlPort, "getTelegramBotIdentity" | "getMachineSummary">> = {}
+): Pick<FlyctlPort, "getTelegramBotIdentity" | "getMachineSummary"> {
   return {
     getTelegramBotIdentity: async () => ({ configured: false, username: null, link: null }),
+    getMachineSummary: async () => ({ id: null, state: null, region: null }),
     ...overrides
   };
 }
@@ -267,6 +270,121 @@ describe("runDestroyCommand - Telegram cleanup guidance", () => {
       assert.equal(code, 0);
       assert.match(io.outText, /@livebot/);
       assert.match(io.outText, /https:\/\/t\.me\/livebot/);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("resolves machine ids to app names and does not show Telegram cleanup for non-Telegram deployments", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "destroy-command-machine-id-"));
+
+    try {
+      await writeFile(
+        join(dir, "config.yaml"),
+        [
+          "current_app: wa-app",
+          "apps:",
+          "  - name: wa-app",
+          "    region: ams",
+          "    platform: whatsapp",
+          "  - name: tg-app",
+          "    region: fra",
+          "    platform: telegram",
+          "    telegram_bot_username: testhermesbot",
+          ""
+        ].join("\n"),
+        "utf8"
+      );
+
+      const destroyed: string[] = [];
+      const io = makeIO();
+      const code = await runDestroyCommand(["wa-machine", "--force"], {
+        runner: makeRunner({
+          destroyApp: async (appName) => {
+            destroyed.push(appName);
+            return { ok: true };
+          }
+        }),
+        flyctl: makeFlyctl({
+          getMachineSummary: async (appName) => {
+            if (appName === "wa-app") {
+              return { id: "wa-machine", state: "started", region: "ams" };
+            }
+            if (appName === "tg-app") {
+              return { id: "tg-machine", state: "started", region: "fra" };
+            }
+            return { id: null, state: null, region: null };
+          }
+        }),
+        env: {
+          ...process.env,
+          HERMES_FLY_CONFIG_DIR: dir
+        },
+        ...io
+      });
+
+      assert.equal(code, 0);
+      assert.deepEqual(destroyed, ["wa-app"]);
+      assert.doesNotMatch(io.outText + io.errText, /Telegram bot cleanup/i);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("prompts and cleans up Telegram bots using resolved app names instead of raw machine ids", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "destroy-command-machine-batch-"));
+
+    try {
+      await writeFile(
+        join(dir, "config.yaml"),
+        [
+          "current_app: tg-app",
+          "apps:",
+          "  - name: wa-app",
+          "    region: ams",
+          "    platform: whatsapp",
+          "  - name: tg-app",
+          "    region: fra",
+          "    platform: telegram",
+          "    telegram_bot_username: testhermesbot",
+          ""
+        ].join("\n"),
+        "utf8"
+      );
+
+      const destroyed: string[] = [];
+      const io = makeIO();
+      const code = await runDestroyCommand(["wa-machine", "tg-machine"], {
+        runner: makeRunner({
+          destroyApp: async (appName) => {
+            destroyed.push(appName);
+            return { ok: true };
+          }
+        }),
+        flyctl: makeFlyctl({
+          getMachineSummary: async (appName) => {
+            if (appName === "wa-app") {
+              return { id: "wa-machine", state: "started", region: "ams" };
+            }
+            if (appName === "tg-app") {
+              return { id: "tg-machine", state: "started", region: "fra" };
+            }
+            return { id: null, state: null, region: null };
+          }
+        }),
+        confirmationInput: "yes",
+        env: {
+          ...process.env,
+          HERMES_FLY_CONFIG_DIR: dir
+        },
+        ...io
+      });
+
+      assert.equal(code, 0);
+      assert.deepEqual(destroyed, ["wa-app", "tg-app"]);
+      assert.match(io.outText, /destroy 2 apps \(wa-app, tg-app\)/i);
+      assert.match(io.outText, /Telegram bot cleanup for tg-app/i);
+      assert.doesNotMatch(io.outText, /Telegram bot cleanup for wa-machine/i);
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
