@@ -1,12 +1,8 @@
-# Hermes Agent Update Dockerfile
-# This Dockerfile is optimized for updating existing deployments.
-# It installs code to /opt/hermes/ (outside the volume mount) to prevent
-# the volume from shadowing the updated code on restart.
-
+# Hermes Agent Update Dockerfile (fixed version)
 FROM python:3.11-slim
 
 ENV HERMES_DEPLOY_CHANNEL={{HERMES_CHANNEL}}
-ENV PATH="/root/.local/bin:${PATH}"
+ENV PATH="/root/.hermes/bin:/usr/local/bin:/root/.local/bin:${PATH}"
 
 # Install dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -17,18 +13,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 ARG HERMES_VERSION={{HERMES_VERSION}}
 RUN curl -fsSL https://raw.githubusercontent.com/NousResearch/hermes-agent/${HERMES_VERSION}/scripts/install.sh | bash -s -- --skip-setup
 
-# Move code OUT of volume mount path so updates don't get shadowed.
-# The volume is mounted at /root/.hermes, so we install to /opt/hermes
-# and symlink back. This way:
-# - Code lives in /opt/hermes/ (immutable, part of Docker image)
-# - Data lives in /root/.hermes/ (persistent volume)
+# Move code to /opt/hermes (outside volume) + CREATE ALL NECESSARY SYMLINKS
 RUN mkdir -p /opt/hermes && \
     mv /root/.hermes/hermes-agent /opt/hermes/hermes-agent && \
     ln -sf /opt/hermes/hermes-agent /root/.hermes/hermes-agent && \
-    ln -sf /opt/hermes/hermes-agent/venv/bin/hermes /root/.local/bin/hermes
+    mkdir -p /root/.hermes/bin /usr/local/bin && \
+    ln -sf /opt/hermes/hermes-agent/venv/bin/hermes /root/.hermes/bin/hermes && \
+    ln -sf /opt/hermes/hermes-agent/venv/bin/hermes /usr/local/bin/hermes && \
+    echo 'export PATH="$HOME/.hermes/bin:/usr/local/bin:$PATH"' >> /root/.bashrc
 
 WORKDIR /opt/hermes/hermes-agent
-
-# Use 'run' (foreground mode) not 'start' (systemd mode).
-# Fly.io containers don't have systemd, so we need foreground mode.
 CMD ["hermes", "gateway", "run"]
