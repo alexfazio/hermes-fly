@@ -29,11 +29,13 @@ describe("patch-whatsapp-bridge.py", () => {
       assert.match(after, /function logBridgeDiagnostic/);
       assert.match(after, /logBridgeDiagnostic\('connection\.open'/);
       assert.match(after, /selfNumber: getSelfNumber\(\)/);
+      assert.match(after, /app\.get\('\/health', \(req, res\) => \{[\s\S]*hermes-fly: expose paired account identity for self-chat validation[\s\S]*selfJid: getSelfJid\(\),[\s\S]*selfNumber: getSelfNumber\(\)/);
       assert.match(after, /WHATSAPP_MODE === 'self-chat' && type === 'append'/);
       assert.match(after, /messages\.upsert\.accepted/);
       assert.match(after, /messages\.upsert\.queued/);
       assert.match(after, /messages\.poll\.drained/);
       assert.match(after, /reason: 'duplicate-message-id'/);
+      assert.match(after, /reason: summary\.protocolType !== null \? 'protocol-message-no-content' : 'empty-body-no-media'/);
       assert.match(after, /reason: 'missing-message-payload'/);
 
       await execFileAsync("python3", [scriptPath, bridgePath]);

@@ -30,6 +30,10 @@ function getSelfNumber() {
 function unwrapMessageContent(message) {
   let current = message;
   while (current && typeof current === 'object') {
+    if (current.deviceSentMessage?.message) {
+      current = current.deviceSentMessage.message;
+      continue;
+    }
     if (current.ephemeralMessage?.message) {
       current = current.ephemeralMessage.message;
       continue;
@@ -52,6 +56,10 @@ function unwrapMessageContent(message) {
     }
     if (current.editedMessage?.message) {
       current = current.editedMessage.message;
+      continue;
+    }
+    if (current.protocolMessage?.editedMessage) {
+      current = current.protocolMessage.editedMessage;
       continue;
     }
     break;
@@ -106,6 +114,7 @@ function summarizeUpsertMessage(msg, batchType) {
     fromMe: Boolean(key.fromMe),
     hasMessage: Boolean(msg?.message),
     messageStubType: msg?.messageStubType ?? null,
+    protocolType: msg?.message?.protocolMessage?.type ?? null,
     messageTypes: content ? Object.keys(content) : [],
   };
 }
@@ -154,13 +163,14 @@ def patch_bridge(source_text: str) -> str:
     status: connectionState,
     queueLength: messageQueue.length,
     uptime: process.uptime(),
+    // hermes-fly: expose paired account identity for self-chat validation
     selfJid: getSelfJid(),
     selfNumber: getSelfNumber(),
   });
 });
 """,
         "health identity",
-        "selfNumber: getSelfNumber()",
+        "hermes-fly: expose paired account identity for self-chat validation",
     )
     source_text = replace_once(
         source_text,
@@ -343,7 +353,7 @@ def patch_bridge(source_text: str) -> str:
         """      if (!body && !hasMedia) {
         logBridgeDiagnostic('messages.upsert.skipped', {
           ...summary,
-          reason: 'empty-body-no-media',
+          reason: summary.protocolType !== null ? 'protocol-message-no-content' : 'empty-body-no-media',
           chatId,
           senderNumber,
         });
@@ -351,7 +361,7 @@ def patch_bridge(source_text: str) -> str:
       }
 """,
         "empty body skip",
-        "reason: 'empty-body-no-media'",
+        "protocol-message-no-content",
     )
     source_text = replace_once(
         source_text,

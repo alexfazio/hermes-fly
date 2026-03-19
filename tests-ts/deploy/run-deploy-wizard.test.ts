@@ -1569,6 +1569,141 @@ describe("FlyDeployWizard.postDeployActions", () => {
     assert.match(io.outText, /Send a short message to Message yourself now/i);
   });
 
+  it("falls back to the bridge connection log when /health omits the paired WhatsApp number after restart", async () => {
+    const prompts = makePromptPort(["y", ""], { interactive: true });
+    const io = makeIO();
+    const runner: ForegroundProcessRunner = {
+      run: async (_command, args) => {
+        if (args[0] === "ssh" && args[1] === "console" && !/127\.0\.0\.1:3000\/health/.test(args.join(" ")) && !/bridge\.log/.test(args.join(" ")) && !/tail -n 80/.test(args.join(" "))) {
+          return {
+            exitCode: 0,
+            stdout: "empty_session\n",
+            stderr: "",
+          };
+        }
+        if (args[0] === "machine" && args[1] === "list") {
+          return {
+            exitCode: 0,
+            stdout: JSON.stringify([{ id: "machine123", state: "started", region: "fra" }]),
+            stderr: "",
+          };
+        }
+        if (args[0] === "machine" && args[1] === "restart") {
+          return { exitCode: 0, stdout: "", stderr: "" };
+        }
+        if (args[0] === "ssh" && args[1] === "console" && /127\.0\.0\.1:3000\/health/.test(args.join(" "))) {
+          return {
+            exitCode: 0,
+            stdout: "{\"status\":\"connected\",\"queueLength\":0,\"uptime\":70.825832092}\n",
+            stderr: "",
+          };
+        }
+        if (args[0] === "ssh" && args[1] === "console" && /bridge\.log/.test(args.join(" "))) {
+          return {
+            exitCode: 0,
+            stdout: "[hermes-whatsapp-bridge] {\"event\":\"connection.open\",\"selfJid\":\"447871172820@s.whatsapp.net\",\"selfNumber\":\"447871172820\"}\n",
+            stderr: "",
+          };
+        }
+        if (args[0] === "logs") {
+          return {
+            exitCode: 0,
+            stdout: "2026-03-18T16:55:00Z app[test] [info] [whatsapp] Sending response (42 chars) to 447871172820@s.whatsapp.net\n",
+            stderr: "",
+          };
+        }
+        return { exitCode: 0, stdout: "", stderr: "" };
+      },
+      runStreaming: async (_command, _args, options) => {
+        options?.onStdoutChunk?.("✅ Pairing complete. Credentials saved.\n");
+        return { exitCode: 0 };
+      },
+      runForeground: async () => ({ exitCode: 0 }),
+    };
+    const wizard = new FlyDeployWizard({}, { prompts, process: runner, sleep: async () => {} });
+
+    const result = await wizard.finalizeMessagingSetup({
+      ...DEFAULT_CONFIG,
+      appName: "test-app",
+      whatsappEnabled: true,
+      whatsappMode: "self-chat",
+      whatsappAllowedUsers: "447871172820",
+      whatsappCompleteAccessDuringSetup: true,
+    }, io.stdout, io.stderr);
+
+    assert.deepEqual(result, { whatsappSessionConfirmed: true });
+    assert.doesNotMatch(io.errText, /never reported the paired WhatsApp phone number/i);
+    assert.match(io.outText, /Send a short message to Message yourself now/i);
+  });
+
+  it("warns clearly when WhatsApp only emits protocol-level self-chat events without queueable message content", async () => {
+    const prompts = makePromptPort(["y", ""], { interactive: true });
+    const io = makeIO();
+    const runner: ForegroundProcessRunner = {
+      run: async (_command, args) => {
+        if (args[0] === "ssh" && args[1] === "console" && !/127\.0\.0\.1:3000\/health/.test(args.join(" ")) && !/bridge\.log/.test(args.join(" ")) && !/tail -n 80/.test(args.join(" "))) {
+          return {
+            exitCode: 0,
+            stdout: "empty_session\n",
+            stderr: "",
+          };
+        }
+        if (args[0] === "machine" && args[1] === "list") {
+          return {
+            exitCode: 0,
+            stdout: JSON.stringify([{ id: "machine123", state: "started", region: "fra" }]),
+            stderr: "",
+          };
+        }
+        if (args[0] === "machine" && args[1] === "restart") {
+          return { exitCode: 0, stdout: "", stderr: "" };
+        }
+        if (args[0] === "ssh" && args[1] === "console" && /127\.0\.0\.1:3000\/health/.test(args.join(" "))) {
+          return {
+            exitCode: 0,
+            stdout: "{\"status\":\"connected\",\"selfJid\":\"447871172820@s.whatsapp.net\",\"selfNumber\":\"447871172820\"}\n",
+            stderr: "",
+          };
+        }
+        if (args[0] === "logs") {
+          return {
+            exitCode: 0,
+            stdout: "",
+            stderr: "",
+          };
+        }
+        if (args[0] === "ssh" && args[1] === "console" && /bridge\.log/.test(args.join(" "))) {
+          return {
+            exitCode: 0,
+            stdout: "[hermes-whatsapp-bridge] {\"event\":\"messages.upsert.skipped\",\"reason\":\"protocol-message-no-content\",\"protocolType\":4,\"messageId\":\"wamid.protocol\",\"messageTypes\":[\"protocolMessage\",\"messageContextInfo\"]}\n",
+            stderr: "",
+          };
+        }
+        return { exitCode: 0, stdout: "", stderr: "" };
+      },
+      runStreaming: async (_command, _args, options) => {
+        options?.onStdoutChunk?.("✅ Pairing complete. Credentials saved.\n");
+        return { exitCode: 0 };
+      },
+      runForeground: async () => ({ exitCode: 0 }),
+    };
+    const wizard = new FlyDeployWizard({}, { prompts, process: runner, sleep: async () => {} });
+
+    const result = await wizard.finalizeMessagingSetup({
+      ...DEFAULT_CONFIG,
+      appName: "test-app",
+      whatsappEnabled: true,
+      whatsappMode: "self-chat",
+      whatsappAllowedUsers: "447871172820",
+      whatsappCompleteAccessDuringSetup: true,
+    }, io.stdout, io.stderr);
+
+    assert.deepEqual(result, {});
+    assert.match(io.errText, /protocol-level self-chat events without message content the bridge could queue/i);
+    assert.match(io.errText, /protocol-message-no-content/);
+    assert.doesNotMatch(io.outText, /WhatsApp setup completed on the deployed agent/);
+  });
+
   it("disconnects older WhatsApp self-chat deployments before pairing a takeover app", async () => {
     const dir = await mkdtemp(join(tmpdir(), "whatsapp-takeover-finalize-"));
     try {

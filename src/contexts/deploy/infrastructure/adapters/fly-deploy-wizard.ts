@@ -4083,6 +4083,25 @@ export class FlyDeployWizard implements DeployWizardPort {
           return { ok: true, health: result.health };
         }
 
+        if (
+          result.health?.status === "connected"
+          && requireSelfNumber
+          && ((result.health.selfNumber ?? "").trim().length === 0)
+        ) {
+          const bridgeLog = await this.readRecentWhatsAppBridgeLog(appName);
+          const identity = this.parseWhatsAppBridgeIdentityFromLog(bridgeLog);
+          if ((identity.selfNumber ?? "").trim().length > 0) {
+            return {
+              ok: true,
+              health: {
+                ...result.health,
+                selfJid: identity.selfJid ?? result.health.selfJid,
+                selfNumber: identity.selfNumber,
+              },
+            };
+          }
+        }
+
         lastOutput = (result.error || result.raw || "").trim();
         if (attempt < 19) {
           await this.sleep(1_500);
@@ -4187,6 +4206,12 @@ export class FlyDeployWizard implements DeployWizardPort {
         return {
           ok: false,
           error: `WhatsApp emitted your self-chat activity, but the bridge only received a message stub without usable content.\nRecent app log:\n${this.extractRelevantWhatsAppLogLines(lastLogs)}${bridgeLog ? `\nRecent bridge log:\n${bridgeLog}` : ""}`,
+        };
+      }
+      if (bridgeDiagnosis.kind === "protocol_only") {
+        return {
+          ok: false,
+          error: `WhatsApp emitted only protocol-level self-chat events without message content the bridge could queue for Hermes.\nRecent app log:\n${this.extractRelevantWhatsAppLogLines(lastLogs)}${bridgeLog ? `\nRecent bridge log:\n${bridgeLog}` : ""}`,
         };
       }
       if (bridgeDiagnosis.kind === "not_self_chat") {
@@ -4324,12 +4349,15 @@ export class FlyDeployWizard implements DeployWizardPort {
     return { kind: "unknown" };
   }
 
-  private diagnoseWhatsAppBridgeLog(logs: string): { kind: "accepted_but_unhandled" | "missing_message_payload" | "not_self_chat" | "unauthorized_sender" | "empty_message" | "unknown" } {
+  private diagnoseWhatsAppBridgeLog(logs: string): { kind: "accepted_but_unhandled" | "missing_message_payload" | "protocol_only" | "not_self_chat" | "unauthorized_sender" | "empty_message" | "unknown" } {
     if (/messages\.poll\.drained/i.test(logs) || /messages\.upsert\.accepted/i.test(logs) || /messages\.upsert\.queued/i.test(logs)) {
       return { kind: "accepted_but_unhandled" };
     }
     if (/"reason":"missing-message-payload"/i.test(logs)) {
       return { kind: "missing_message_payload" };
+    }
+    if (/"reason":"protocol-message-no-content"/i.test(logs)) {
+      return { kind: "protocol_only" };
     }
     if (/"reason":"fromMe-not-self-chat"/i.test(logs) || /"reason":"fromMe-group-or-status"/i.test(logs)) {
       return { kind: "not_self_chat" };
@@ -4341,6 +4369,30 @@ export class FlyDeployWizard implements DeployWizardPort {
       return { kind: "empty_message" };
     }
     return { kind: "unknown" };
+  }
+
+  private parseWhatsAppBridgeIdentityFromLog(logs: string | undefined): { selfJid?: string; selfNumber?: string } {
+    if (!logs) {
+      return {};
+    }
+
+    const connectionLines = logs
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter((line) => /"event":"connection\.open"/.test(line));
+    for (let index = connectionLines.length - 1; index >= 0; index -= 1) {
+      const line = connectionLines[index] ?? "";
+      const selfJidMatch = line.match(/"selfJid":"([^"]+)"/);
+      const selfNumberMatch = line.match(/"selfNumber":"([0-9]{7,15})"/);
+      if (selfJidMatch || selfNumberMatch) {
+        return {
+          selfJid: selfJidMatch?.[1],
+          selfNumber: selfNumberMatch?.[1],
+        };
+      }
+    }
+
+    return {};
   }
 
   private extractRelevantWhatsAppLogLines(logs: string): string {
