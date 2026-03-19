@@ -171,6 +171,7 @@ teardown() {
   assert_output --partial "HERMES_FLY_WHATSAPP_SELF_CHAT_NUMBER"
   assert_output --partial "export WHATSAPP_ENABLED=true"
   assert_output --partial 'export WHATSAPP_MODE="${WHATSAPP_MODE:-self-chat}"'
+  assert_output --partial 'export WHATSAPP_HOME_CONTACT="${HERMES_FLY_WHATSAPP_SELF_CHAT_NUMBER}"'
 }
 
 @test "entrypoint.sh patches config.yaml model from LLM_MODEL" {

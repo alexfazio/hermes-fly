@@ -1628,11 +1628,114 @@ describe("FlyDeployWizard.postDeployActions", () => {
       call.args[0] === "ssh"
       && call.args[1] === "console"
       && call.args.some((value) => value.includes("self-chat-identity.json"))
+      && call.args.some((value) => value.includes("env_values"))
     );
     assert.ok(persistedStateCall, "expected a remote self-chat identity persistence command");
+    assert.match(persistedStateCall?.args.join(" ") ?? "", /WHATSAPP_HOME_CONTACT/);
     assert.match(io.outText, /Detecting the paired WhatsApp account and adopting it for self-chat/i);
     assert.match(io.outText, /Send a short message to Message yourself now/i);
     assert.doesNotMatch(io.errText, /you configured WhatsApp self-chat/i);
+  });
+
+  it("treats post-prompt bridge agent echoes as successful self-chat replies even when app logs only show startup noise", async () => {
+    const prompts = makePromptPort(["y"], { interactive: true });
+    const io = makeIO();
+    const backgroundCalls: Array<{ command: string; args: string[] }> = [];
+    let supervisorStartedAt = 100;
+    let bridgeLogReads = 0;
+    const runner: ForegroundProcessRunner = {
+      run: async (command, args) => {
+        backgroundCalls.push({ command, args });
+        if (args[0] === "ssh" && args[1] === "console" && /gateway-supervisor\.pid/.test(args.join(" ")) && /kill -USR1/.test(args.join(" "))) {
+          supervisorStartedAt += 1;
+          return { exitCode: 0, stdout: "", stderr: "" };
+        }
+        if (args[0] === "ssh" && args[1] === "console" && /gateway-supervisor\.pid/.test(args.join(" "))) {
+          return { exitCode: 0, stdout: `available\n${supervisorStartedAt}\n`, stderr: "" };
+        }
+        if (args[0] === "ssh" && args[1] === "console" && !/127\.0\.0\.1:3000\/health/.test(args.join(" ")) && !/bridge\.log/.test(args.join(" ")) && !/tail -n 80/.test(args.join(" "))) {
+          return {
+            exitCode: 0,
+            stdout: "empty_session\n",
+            stderr: "",
+          };
+        }
+        if (args[0] === "machine" && args[1] === "list") {
+          return {
+            exitCode: 0,
+            stdout: JSON.stringify([{ id: "machine123", state: "started", region: "fra" }]),
+            stderr: "",
+          };
+        }
+        if (args[0] === "ssh" && args[1] === "console" && /127\.0\.0\.1:3000\/health/.test(args.join(" "))) {
+          return {
+            exitCode: 0,
+            stdout: "{\"status\":\"connected\",\"selfJid\":\"447871172820@s.whatsapp.net\",\"selfNumber\":\"447871172820\",\"selfLid\":\"242137421639836@lid\"}\n",
+            stderr: "",
+          };
+        }
+        if (args[0] === "ssh" && args[1] === "console" && /PairingStore/.test(args.join(" "))) {
+          return {
+            exitCode: 0,
+            stdout: "{\"447871172820@s.whatsapp.net\":true,\"447871172820\":true,\"242137421639836@lid\":true}\n",
+            stderr: "",
+          };
+        }
+        if (args[0] === "logs") {
+          return {
+            exitCode: 0,
+            stdout: [
+              "2026-03-19T11:48:27Z app[test] [info][Whatsapp] Bridge ready (status: connected)",
+              "2026-03-19T11:48:27Z app[test] [info][Whatsapp] Bridge started on port 3000",
+            ].join("\n") + "\n",
+            stderr: "",
+          };
+        }
+        if (args[0] === "ssh" && args[1] === "console" && /bridge\.log/.test(args.join(" "))) {
+          bridgeLogReads += 1;
+          if (bridgeLogReads < 3) {
+            return {
+              exitCode: 0,
+              stdout: [
+                "[hermes-whatsapp-bridge] {\"event\":\"connection.open\",\"selfJid\":\"447871172820@s.whatsapp.net\",\"selfNumber\":\"447871172820\",\"selfLid\":\"242137421639836@lid\"}",
+                "[hermes-whatsapp-bridge] {\"event\":\"messages.upsert.skipped\",\"reason\":\"protocol-message-no-content\",\"messageId\":\"wamid.protocol\"}",
+              ].join("\n"),
+              stderr: "",
+            };
+          }
+          return {
+            exitCode: 0,
+            stdout: [
+              "[hermes-whatsapp-bridge] {\"event\":\"connection.open\",\"selfJid\":\"447871172820@s.whatsapp.net\",\"selfNumber\":\"447871172820\",\"selfLid\":\"242137421639836@lid\"}",
+              "[hermes-whatsapp-bridge] {\"event\":\"messages.upsert.skipped\",\"reason\":\"protocol-message-no-content\",\"messageId\":\"wamid.protocol\"}",
+              "[hermes-whatsapp-bridge] {\"event\":\"messages.upsert.accepted\",\"messageId\":\"wamid.test\",\"chatId\":\"242137421639836@lid\",\"bodyPreview\":\"test\",\"queueLengthBefore\":0}",
+              "[hermes-whatsapp-bridge] {\"event\":\"messages.upsert.queued\",\"messageId\":\"wamid.test\",\"chatId\":\"242137421639836@lid\",\"queueLength\":1}",
+              "[hermes-whatsapp-bridge] {\"event\":\"messages.upsert.skipped\",\"messageId\":\"wamid.reply\",\"reason\":\"agent-echo\",\"chatId\":\"242137421639836@lid\"}",
+            ].join("\n"),
+            stderr: "",
+          };
+        }
+        return { exitCode: 0, stdout: "", stderr: "" };
+      },
+      runStreaming: async (_command, _args, options) => {
+        options?.onStdoutChunk?.("✅ Pairing complete. Credentials saved.\n");
+        return { exitCode: 0 };
+      },
+      runForeground: async () => ({ exitCode: 0 }),
+    };
+    const wizard = new FlyDeployWizard({}, { prompts, process: runner, sleep: async () => {} });
+
+    const result = await wizard.finalizeMessagingSetup({
+      ...DEFAULT_CONFIG,
+      appName: "test-app",
+      whatsappEnabled: true,
+      whatsappMode: "self-chat",
+      whatsappCompleteAccessDuringSetup: true,
+    }, io.stdout, io.stderr);
+
+    assert.deepEqual(result, { whatsappSessionConfirmed: true });
+    assert.match(io.outText, /Self-chat test confirmed/i);
+    assert.equal(io.errText, "");
   });
 
   it("takes over an older WhatsApp self-chat deployment after QR once the paired number is detected", async () => {

@@ -78,6 +78,9 @@ fi
 if [[ -z "${WHATSAPP_ALLOWED_USERS:-}" ]]; then
   sed -i '/^WHATSAPP_ALLOWED_USERS=/d' /root/.hermes/.env 2>/dev/null || true
 fi
+if [[ -z "${WHATSAPP_HOME_CONTACT:-}" ]]; then
+  sed -i '/^WHATSAPP_HOME_CONTACT=/d' /root/.hermes/.env 2>/dev/null || true
+fi
 # Load the detected WhatsApp self-chat identity from the volume so future boots
 # do not depend on a staged Fly secret for the adopted number.
 if [[ -f /root/.hermes/whatsapp/self-chat-identity.json ]]; then
@@ -108,6 +111,7 @@ if [[ -n "${HERMES_FLY_WHATSAPP_SELF_CHAT_NUMBER:-}" ]]; then
   export WHATSAPP_ENABLED=true
   export WHATSAPP_MODE="${WHATSAPP_MODE:-self-chat}"
   export WHATSAPP_ALLOWED_USERS="${HERMES_FLY_WHATSAPP_SELF_CHAT_NUMBER}"
+  export WHATSAPP_HOME_CONTACT="${HERMES_FLY_WHATSAPP_SELF_CHAT_NUMBER}"
 fi
 # Bridge Fly secrets into /root/.hermes/.env on every boot (not just first deploy)
 for var in OPENROUTER_API_KEY GLM_API_KEY GLM_BASE_URL LLM_MODEL LLM_BASE_URL LLM_API_KEY NOUS_API_KEY \
@@ -116,7 +120,7 @@ for var in OPENROUTER_API_KEY GLM_API_KEY GLM_BASE_URL LLM_MODEL LLM_BASE_URL LL
   HERMES_STT_PROVIDER HERMES_STT_MODEL \
   TELEGRAM_BOT_TOKEN TELEGRAM_ALLOWED_USERS DISCORD_BOT_TOKEN DISCORD_ALLOWED_USERS \
   SLACK_BOT_TOKEN SLACK_APP_TOKEN SLACK_ALLOWED_USERS \
-  WHATSAPP_ENABLED WHATSAPP_MODE WHATSAPP_ALLOWED_USERS \
+  WHATSAPP_ENABLED WHATSAPP_MODE WHATSAPP_ALLOWED_USERS WHATSAPP_HOME_CONTACT \
   HERMES_APP_NAME GATEWAY_ALLOW_ALL_USERS TELEGRAM_HOME_CHANNEL; do
   val="${!var:-}"
   if [[ -n "$val" ]]; then

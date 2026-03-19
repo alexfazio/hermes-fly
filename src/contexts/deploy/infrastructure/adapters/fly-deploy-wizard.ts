@@ -4125,6 +4125,7 @@ export class FlyDeployWizard implements DeployWizardPort {
           "WHATSAPP_ENABLED",
           "WHATSAPP_MODE",
           "WHATSAPP_ALLOWED_USERS",
+          "WHATSAPP_HOME_CONTACT",
           "HERMES_FLY_WHATSAPP_PENDING",
           "HERMES_FLY_WHATSAPP_MODE",
           "HERMES_FLY_WHATSAPP_ALLOWED_USERS",
@@ -4152,6 +4153,7 @@ export class FlyDeployWizard implements DeployWizardPort {
           "  sed -i '/^WHATSAPP_ENABLED=/d' /root/.hermes/.env",
           "  sed -i '/^WHATSAPP_MODE=/d' /root/.hermes/.env",
           "  sed -i '/^WHATSAPP_ALLOWED_USERS=/d' /root/.hermes/.env",
+          "  sed -i '/^WHATSAPP_HOME_CONTACT=/d' /root/.hermes/.env",
           "fi",
         ].join("\n"),
         { timeoutMs: 20_000 }
@@ -4332,7 +4334,7 @@ export class FlyDeployWizard implements DeployWizardPort {
         }
 
         lastOutput = (result.error || result.raw || "").trim();
-        if (attempt < 19) {
+        if (attempt < 39) {
           await this.sleep(1_500);
         }
       }
@@ -4441,6 +4443,7 @@ export class FlyDeployWizard implements DeployWizardPort {
       WHATSAPP_ENABLED: "true",
       WHATSAPP_MODE: "self-chat",
       WHATSAPP_ALLOWED_USERS: allowedUsers,
+      WHATSAPP_HOME_CONTACT: allowedUsers,
     });
 
     try {
@@ -4614,13 +4617,22 @@ export class FlyDeployWizard implements DeployWizardPort {
     try {
       const machine = await this.readPrimaryMachineForApp(appName);
       const machineId = machine.machineId;
-      let lastLogs = "";
+      let latestAppLogs = await this.readRecentAppLogs(appName, machineId);
+      let latestBridgeLog = (await this.readRecentWhatsAppBridgeLog(appName)) ?? "";
+      let observedAppActivity = "";
+      let observedBridgeActivity = "";
 
-      for (let attempt = 0; attempt < 20; attempt += 1) {
+      for (let attempt = 0; attempt < 40; attempt += 1) {
         const logs = await this.readRecentAppLogs(appName, machineId);
-        if (logs) {
-          lastLogs = logs;
-          const diagnosis = this.diagnoseWhatsAppSelfChatLogs(logs);
+        const newAppActivity = this.extractNewLogActivity(latestAppLogs, logs);
+        latestAppLogs = logs;
+        if (newAppActivity) {
+          observedAppActivity = this.appendObservedLogActivity(observedAppActivity, newAppActivity);
+        }
+
+        const appDiagnosisSource = observedAppActivity || logs;
+        if (appDiagnosisSource.trim().length > 0) {
+          const diagnosis = this.diagnoseWhatsAppSelfChatLogs(appDiagnosisSource);
           if (diagnosis.kind === "success") {
             return { ok: true };
           }
@@ -4628,21 +4640,32 @@ export class FlyDeployWizard implements DeployWizardPort {
             const bridgeLog = await this.readRecentWhatsAppBridgeLog(appName);
             return {
               ok: false,
-              error: `the self-chat test message reached Hermes, but it was denied as an unauthorized WhatsApp user.\nRecent app log:\n${this.extractRelevantWhatsAppLogLines(logs)}${bridgeLog ? `\nRecent bridge log:\n${bridgeLog}` : ""}`,
+              error: `the self-chat test message reached Hermes, but it was denied as an unauthorized WhatsApp user.\nRecent app log:\n${this.extractRelevantWhatsAppLogLines(appDiagnosisSource)}${bridgeLog ? `\nRecent bridge log:\n${bridgeLog}` : ""}`,
             };
           }
           if (diagnosis.kind === "send_failed") {
             const bridgeLog = await this.readRecentWhatsAppBridgeLog(appName);
             return {
               ok: false,
-              error: `Hermes received your self-chat message, but failed while sending the reply.\nRecent app log:\n${this.extractRelevantWhatsAppLogLines(logs)}${bridgeLog ? `\nRecent bridge log:\n${bridgeLog}` : ""}`,
+              error: `Hermes received your self-chat message, but failed while sending the reply.\nRecent app log:\n${this.extractRelevantWhatsAppLogLines(appDiagnosisSource)}${bridgeLog ? `\nRecent bridge log:\n${bridgeLog}` : ""}`,
             };
           }
           if (diagnosis.kind === "empty_response") {
             return {
               ok: false,
-              error: `Hermes received your self-chat message, but the gateway handler returned an empty response.\nRecent app log:\n${this.extractRelevantWhatsAppLogLines(logs)}`,
+              error: `Hermes received your self-chat message, but the gateway handler returned an empty response.\nRecent app log:\n${this.extractRelevantWhatsAppLogLines(appDiagnosisSource)}`,
             };
+          }
+        }
+
+        const bridgeLog = (await this.readRecentWhatsAppBridgeLog(appName)) ?? "";
+        const newBridgeActivity = this.extractNewLogActivity(latestBridgeLog, bridgeLog);
+        latestBridgeLog = bridgeLog;
+        if (newBridgeActivity) {
+          observedBridgeActivity = this.appendObservedLogActivity(observedBridgeActivity, newBridgeActivity);
+          const bridgeDiagnosis = this.diagnoseWhatsAppBridgeLog(observedBridgeActivity);
+          if (bridgeDiagnosis.kind === "success") {
+            return { ok: true };
           }
         }
         if (attempt < 19) {
@@ -4650,47 +4673,48 @@ export class FlyDeployWizard implements DeployWizardPort {
         }
       }
 
-      const bridgeLog = await this.readRecentWhatsAppBridgeLog(appName);
-      const bridgeDiagnosis = bridgeLog ? this.diagnoseWhatsAppBridgeLog(bridgeLog) : { kind: "unknown" as const };
+      const bridgeLog = latestBridgeLog.length > 0 ? latestBridgeLog : await this.readRecentWhatsAppBridgeLog(appName);
+      const diagnosisLog = observedBridgeActivity || bridgeLog || "";
+      const bridgeDiagnosis = diagnosisLog ? this.diagnoseWhatsAppBridgeLog(diagnosisLog) : { kind: "unknown" as const };
       if (bridgeDiagnosis.kind === "accepted_but_unhandled") {
         return {
           ok: false,
-          error: `the self-chat test message reached the WhatsApp bridge, but Hermes did not process or reply before the timeout.\nRecent app log:\n${this.extractRelevantWhatsAppLogLines(lastLogs)}${bridgeLog ? `\nRecent bridge log:\n${bridgeLog}` : ""}`,
+          error: `the self-chat test message reached the WhatsApp bridge, but Hermes did not process or reply before the timeout.\nRecent app log:\n${this.extractRelevantWhatsAppLogLines(observedAppActivity || latestAppLogs)}${bridgeLog ? `\nRecent bridge log:\n${bridgeLog}` : ""}`,
         };
       }
       if (bridgeDiagnosis.kind === "missing_message_payload") {
         return {
           ok: false,
-          error: `WhatsApp emitted your self-chat activity, but the bridge only received a message stub without usable content.\nRecent app log:\n${this.extractRelevantWhatsAppLogLines(lastLogs)}${bridgeLog ? `\nRecent bridge log:\n${bridgeLog}` : ""}`,
+          error: `WhatsApp emitted your self-chat activity, but the bridge only received a message stub without usable content.\nRecent app log:\n${this.extractRelevantWhatsAppLogLines(observedAppActivity || latestAppLogs)}${bridgeLog ? `\nRecent bridge log:\n${bridgeLog}` : ""}`,
         };
       }
       if (bridgeDiagnosis.kind === "protocol_only") {
         return {
           ok: false,
-          error: `WhatsApp emitted only protocol-level self-chat events without message content the bridge could queue for Hermes.\nRecent app log:\n${this.extractRelevantWhatsAppLogLines(lastLogs)}${bridgeLog ? `\nRecent bridge log:\n${bridgeLog}` : ""}`,
+          error: `WhatsApp emitted only protocol-level self-chat events without message content the bridge could queue for Hermes.\nRecent app log:\n${this.extractRelevantWhatsAppLogLines(observedAppActivity || latestAppLogs)}${bridgeLog ? `\nRecent bridge log:\n${bridgeLog}` : ""}`,
         };
       }
       if (bridgeDiagnosis.kind === "not_self_chat") {
         return {
           ok: false,
-          error: `WhatsApp emitted your message, but the bridge did not classify it as Message yourself self-chat.\nRecent app log:\n${this.extractRelevantWhatsAppLogLines(lastLogs)}${bridgeLog ? `\nRecent bridge log:\n${bridgeLog}` : ""}`,
+          error: `WhatsApp emitted your message, but the bridge did not classify it as Message yourself self-chat.\nRecent app log:\n${this.extractRelevantWhatsAppLogLines(observedAppActivity || latestAppLogs)}${bridgeLog ? `\nRecent bridge log:\n${bridgeLog}` : ""}`,
         };
       }
       if (bridgeDiagnosis.kind === "unauthorized_sender") {
         return {
           ok: false,
-          error: `WhatsApp emitted your message, but the bridge rejected it against the configured allowed users.\nRecent app log:\n${this.extractRelevantWhatsAppLogLines(lastLogs)}${bridgeLog ? `\nRecent bridge log:\n${bridgeLog}` : ""}`,
+          error: `WhatsApp emitted your message, but the bridge rejected it against the configured allowed users.\nRecent app log:\n${this.extractRelevantWhatsAppLogLines(observedAppActivity || latestAppLogs)}${bridgeLog ? `\nRecent bridge log:\n${bridgeLog}` : ""}`,
         };
       }
       if (bridgeDiagnosis.kind === "empty_message") {
         return {
           ok: false,
-          error: `WhatsApp emitted your message, but the bridge saw no text or supported media to queue for Hermes.\nRecent app log:\n${this.extractRelevantWhatsAppLogLines(lastLogs)}${bridgeLog ? `\nRecent bridge log:\n${bridgeLog}` : ""}`,
+          error: `WhatsApp emitted your message, but the bridge saw no text or supported media to queue for Hermes.\nRecent app log:\n${this.extractRelevantWhatsAppLogLines(observedAppActivity || latestAppLogs)}${bridgeLog ? `\nRecent bridge log:\n${bridgeLog}` : ""}`,
         };
       }
       return {
         ok: false,
-        error: `no inbound WhatsApp self-chat activity was observed after the test message.\nRecent app log:\n${this.extractRelevantWhatsAppLogLines(lastLogs)}${bridgeLog ? `\nRecent bridge log:\n${bridgeLog}` : ""}`,
+        error: `no inbound WhatsApp self-chat activity was observed after the test message.\nRecent app log:\n${this.extractRelevantWhatsAppLogLines(observedAppActivity || latestAppLogs)}${bridgeLog ? `\nRecent bridge log:\n${bridgeLog}` : ""}`,
       };
     } catch (error) {
       return { ok: false, error: error instanceof Error ? error.message : String(error) };
@@ -4808,7 +4832,10 @@ export class FlyDeployWizard implements DeployWizardPort {
     return { kind: "unknown" };
   }
 
-  private diagnoseWhatsAppBridgeLog(logs: string): { kind: "accepted_but_unhandled" | "missing_message_payload" | "protocol_only" | "not_self_chat" | "unauthorized_sender" | "empty_message" | "unknown" } {
+  private diagnoseWhatsAppBridgeLog(logs: string): { kind: "success" | "accepted_but_unhandled" | "missing_message_payload" | "protocol_only" | "not_self_chat" | "unauthorized_sender" | "empty_message" | "unknown" } {
+    if (/"reason":"agent-echo"/i.test(logs)) {
+      return { kind: "success" };
+    }
     if (/messages\.poll\.drained/i.test(logs) || /messages\.upsert\.accepted/i.test(logs) || /messages\.upsert\.queued/i.test(logs)) {
       return { kind: "accepted_but_unhandled" };
     }
@@ -4828,6 +4855,49 @@ export class FlyDeployWizard implements DeployWizardPort {
       return { kind: "empty_message" };
     }
     return { kind: "unknown" };
+  }
+
+  private extractNewLogActivity(previous: string | undefined, current: string | undefined): string {
+    const next = (current ?? "").trim();
+    if (next.length === 0) {
+      return "";
+    }
+
+    const prior = (previous ?? "").trim();
+    if (prior.length === 0) {
+      return next;
+    }
+    if (next === prior) {
+      return "";
+    }
+    if (next.startsWith(prior)) {
+      return next.slice(prior.length).trim();
+    }
+
+    const previousLines = prior.split(/\r?\n/).filter((line) => line.trim().length > 0);
+    const currentLines = next.split(/\r?\n/).filter((line) => line.trim().length > 0);
+    const maxOverlap = Math.min(previousLines.length, currentLines.length);
+    for (let overlap = maxOverlap; overlap > 0; overlap -= 1) {
+      const previousSuffix = previousLines.slice(-overlap).join("\n");
+      const currentPrefix = currentLines.slice(0, overlap).join("\n");
+      if (previousSuffix === currentPrefix) {
+        return currentLines.slice(overlap).join("\n").trim();
+      }
+    }
+
+    return next;
+  }
+
+  private appendObservedLogActivity(existing: string, next: string): string {
+    const current = existing.trim();
+    const addition = next.trim();
+    if (addition.length === 0) {
+      return current;
+    }
+    if (current.length === 0) {
+      return addition;
+    }
+    return `${current}\n${addition}`;
   }
 
   private parseWhatsAppBridgeIdentityFromLog(logs: string | undefined): { selfJid?: string; selfNumber?: string; selfLid?: string } {

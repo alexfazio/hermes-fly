@@ -72,6 +72,8 @@ describe("TemplateWriter", () => {
       assert.match(entrypoint, /whatsapp-approved\.json/);
       assert.match(entrypoint, /export WHATSAPP_ENABLED=true/);
       assert.match(entrypoint, /export WHATSAPP_MODE="\$\{WHATSAPP_MODE:-self-chat\}"/);
+      assert.match(entrypoint, /export WHATSAPP_HOME_CONTACT="\$\{HERMES_FLY_WHATSAPP_SELF_CHAT_NUMBER\}"/);
+      assert.match(entrypoint, /WHATSAPP_HOME_CONTACT/);
       assert.match(entrypoint, /find \/root\/\.hermes\/whatsapp\/session -mindepth 1/);
       assert.match(entrypoint, /if \[\[ -z "\$\{WHATSAPP_ENABLED:-\}" \]\]; then/);
       assert.match(entrypoint, /sed -i '\/\^WHATSAPP_ENABLED=\/d' \/root\/\.hermes\/\.env/);
@@ -83,7 +85,7 @@ describe("TemplateWriter", () => {
       assert.match(supervisor, /hermes gateway run --replace/);
       assert.match(supervisor, /\/root\/\.hermes\/\.env/);
       assert.match(supervisor, /self-chat-identity\.json/);
-      assert.match(supervisor, /unset WHATSAPP_ENABLED WHATSAPP_MODE WHATSAPP_ALLOWED_USERS/);
+      assert.match(supervisor, /unset WHATSAPP_ENABLED WHATSAPP_MODE WHATSAPP_ALLOWED_USERS WHATSAPP_HOME_CONTACT/);
 
       assert.match(sitecustomize, /HERMES_ZAI_THINKING/);
       assert.match(sitecustomize, /thinking/);

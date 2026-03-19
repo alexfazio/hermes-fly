@@ -19,7 +19,7 @@ cleanup() {
 }
 
 clear_runtime_overrides() {
-  unset WHATSAPP_ENABLED WHATSAPP_MODE WHATSAPP_ALLOWED_USERS
+  unset WHATSAPP_ENABLED WHATSAPP_MODE WHATSAPP_ALLOWED_USERS WHATSAPP_HOME_CONTACT
   unset HERMES_FLY_WHATSAPP_SELF_CHAT_NUMBER HERMES_FLY_WHATSAPP_SELF_CHAT_JID HERMES_FLY_WHATSAPP_SELF_CHAT_LID
 }
 
@@ -41,7 +41,7 @@ for line in env_path.read_text(encoding='utf-8').splitlines():
         continue
     key, value = line.split('=', 1)
     key = key.strip()
-    if key in wanted:
+    if key in wanted | {'WHATSAPP_HOME_CONTACT'}:
         print(f"export {key}={shlex.quote(value)}")
 PYEOF
     )"
@@ -77,6 +77,7 @@ if self_number:
     print("export WHATSAPP_ENABLED=true")
     print("export WHATSAPP_MODE=self-chat")
     print(f"export WHATSAPP_ALLOWED_USERS={shlex.quote(self_number)}")
+    print(f"export WHATSAPP_HOME_CONTACT={shlex.quote(self_number)}")
 PYEOF
     )"
   fi
