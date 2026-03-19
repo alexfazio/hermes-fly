@@ -1,0 +1,26 @@
+# Hermes Agent Update Dockerfile (fixed version)
+FROM python:3.11-slim
+
+ENV HERMES_DEPLOY_CHANNEL={{HERMES_CHANNEL}}
+ENV PATH="/root/.hermes/bin:/usr/local/bin:/root/.local/bin:${PATH}"
+
+# Install dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git curl xz-utils ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Hermes Agent
+ARG HERMES_VERSION={{HERMES_VERSION}}
+RUN curl -fsSL https://raw.githubusercontent.com/NousResearch/hermes-agent/${HERMES_VERSION}/scripts/install.sh | bash -s -- --skip-setup
+
+# Move code to /opt/hermes (outside volume) + CREATE ALL NECESSARY SYMLINKS
+RUN mkdir -p /opt/hermes && \
+    mv /root/.hermes/hermes-agent /opt/hermes/hermes-agent && \
+    ln -sf /opt/hermes/hermes-agent /root/.hermes/hermes-agent && \
+    mkdir -p /root/.hermes/bin /usr/local/bin && \
+    ln -sf /opt/hermes/hermes-agent/venv/bin/hermes /root/.hermes/bin/hermes && \
+    ln -sf /opt/hermes/hermes-agent/venv/bin/hermes /usr/local/bin/hermes && \
+    echo 'export PATH="$HOME/.hermes/bin:/usr/local/bin:$PATH"' >> /root/.bashrc
+
+WORKDIR /opt/hermes/hermes-agent
+CMD ["hermes", "gateway", "run"]
