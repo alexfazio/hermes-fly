@@ -10,7 +10,7 @@ function createPlan(): InstallerPlan {
     arch: "arm64",
     installChannel: "latest",
     installMethod: "release_asset",
-    installRef: "v0.1.94",
+    installRef: "v0.1.95",
     installHome: "/usr/local/lib/hermes-fly",
     binDir: "/usr/local/bin",
     sourceDir: "/tmp/hermes-fly",
@@ -24,7 +24,7 @@ function createShell(overrides: Partial<InstallerShellPort> = {}): InstallerShel
     requiresSudo: async () => true,
     installFiles: async () => undefined,
     verifyInstalledVersion: async () => undefined,
-    readInstalledVersion: async () => "hermes-fly 0.1.94",
+    readInstalledVersion: async () => "hermes-fly 0.1.95",
     ...overrides,
   };
 }
@@ -51,7 +51,7 @@ test("runInstallSession renders the redesigned installer flow and PATH guidance"
   assert.match(output, /OS: darwin/);
   assert.match(output, /Arch: arm64/);
   assert.match(output, /Install method: packaged release asset/);
-  assert.match(output, /Requested version: v0\.1\.94/);
+  assert.match(output, /Requested version: v0\.1\.95/);
   assert.match(output, /\[1\/3\] Preparing environment/);
   assert.match(output, /\[2\/3\] Installing Hermes Fly/);
   assert.match(output, /\[3\/3\] Finalizing setup/);
@@ -61,7 +61,7 @@ test("runInstallSession renders the redesigned installer flow and PATH guidance"
   assert.match(output, /! PATH missing installer bin dir: \/usr\/local\/bin/);
   assert.match(output, /Fix \(zsh: ~\/\.zshrc, bash: ~\/\.bashrc\):/);
   assert.match(output, /export PATH="\/usr\/local\/bin:\$PATH"/);
-  assert.match(output, /🪽 hermes-fly installed successfully \(hermes-fly 0\.1\.94\)!/);
+  assert.match(output, /🪽 hermes-fly installed successfully \(hermes-fly 0\.1\.95\)!/);
 });
 
 test("runInstallSession surfaces install failures without hiding the error", async () => {

@@ -11,8 +11,8 @@ function createShell(overrides: Partial<InstallerBootstrapPort> = {}): Installer
     requiresSudo: async () => false,
     installFiles: async () => undefined,
     verifyInstalledVersion: async () => undefined,
-    readInstalledVersion: async () => "hermes-fly 0.1.94",
-    resolveInstallRef: async () => "v0.1.94",
+    readInstalledVersion: async () => "hermes-fly 0.1.95",
+    resolveInstallRef: async () => "v0.1.95",
     prepareInstallSource: async () => ({
       sourceDir: "/tmp/hermes-fly",
       installMethod: "release_asset",
@@ -44,7 +44,7 @@ test("runInstallCommand resolves the install ref and builds an InstallerPlan", a
 
   assert.equal(code, 0);
   assert.equal(calls.length, 1);
-  assert.equal(calls[0]?.installRef, "v0.1.94");
+  assert.equal(calls[0]?.installRef, "v0.1.95");
   assert.equal(calls[0]?.installMethod, "release_asset");
   assert.equal(calls[0]?.sourceDir, "/tmp/hermes-fly");
 });

@@ -8,7 +8,7 @@ test("InstallerPlan accepts valid input and trims string fields", () => {
     arch: "  arm64  ",
     installChannel: "latest",
     installMethod: "release_asset",
-    installRef: "  v0.1.94  ",
+    installRef: "  v0.1.95  ",
     installHome: "  /usr/local/lib/hermes-fly  ",
     binDir: "  /usr/local/bin  ",
     sourceDir: "  /tmp/hermes-fly  ",
@@ -18,7 +18,7 @@ test("InstallerPlan accepts valid input and trims string fields", () => {
   assert.equal(plan.arch, "arm64");
   assert.equal(plan.installChannel, "latest");
   assert.equal(plan.installMethod, "release_asset");
-  assert.equal(plan.installRef, "v0.1.94");
+  assert.equal(plan.installRef, "v0.1.95");
   assert.equal(plan.installHome, "/usr/local/lib/hermes-fly");
   assert.equal(plan.binDir, "/usr/local/bin");
   assert.equal(plan.sourceDir, "/tmp/hermes-fly");
@@ -32,7 +32,7 @@ test("InstallerPlan rejects invalid channel, method, and empty paths", () => {
         arch: "arm64",
         installChannel: "nightly" as never,
         installMethod: "release_asset",
-        installRef: "v0.1.94",
+        installRef: "v0.1.95",
         installHome: "/usr/local/lib/hermes-fly",
         binDir: "/usr/local/bin",
         sourceDir: "/tmp/hermes-fly",
@@ -47,7 +47,7 @@ test("InstallerPlan rejects invalid channel, method, and empty paths", () => {
         arch: "arm64",
         installChannel: "latest",
         installMethod: "pkg" as never,
-        installRef: "v0.1.94",
+        installRef: "v0.1.95",
         installHome: "/usr/local/lib/hermes-fly",
         binDir: "/usr/local/bin",
         sourceDir: "/tmp/hermes-fly",
@@ -62,7 +62,7 @@ test("InstallerPlan rejects invalid channel, method, and empty paths", () => {
         arch: "arm64",
         installChannel: "latest",
         installMethod: "release_asset",
-        installRef: "v0.1.94",
+        installRef: "v0.1.95",
         installHome: "   ",
         binDir: "/usr/local/bin",
         sourceDir: "/tmp/hermes-fly",

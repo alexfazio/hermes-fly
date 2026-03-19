@@ -27,7 +27,7 @@ test("installer CLI parses install arguments into an install command request", a
       "--method",
       "release_asset",
       "--ref",
-      "v0.1.94",
+      "v0.1.95",
       "--install-home",
       "/usr/local/lib/hermes-fly",
       "--bin-dir",

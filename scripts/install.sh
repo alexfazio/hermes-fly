@@ -10,7 +10,7 @@ export HERMES_HOME="${HERMES_FLY_HOME:-/usr/local/lib/hermes-fly}"
 RELEASE_API_URL="${HERMES_FLY_RELEASE_API_URL:-https://api.github.com/repos/${REPO}/releases/latest}"
 SAFE_PROCESS_LOCALE="C"
 # Standalone install.sh must bootstrap the checked installer revision, not a mutable branch tip.
-DEFAULT_BOOTSTRAP_INSTALLER_REF="v0.1.94"
+DEFAULT_BOOTSTRAP_INSTALLER_REF="v0.1.95"
 
 detect_platform() {
   local os
