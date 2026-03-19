@@ -51,8 +51,12 @@ export class UpdateDeploymentUseCase {
     }
 
     // Phase 2: Verify app exists
-    const exists = await this.runner.checkAppExists(config.appName);
-    if (!exists) {
+    const appCheck = await this.runner.checkAppExists(config.appName);
+    if (appCheck.error) {
+      stderr.write(`[error] Failed to check app existence: ${appCheck.error}\n`);
+      return { kind: "failed", error: `fly apps list failed: ${appCheck.error}` };
+    }
+    if (!appCheck.exists) {
       stderr.write(`[error] App '${config.appName}' not found. Run 'hermes-fly deploy' to create it.\n`);
       return { kind: "failed", error: "app not found" };
     }
