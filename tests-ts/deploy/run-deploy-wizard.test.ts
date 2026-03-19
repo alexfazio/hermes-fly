@@ -14,6 +14,7 @@ import { FlyDeployWizard } from "../../src/contexts/deploy/infrastructure/adapte
 import type { DeployPromptPort } from "../../src/contexts/deploy/infrastructure/adapters/deploy-prompts.ts";
 import type { QrCodeRendererPort } from "../../src/contexts/deploy/infrastructure/adapters/qr-code.ts";
 import type { BrowserOpenerPort } from "../../src/contexts/deploy/infrastructure/adapters/browser-opener.ts";
+import { HERMES_FLY_TS_VERSION } from "../../src/version.ts";
 import type {
   DiscordBotAuthPort,
   DiscordBotValidationResult,
@@ -2735,7 +2736,7 @@ describe("FlyDeployWizard.collectConfig", () => {
       "Telegram bot token (required): "
     ]);
     const guidedCopy = prompts.writes.join("");
-    assert.match(guidedCopy, /Hermes Fly 0\.1\.95/);
+    assert.match(guidedCopy, new RegExp(`Hermes Fly ${HERMES_FLY_TS_VERSION.replaceAll(".", "\\.")}`));
     assert.match(guidedCopy, /┌  Hermes Fly deploy/);
     assert.match(guidedCopy, /◇  Guided setup/);
     assert.match(guidedCopy, /Each deployment needs a unique name on Fly\.io/);
