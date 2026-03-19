@@ -24,17 +24,22 @@ describe("patch-whatsapp-bridge.py", () => {
 
       assert.notEqual(after, before);
       assert.match(after, /function getSelfNumber/);
+      assert.match(after, /function getSelfLid/);
       assert.match(after, /function unwrapMessageContent/);
       assert.match(after, /function rememberMessageId/);
       assert.match(after, /function logBridgeDiagnostic/);
       assert.match(after, /logBridgeDiagnostic\('connection\.open'/);
       assert.match(after, /selfNumber: getSelfNumber\(\)/);
+      assert.match(after, /selfLid: getSelfLid\(\)/);
       assert.match(after, /app\.get\('\/health', \(req, res\) => \{[\s\S]*hermes-fly: expose paired account identity for self-chat validation[\s\S]*selfJid: getSelfJid\(\),[\s\S]*selfNumber: getSelfNumber\(\)/);
       assert.match(after, /WHATSAPP_MODE === 'self-chat' && type === 'append'/);
+      assert.match(after, /const myLid = getSelfLid\(\)\.replace\(\/@\.\*\/, ''\);/);
+      assert.match(after, /const isSelfChat = \(myNumber && chatNumber === myNumber\) \|\| \(myLid && chatNumber === myLid\);/);
       assert.match(after, /messages\.upsert\.accepted/);
       assert.match(after, /messages\.upsert\.queued/);
       assert.match(after, /messages\.poll\.drained/);
       assert.match(after, /reason: 'duplicate-message-id'/);
+      assert.match(after, /reason: 'agent-echo'/);
       assert.match(after, /reason: summary\.protocolType !== null \? 'protocol-message-no-content' : 'empty-body-no-media'/);
       assert.match(after, /reason: 'missing-message-payload'/);
 

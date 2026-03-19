@@ -23,6 +23,10 @@ function getSelfJid() {
   return (sock?.user?.id || '').replace(/:.*@/, '@');
 }
 
+function getSelfLid() {
+  return (sock?.user?.lid || '').replace(/:.*@/, '@');
+}
+
 function getSelfNumber() {
   return getSelfJid().replace(/@.*/, '');
 }
@@ -142,6 +146,7 @@ def patch_bridge(source_text: str) -> str:
       logBridgeDiagnostic('connection.open', {
         selfJid: getSelfJid(),
         selfNumber: getSelfNumber(),
+        selfLid: getSelfLid(),
       });
       if (PAIR_ONLY) {
 """,
@@ -166,6 +171,7 @@ def patch_bridge(source_text: str) -> str:
     // hermes-fly: expose paired account identity for self-chat validation
     selfJid: getSelfJid(),
     selfNumber: getSelfNumber(),
+    selfLid: getSelfLid(),
   });
 });
 """,
@@ -266,6 +272,20 @@ def patch_bridge(source_text: str) -> str:
     )
     source_text = replace_once(
         source_text,
+        """        const myNumber = (sock.user?.id || '').replace(/:.*@/, '@').replace(/@.*/, '');
+        const chatNumber = chatId.replace(/@.*/, '');
+        const isSelfChat = myNumber && chatNumber === myNumber;
+""",
+        """        const myNumber = getSelfNumber();
+        const myLid = getSelfLid().replace(/@.*/, '');
+        const chatNumber = chatId.replace(/@.*/, '');
+        const isSelfChat = (myNumber && chatNumber === myNumber) || (myLid && chatNumber === myLid);
+""",
+        "self-chat identity",
+        "const myLid = getSelfLid().replace(/@.*/, '');",
+    )
+    source_text = replace_once(
+        source_text,
         "        if (!isSelfChat) continue;\n",
         """        if (!isSelfChat) {
           logBridgeDiagnostic('messages.upsert.skipped', {
@@ -273,6 +293,7 @@ def patch_bridge(source_text: str) -> str:
             reason: 'fromMe-not-self-chat',
             chatId,
             myNumber,
+            myLid,
             chatNumber,
           });
           continue;
@@ -350,7 +371,17 @@ def patch_bridge(source_text: str) -> str:
     source_text = replace_once(
         source_text,
         "      if (!body && !hasMedia) continue;\n",
-        """      if (!body && !hasMedia) {
+        """      if (msg.key.fromMe && typeof body === 'string' && body.startsWith('⚕ *Hermes Agent*\\n────────────\\n')) {
+        logBridgeDiagnostic('messages.upsert.skipped', {
+          ...summary,
+          reason: 'agent-echo',
+          chatId,
+          senderNumber,
+        });
+        continue;
+      }
+
+      if (!body && !hasMedia) {
         logBridgeDiagnostic('messages.upsert.skipped', {
           ...summary,
           reason: summary.protocolType !== null ? 'protocol-message-no-content' : 'empty-body-no-media',
