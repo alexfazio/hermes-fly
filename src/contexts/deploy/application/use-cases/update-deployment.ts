@@ -68,7 +68,7 @@ export class UpdateDeploymentUseCase {
         appName: config.appName,
         region: "",
         vmSize: "",
-        volumeSize: 0,
+        volumeSize: 1,  // Min valid size; ignored for updates since volume exists
         provider: "",
         apiKey: "",
         model: "",
