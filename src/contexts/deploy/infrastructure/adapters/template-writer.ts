@@ -3,8 +3,13 @@ import type { DeployConfig } from "../../application/ports/deploy-wizard.port.js
 const DEFAULT_VM_MEMORY_BY_SIZE: Record<string, string> = {
   "shared-cpu-1x": "256",
   "shared-cpu-2x": "512",
+  "shared-cpu-4x": "2048",
+  "shared-cpu-6x": "4096",
+  "shared-cpu-8x": "8192",
   "performance-1x": "2048",
-  "performance-2x": "4096"
+  "performance-2x": "4096",
+  "performance-4x": "8192",
+  "performance-8x": "16384"
 };
 
 export class TemplateWriter {
