@@ -5514,52 +5514,53 @@ export class FlyDeployWizard implements DeployWizardPort {
 
   async fetchExistingConfig(appName: string): Promise<import("../../application/ports/deploy-wizard.port.js").ExistingAppConfig | null> {
     const runner = new NodeProcessRunner();
+    const { mkdtemp, readFile, rm } = await import("node:fs/promises");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
     
-    // Get app info from fly apps list
-    const appsResult = await runner.run("fly", ["apps", "list", "--json"], { env: this.env });
-    if (appsResult.exitCode !== 0 || !appsResult.stdout) {
-      return null;
-    }
-    
-    let region = DEFAULT_REGION;
+    // Use fly config save to get the actual deployed config
+    const tempDir = await mkdtemp(join(tmpdir(), "hermes-fly-config-"));
     try {
-      const apps = JSON.parse(appsResult.stdout) as Array<{ Name?: string; name?: string; Region?: string; region?: string }>;
-      const app = apps.find(a => (a.Name ?? a.name) === appName);
-      if (app) {
-        region = (app.Region ?? app.region ?? DEFAULT_REGION);
+      const result = await runner.run(
+        "fly",
+        ["config", "save", "-a", appName, "-c", join(tempDir, "fly.toml")],
+        { env: this.env }
+      );
+      
+      if (result.exitCode !== 0) {
+        return null;
       }
-    } catch {
-      // use default
-    }
-
-    // Get machine info for vmSize
-    const statusResult = await runner.run("fly", ["status", "--app", appName, "--json"], { env: this.env });
-    let vmSize = DEFAULT_VM_SIZE;
-    let volumeSize = DEFAULT_VOLUME_SIZE;
-    
-    if (statusResult.exitCode === 0 && statusResult.stdout) {
-      try {
-        const status = JSON.parse(statusResult.stdout) as { 
-          Machines?: Array<{ Config?: { Guest?: { Cpus?: number; CpuKind?: string; MemoryMb?: number } } }>;
-          Volumes?: Array<{ SizeGb?: number; size_gb?: number }>;
-        };
-        const machine = status.Machines?.[0];
-        if (machine?.Config?.Guest) {
-          const guest = machine.Config.Guest;
-          const cpus = guest.Cpus ?? 1;
-          const cpuKind = guest.CpuKind ?? "shared";
-          vmSize = cpuKind === "performance" ? `performance-${cpus}x` : `shared-cpu-${cpus}x`;
+      
+      // Parse the saved fly.toml
+      const tomlContent = await readFile(join(tempDir, "fly.toml"), "utf8");
+      
+      // Extract primary_region
+      const regionMatch = tomlContent.match(/^primary_region\s*=\s*"([^"]+)"/m);
+      const region = regionMatch?.[1] ?? DEFAULT_REGION;
+      
+      // Extract vm size from [[vm]] section
+      const vmSizeMatch = tomlContent.match(/^\[\[vm\]\][\s\S]*?^\s*size\s*=\s*"([^"]+)"/m);
+      const vmSize = vmSizeMatch?.[1] ?? DEFAULT_VM_SIZE;
+      
+      // Get volume size from fly volumes list
+      const volResult = await runner.run("fly", ["volumes", "list", "-a", appName, "--json"], { env: this.env });
+      let volumeSize = DEFAULT_VOLUME_SIZE;
+      if (volResult.exitCode === 0 && volResult.stdout) {
+        try {
+          const volumes = JSON.parse(volResult.stdout) as Array<{ size_gb?: number; SizeGb?: number }>;
+          const vol = volumes[0];
+          if (vol) {
+            volumeSize = vol.size_gb ?? vol.SizeGb ?? DEFAULT_VOLUME_SIZE;
+          }
+        } catch {
+          // use default
         }
-        const volume = status.Volumes?.[0];
-        if (volume) {
-          volumeSize = volume.SizeGb ?? volume.size_gb ?? DEFAULT_VOLUME_SIZE;
-        }
-      } catch {
-        // use defaults
       }
+      
+      return { region, vmSize, volumeSize };
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
     }
-
-    return { region, vmSize, volumeSize };
   }
 
   async promptUpdateConfigChoice(
