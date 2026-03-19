@@ -128,6 +128,7 @@ type WhatsAppBridgeHealth = {
   uptime?: number;
   selfJid?: string;
   selfNumber?: string;
+  selfLid?: string;
 };
 
 type TelegramSetup = {
@@ -872,9 +873,14 @@ export class FlyDeployWizard implements DeployWizardPort {
             stderr.write("Tip: re-run pairing with the actual paired WhatsApp number, or link the intended WhatsApp account before pairing.\n");
             return {};
           }
+          const approvalSeeded = await this.seedWhatsAppSelfChatApproval(config.appName, bridgeReady.health);
+          if (!approvalSeeded.ok) {
+            stderr.write(`[warn] WhatsApp paired, but ${approvalSeeded.error ?? "hermes-fly could not auto-approve the paired WhatsApp self-chat identity"}\n`);
+            stderr.write(`Tip: run 'hermes-fly logs -a ${config.appName}' and then approve the WhatsApp pairing code manually if Hermes asks for one.\n`);
+            return {};
+          }
           stdout.write("Send a short message to Message yourself now so hermes-fly can verify the deployed agent sees it.\n");
-          await this.prompts.ask("Press Enter after sending your self-chat test message: ");
-          stdout.write("Watching the deployed logs for your WhatsApp self-chat test...\n");
+          stdout.write("Watching the deployed logs for your WhatsApp self-chat test automatically...\n");
           const selfChatTest = await this.verifyWhatsAppSelfChatTest(config.appName);
           if (!selfChatTest.ok) {
             stderr.write(`[warn] WhatsApp paired, but ${selfChatTest.error ?? "the self-chat test did not complete cleanly"}\n`);
@@ -4097,6 +4103,7 @@ export class FlyDeployWizard implements DeployWizardPort {
                 ...result.health,
                 selfJid: identity.selfJid ?? result.health.selfJid,
                 selfNumber: identity.selfNumber,
+                selfLid: identity.selfLid ?? result.health.selfLid,
               },
             };
           }
@@ -4152,6 +4159,47 @@ export class FlyDeployWizard implements DeployWizardPort {
       ok: false,
       error: `you configured WhatsApp self-chat for ${configuredSummary}, but the paired WhatsApp account is ${pairedNumber}${pairedJid ? ` (${pairedJid})` : ""}`,
     };
+  }
+
+  private async seedWhatsAppSelfChatApproval(
+    appName: string,
+    health?: WhatsAppBridgeHealth
+  ): Promise<{ ok: boolean; error?: string }> {
+    const approvedIds = [
+      (health?.selfLid ?? "").trim(),
+      (health?.selfJid ?? "").trim(),
+      (health?.selfNumber ?? "").trim(),
+    ].filter((value, index, list) => value.length > 0 && list.indexOf(value) === index);
+
+    if (approvedIds.length === 0) {
+      return { ok: false, error: "hermes-fly could not determine any WhatsApp identities to auto-approve for self-chat" };
+    }
+
+    const payload = JSON.stringify(
+      Object.fromEntries(
+        approvedIds.map((userId) => [
+          userId,
+          { user_name: "auto-approved", approved_at: Date.now() / 1000 },
+        ])
+      )
+    );
+    const escapedPayload = payload.replace(/\\/g, "\\\\").replace(/'/g, `'\\''`);
+
+    try {
+      const flyCommand = await resolveFlyCommand(this.env);
+      const command = [
+        "ssh", "console", "-a", appName,
+        "-C",
+        `sh -lc "mkdir -p /root/.hermes/pairing && cat <<'EOF' > /root/.hermes/pairing/whatsapp-approved.json\n${escapedPayload}\nEOF\nchmod 600 /root/.hermes/pairing/whatsapp-approved.json"`,
+      ];
+      const result = await this.process.run(flyCommand, command, { env: this.env, timeoutMs: 15_000 });
+      if (result.exitCode !== 0) {
+        return { ok: false, error: result.stderr || result.stdout || "failed to seed WhatsApp self-chat approval" };
+      }
+      return { ok: true };
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : String(error) };
+    }
   }
 
   private async verifyWhatsAppSelfChatTest(appName: string): Promise<{ ok: boolean; error?: string }> {
@@ -4256,15 +4304,18 @@ export class FlyDeployWizard implements DeployWizardPort {
         selfNumber: typeof parsed.selfNumber === "string" && /^[0-9]{7,15}$/.test(parsed.selfNumber.trim())
           ? parsed.selfNumber.trim()
           : undefined,
+        selfLid: typeof parsed.selfLid === "string" ? parsed.selfLid.trim() : undefined,
       };
     } catch {
       const statusMatch = trimmed.match(/"status"\s*:\s*"([^"]+)"/);
       const selfJidMatch = trimmed.match(/"selfJid"\s*:\s*"([^"]+)"/);
       const selfNumberMatch = trimmed.match(/"selfNumber"\s*:\s*"([0-9]{7,15})"/);
+      const selfLidMatch = trimmed.match(/"selfLid"\s*:\s*"([^"]+)"/);
       return {
         status: statusMatch?.[1],
         selfJid: selfJidMatch?.[1],
         selfNumber: selfNumberMatch?.[1],
+        selfLid: selfLidMatch?.[1],
       };
     }
   }
@@ -4371,7 +4422,7 @@ export class FlyDeployWizard implements DeployWizardPort {
     return { kind: "unknown" };
   }
 
-  private parseWhatsAppBridgeIdentityFromLog(logs: string | undefined): { selfJid?: string; selfNumber?: string } {
+  private parseWhatsAppBridgeIdentityFromLog(logs: string | undefined): { selfJid?: string; selfNumber?: string; selfLid?: string } {
     if (!logs) {
       return {};
     }
@@ -4384,10 +4435,12 @@ export class FlyDeployWizard implements DeployWizardPort {
       const line = connectionLines[index] ?? "";
       const selfJidMatch = line.match(/"selfJid":"([^"]+)"/);
       const selfNumberMatch = line.match(/"selfNumber":"([0-9]{7,15})"/);
-      if (selfJidMatch || selfNumberMatch) {
+      const selfLidMatch = line.match(/"selfLid":"([^"]+)"/);
+      if (selfJidMatch || selfNumberMatch || selfLidMatch) {
         return {
           selfJid: selfJidMatch?.[1],
           selfNumber: selfNumberMatch?.[1],
+          selfLid: selfLidMatch?.[1],
         };
       }
     }
