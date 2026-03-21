@@ -2865,7 +2865,7 @@ describe("FlyDeployWizard.collectConfig", () => {
     assert.match(guidedCopy, /Which AI provider do you want to use through OpenRouter/);
     assert.match(guidedCopy, /Which OpenAI model should your agent use/);
     assert.match(guidedCopy, /Messaging/);
-    assert.match(guidedCopy, /Use ↑\/↓ or j\/k to move, Space to toggle, and Enter to confirm\./);
+    assert.match(guidedCopy, /Use ↑\/↓ or j\/k to move, then Enter to confirm\./);
     assert.match(guidedCopy, /● Telegram\s+Chat with your agent in Telegram/);
     assert.match(guidedCopy, /○ Skip for now/);
     assert.match(guidedCopy, /1  ○ Telegram now/);
@@ -3942,223 +3942,40 @@ describe("FlyDeployWizard.collectConfig", () => {
     assert.match(guidedCopy, /● Team Deployments\s+team-deployments/);
   });
 
-  it("renders numbered messaging options and rejects skip mixed with platforms when selectManyChoices support is unavailable", async () => {
-    const prompts = makePromptPort([
-      "my-app",
-      "2",
-      "2",
-      "1",
-      "3",
-      "1",
-      "sk-live",
-      "2",
-      "1",
-      "2",
-      "1,5",
-      "5",
-      "y"
-    ], { interactive: true });
-    delete prompts.selectManyChoices;
-    const runner = makeProcessRunner(async (command, args) => {
-      if (command === "fly" && args[0] === "platform" && args[1] === "regions") {
-        return {
-          exitCode: 0,
-          stdout: JSON.stringify([
-            { code: "iad", name: "Ashburn, Virginia (US)" },
-            { code: "fra", name: "Frankfurt, Germany" },
-            { code: "lhr", name: "London, United Kingdom" }
-          ])
-        };
-      }
-      if (command === "fly" && args[0] === "platform" && args[1] === "vm-sizes") {
-        return {
-          exitCode: 0,
-          stdout: JSON.stringify([
-            { name: "shared-cpu-1x", memory_mb: 256 },
-            { name: "shared-cpu-2x", memory_mb: 512 },
-            { name: "performance-1x", memory_mb: 2048 }
-          ])
-        };
-      }
-      if (command === "curl" && args.some((value) => value.includes("api.telegram.org/bot123:abc/getMe"))) {
-        return {
-          exitCode: 0,
-          stdout: JSON.stringify({
-            ok: true,
-            result: {
-              id: 12345,
-              is_bot: true,
-              first_name: "Hermes Test Bot",
-              username: "test_hermes_bot"
-            }
-          })
-        };
-      }
-      if (command === "curl" && args.some((value) => value.includes("api.telegram.org/bot123:abc/getUpdates"))) {
-        return {
-          exitCode: 0,
-          stdout: JSON.stringify({
-            ok: true,
-            result: [
-              {
-                update_id: 1,
-                message: {
-                  chat: { id: 12345, type: "private" },
-                  from: { id: 12345, is_bot: false }
-                }
-              }
-            ]
-          })
-        };
-      }
-      return { exitCode: 1 };
-    });
-    const wizard = new FlyDeployWizard({}, { prompts, process: runner, qrRenderer: makeQrRenderer() });
+  it("uses a single-select messaging choice in the interactive selector path", async () => {
+    const prompts = makePromptPort(["4"], { interactive: true });
+    const wizard = new FlyDeployWizard({}, { prompts });
 
-    const config = await wizard.collectConfig({ channel: "preview" });
+    const selection = await (wizard as unknown as {
+      collectMessagingPlatformsChoice: () => Promise<string[]>;
+    }).collectMessagingPlatformsChoice();
 
-    assert.equal(config.botToken, "");
+    assert.deepEqual(selection, ["whatsapp"]);
+    assert.ok(prompts.selections.some((selection) => selection.optionCount === 5 && selection.initialIndex === 5));
+    assert.equal(prompts.multiSelections.length, 0);
     const guidedCopy = stripAnsi(prompts.writes.join(""));
-    assert.match(guidedCopy, /You can connect more than one\. Enter numbers separated by commas\./);
+    assert.match(guidedCopy, /Use ↑\/↓ or j\/k to move, then Enter to confirm\./);
+    assert.match(guidedCopy, /● WhatsApp\s+Chat with your agent in WhatsApp/);
+    assert.match(guidedCopy, /○ Skip for now/);
+    assert.doesNotMatch(guidedCopy, /Space to toggle/);
+  });
+
+  it("renders numbered single-select messaging options when selectChoice support is unavailable", async () => {
+    const prompts = makePromptPort(["4"], { interactive: true });
+    delete prompts.selectChoice;
+    const wizard = new FlyDeployWizard({}, { prompts });
+
+    const selection = await (wizard as unknown as {
+      collectMessagingPlatformsChoice: () => Promise<string[]>;
+    }).collectMessagingPlatformsChoice();
+
+    assert.deepEqual(selection, ["whatsapp"]);
+    const guidedCopy = stripAnsi(prompts.writes.join(""));
     assert.match(guidedCopy, /1\s+○ Telegram\s+Chat with your agent in Telegram/);
+    assert.match(guidedCopy, /4\s+○ WhatsApp\s+Chat with your agent in WhatsApp/);
     assert.match(guidedCopy, /5\s+● Skip for now/);
-    assert.match(guidedCopy, /Choose either specific platforms or 5 to skip\./);
-    assert.equal(prompts.asked.filter((message) => message === "Choose platform numbers [5]: ").length, 2);
-    assert.deepEqual(prompts.secretAsked, [
-      "OpenRouter API key (required): "
-    ]);
-  });
-
-  it("rejects skip mixed with platforms in the interactive messaging selector path", async () => {
-    const prompts = makePromptPort([
-      "my-app",
-      "2",
-      "2",
-      "1",
-      "3",
-      "1",
-      "sk-live",
-      "2",
-      "1",
-      "2",
-      "1,5",
-      "5",
-      "y"
-    ], { interactive: true });
-    const runner = makeProcessRunner(async (command, args) => {
-      if (command === "fly" && args[0] === "platform" && args[1] === "regions") {
-        return {
-          exitCode: 0,
-          stdout: JSON.stringify([
-            { code: "iad", name: "Ashburn, Virginia (US)" },
-            { code: "fra", name: "Frankfurt, Germany" },
-            { code: "lhr", name: "London, United Kingdom" }
-          ])
-        };
-      }
-      if (command === "fly" && args[0] === "platform" && args[1] === "vm-sizes") {
-        return {
-          exitCode: 0,
-          stdout: JSON.stringify([
-            { name: "shared-cpu-1x", memory_mb: 256 },
-            { name: "shared-cpu-2x", memory_mb: 512 },
-            { name: "performance-1x", memory_mb: 2048 }
-          ])
-        };
-      }
-      if (command === "curl" && args.includes("https://openrouter.ai/api/v1/key")) {
-        return {
-          exitCode: 0,
-          stdout: JSON.stringify({ data: { is_free_tier: false, usage: 10 } })
-        };
-      }
-      if (command === "curl" && args.includes("https://openrouter.ai/api/v1/models")) {
-        return {
-          exitCode: 0,
-          stdout: JSON.stringify({ data: liveOpenRouterModelsFixture() })
-        };
-      }
-      return { exitCode: 1 };
-    });
-    const wizard = new FlyDeployWizard({}, { prompts, process: runner });
-
-    const config = await wizard.collectConfig({ channel: "preview" });
-
-    assert.equal(config.botToken, "");
-    const guidedCopy = stripAnsi(prompts.writes.join(""));
-    assert.match(guidedCopy, /Choose either specific platforms or 5 to skip\./);
-    assert.ok(!prompts.asked.some((message) => message.includes("Choose platform numbers")));
-  });
-
-  it("rejects an empty messaging selection in the interactive selector path", async () => {
-    const prompts = makePromptPort([
-      "my-app",
-      "2",
-      "2",
-      "1",
-      "3",
-      "1",
-      "sk-live",
-      "2",
-      "1",
-      "2",
-      "y"
-    ], { interactive: true });
-    prompts.selectManyChoices = async <T>(params: {
-      options: Array<{ value: T }>;
-      initialIndex: number;
-      initialSelectedIndices?: number[];
-      render: (activeIndex: number, selectedIndices: number[]) => string;
-      normalizeSelectedIndices?: (selectedIndices: number[], activeIndex: number) => number[];
-      validateSelectedIndices?: (selectedIndices: number[]) => string | undefined;
-    }) => {
-      const validationError = params.validateSelectedIndices?.([]);
-      assert.equal(validationError, "Choose at least one platform or 5 to skip.");
-      prompts.write(`${validationError}\n`);
-      return [params.options[4]!.value];
-    };
-    const runner = makeProcessRunner(async (command, args) => {
-      if (command === "fly" && args[0] === "platform" && args[1] === "regions") {
-        return {
-          exitCode: 0,
-          stdout: JSON.stringify([
-            { code: "iad", name: "Ashburn, Virginia (US)" },
-            { code: "fra", name: "Frankfurt, Germany" },
-            { code: "lhr", name: "London, United Kingdom" }
-          ])
-        };
-      }
-      if (command === "fly" && args[0] === "platform" && args[1] === "vm-sizes") {
-        return {
-          exitCode: 0,
-          stdout: JSON.stringify([
-            { name: "shared-cpu-1x", memory_mb: 256 },
-            { name: "shared-cpu-2x", memory_mb: 512 },
-            { name: "performance-1x", memory_mb: 2048 }
-          ])
-        };
-      }
-      if (command === "curl" && args.includes("https://openrouter.ai/api/v1/key")) {
-        return {
-          exitCode: 0,
-          stdout: JSON.stringify({ data: { is_free_tier: false, usage: 10 } })
-        };
-      }
-      if (command === "curl" && args.includes("https://openrouter.ai/api/v1/models")) {
-        return {
-          exitCode: 0,
-          stdout: JSON.stringify({ data: liveOpenRouterModelsFixture() })
-        };
-      }
-      return { exitCode: 1 };
-    });
-    const wizard = new FlyDeployWizard({}, { prompts, process: runner });
-
-    const config = await wizard.collectConfig({ channel: "preview" });
-
-    assert.equal(config.botToken, "");
-    const guidedCopy = stripAnsi(prompts.writes.join(""));
-    assert.match(guidedCopy, /Choose at least one platform or 5 to skip\./);
+    assert.doesNotMatch(guidedCopy, /You can connect more than one/);
+    assert.equal(prompts.asked.filter((message) => message === "Choose a platform [5]: ").length, 1);
   });
 
   it("shows a direct BotFather link and renders a QR code when Telegram setup is selected", async () => {

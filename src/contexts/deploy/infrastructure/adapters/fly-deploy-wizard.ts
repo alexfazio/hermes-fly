@@ -101,7 +101,6 @@ type SelectableChoiceOption<T> = {
 };
 
 const SINGLE_SELECT_INTERACTION_HINT = "Use ↑/↓ or j/k to move, then Enter to confirm.";
-const MULTI_SELECT_INTERACTION_HINT = "Use ↑/↓ or j/k to move, Space to toggle, and Enter to confirm.";
 
 type VmOption = {
   value: string;
@@ -2895,10 +2894,10 @@ export class FlyDeployWizard implements DeployWizardPort {
   }
 
   private async collectMessagingPlatformsChoice(): Promise<string[]> {
-    const skipIndex = 5;
-    const selections = await this.selectManyFromChoiceSection({
+    const selection = await this.selectFromChoiceSection({
       title: "Messaging",
       question: "Which messaging platforms do you want to connect now?",
+      details: ["You can connect the others later if you prefer."],
       options: [
         { value: "telegram", label: "Telegram", description: "Chat with your agent in Telegram" },
         { value: "discord", label: "Discord", description: "Chat with your agent in Discord" },
@@ -2907,30 +2906,14 @@ export class FlyDeployWizard implements DeployWizardPort {
         { value: "skip", label: "Skip for now" },
       ],
       defaultIndex: 5,
-      initialSelectedIndices: [5],
-      fallbackPrompt: "Choose platform numbers [5]: ",
-      interactionHint: MULTI_SELECT_INTERACTION_HINT,
-      fallbackDetails: ["You can connect more than one. Enter numbers separated by commas."],
-      normalizeSelectedIndices: (selectedIndices, activeIndex) => {
-        if (activeIndex === skipIndex) {
-          return selectedIndices.includes(skipIndex) ? [skipIndex] : [];
-        }
-        return selectedIndices.filter((index) => index !== skipIndex);
-      },
-      validateSelectedIndices: (selectedIndices) => (
-        selectedIndices.length === 0
-          ? "Choose at least one platform or 5 to skip."
-          : selectedIndices.includes(skipIndex) && selectedIndices.length > 1
-            ? "Choose either specific platforms or 5 to skip."
-            : undefined
-      ),
+      fallbackPrompt: "Choose a platform [5]: ",
     });
 
-    if (selections.includes("skip") && selections.length === 1) {
+    if (selection === "skip") {
       return [];
     }
 
-    return selections.filter((value): value is string => value !== "skip");
+    return [selection];
   }
 
   private async collectTelegramSetup(input: {
