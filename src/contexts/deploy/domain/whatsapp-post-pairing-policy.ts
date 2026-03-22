@@ -5,7 +5,7 @@ export class WhatsAppPostPairingPolicy {
   static readonly selfChatVerificationAttemptLimit = 20;
   static readonly pollDelayMs = 1_500;
 
-  static shouldOfferSelfChatVerification(mode?: WhatsAppPostPairingMode): boolean {
+  static shouldAutomaticallyVerifySelfChat(mode?: WhatsAppPostPairingMode): boolean {
     return mode === "self-chat";
   }
 

@@ -1033,25 +1033,17 @@ export class FlyDeployWizard implements DeployWizardPort {
             stderr.write(`Tip: run 'hermes-fly logs -a ${config.appName}' and then approve the WhatsApp pairing code manually if Hermes still asks for one.\n`);
             return {};
           }
-          if (WhatsAppPostPairingPolicy.shouldOfferSelfChatVerification(config.whatsappMode)) {
-            const shouldVerifySelfChat = await this.confirmYesNo(
-              "Run the automatic self-chat verification now? hermes-fly will wait here until Hermes sees one Message yourself message. [Y/n]: ",
-              true
-            );
-            if (shouldVerifySelfChat) {
-              stdout.write("To finish verification, send a short message to Message yourself now.\n");
-              stdout.write("hermes-fly is watching the deployed logs for that message automatically.\n");
-              const selfChatTest = await this.verifyWhatsAppSelfChatTest(config.appName);
-              if (!selfChatTest.ok) {
-                stderr.write(`[warn] WhatsApp paired, but ${selfChatTest.error ?? "the self-chat test did not complete cleanly"}\n`);
-                stderr.write(`Tip: run 'hermes-fly logs -a ${config.appName}' and 'hermes-fly doctor -a ${config.appName}' for more detail.\n`);
-                return {};
-              }
-              stdout.write("Hermes self-chat verification passed. Hermes received the message and started responding.\n");
-            } else {
-              stdout.write("Self-chat verification skipped. WhatsApp is paired and Hermes is configured, but hermes-fly did not wait for a live Message yourself test.\n");
-              stdout.write("You can test later by opening Message yourself and sending Hermes a short message.\n");
+          if (WhatsAppPostPairingPolicy.shouldAutomaticallyVerifySelfChat(config.whatsappMode)) {
+            stdout.write("Starting automatic Hermes self-chat verification now.\n");
+            stdout.write("To finish verification, send a short message to Message yourself now.\n");
+            stdout.write("hermes-fly is watching the deployed logs for that message automatically.\n");
+            const selfChatTest = await this.verifyWhatsAppSelfChatTest(config.appName);
+            if (!selfChatTest.ok) {
+              stderr.write(`[warn] WhatsApp paired, but ${selfChatTest.error ?? "the self-chat test did not complete cleanly"}\n`);
+              stderr.write(`Tip: run 'hermes-fly logs -a ${config.appName}' and 'hermes-fly doctor -a ${config.appName}' for more detail.\n`);
+              return {};
             }
+            stdout.write("Hermes self-chat verification passed. Hermes received the message and started responding.\n");
           }
         }
 

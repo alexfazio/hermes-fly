@@ -1341,8 +1341,8 @@ describe("FlyDeployWizard.postDeployActions", () => {
     assert.deepEqual(opened, ["https://discord.com/oauth2/authorize?client_id=123456789012345678&scope=bot%20applications.commands"]);
   });
 
-  it("preserves raw WhatsApp QR terminal redraws, explains the pair-vs-verify phases, verifies a real self-chat test, and avoids local-machine guidance afterward", async () => {
-    const prompts = makePromptPort(["y", ""], { interactive: true });
+  it("preserves raw WhatsApp QR terminal redraws, starts automatic self-chat verification immediately, verifies a real self-chat test, and avoids local-machine guidance afterward", async () => {
+    const prompts = makePromptPort(["y"], { interactive: true });
     const io = makeIO();
     const streamingCalls: Array<{ command: string; args: string[] }> = [];
     const backgroundCalls: Array<{ command: string; args: string[] }> = [];
@@ -1434,7 +1434,7 @@ describe("FlyDeployWizard.postDeployActions", () => {
     assert.match(io.outText, /may still briefly show 'Logging in\.\.\.' or 'Syncing messages\.\.\.'/i);
     assert.match(io.outText, /Applying the paired WhatsApp session to the deployed Hermes app/i);
     assert.match(io.outText, /Configuring the paired WhatsApp account for Hermes self-chat/i);
-    assert.ok(prompts.asked.some((message) => message.includes("Run the automatic self-chat verification now?")));
+    assert.match(io.outText, /Starting automatic Hermes self-chat verification now/i);
     assert.match(io.outText, /To finish verification, send a short message to Message yourself now/i);
     assert.match(io.outText, /Hermes self-chat verification passed/i);
     assert.match(io.outText, /Message yourself/);
@@ -1445,87 +1445,7 @@ describe("FlyDeployWizard.postDeployActions", () => {
     assert.doesNotMatch(io.outText, /Or install as a service: hermes gateway install/);
     assert.doesNotMatch(io.outText, /stream errored out/);
     assert.ok(!prompts.asked.some((message) => message.includes("WhatsApp pairing code")));
-  });
-
-  it("lets the user skip the automatic self-chat verification after pairing", async () => {
-    const prompts = makePromptPort(["y", "n"], { interactive: true });
-    const io = makeIO();
-    const backgroundCalls: Array<{ command: string; args: string[] }> = [];
-    let supervisorStartedAt = 100;
-    const runner: ForegroundProcessRunner = {
-      run: async (command, args) => {
-        backgroundCalls.push({ command, args });
-        if (args[0] === "ssh" && args[1] === "console" && /gateway-supervisor\.pid/.test(args.join(" ")) && /kill -USR1/.test(args.join(" "))) {
-          supervisorStartedAt += 1;
-          return { exitCode: 0, stdout: "", stderr: "" };
-        }
-        if (args[0] === "ssh" && args[1] === "console" && /gateway-supervisor\.pid/.test(args.join(" "))) {
-          return { exitCode: 0, stdout: `available\n${supervisorStartedAt}\n`, stderr: "" };
-        }
-        if (args[0] === "ssh" && args[1] === "console" && !/127\.0\.0\.1:3000\/health/.test(args.join(" ")) && !/bridge\.log/.test(args.join(" ")) && !/tail -n 80/.test(args.join(" "))) {
-          return {
-            exitCode: 0,
-            stdout: "empty_session\n",
-            stderr: "",
-          };
-        }
-        if (args[0] === "machine" && args[1] === "list") {
-          return {
-            exitCode: 0,
-            stdout: JSON.stringify([{ id: "machine123", state: "started", region: "fra" }]),
-            stderr: "",
-          };
-        }
-        if (args[0] === "ssh" && args[1] === "console" && /127\.0\.0\.1:3000\/health/.test(args.join(" "))) {
-          return {
-            exitCode: 0,
-            stdout: "{\"status\":\"connected\",\"selfJid\":\"447871172820@s.whatsapp.net\",\"selfNumber\":\"447871172820\",\"selfLid\":\"242137421639836@lid\"}\n",
-            stderr: "",
-          };
-        }
-        if (args[0] === "ssh" && args[1] === "console" && /PairingStore/.test(args.join(" "))) {
-          return {
-            exitCode: 0,
-            stdout: "{\"447871172820@s.whatsapp.net\":true,\"447871172820\":true,\"242137421639836@lid\":true}\n",
-            stderr: "",
-          };
-        }
-        if (args[0] === "logs") {
-          return {
-            exitCode: 0,
-            stdout: "unexpected log polling\n",
-            stderr: "",
-          };
-        }
-        return { exitCode: 0, stdout: "", stderr: "" };
-      },
-      runStreaming: async (_command, _args, options) => {
-        options?.onStdoutChunk?.("⚕ WhatsApp Setup\n");
-        options?.onStdoutChunk?.("📱 Scan this QR code with WhatsApp on your phone:\n");
-        options?.onStdoutChunk?.("Waiting for scan...\n");
-        options?.onStdoutChunk?.("✅ Pairing complete. Credentials saved.\n");
-        options?.onStdoutChunk?.("✓ WhatsApp paired successfully!\n");
-        return { exitCode: 0 };
-      },
-      runForeground: async () => ({ exitCode: 0 }),
-    };
-    const wizard = new FlyDeployWizard({}, { prompts, process: runner, sleep: async () => {} });
-
-    const result = await wizard.finalizeMessagingSetup({
-      ...DEFAULT_CONFIG,
-      appName: "test-app",
-      whatsappEnabled: true,
-      whatsappMode: "self-chat",
-      whatsappCompleteAccessDuringSetup: true,
-    }, io.stdout, io.stderr);
-
-    assert.deepEqual(result, { whatsappSessionConfirmed: true });
-    assert.ok(prompts.asked.some((message) => message.includes("Run the automatic self-chat verification now?")));
-    assert.match(io.outText, /Self-chat verification skipped/i);
-    assert.match(io.outText, /did not wait for a live Message yourself test/i);
-    assert.match(io.outText, /You can test later by opening Message yourself/i);
-    assert.doesNotMatch(io.outText, /To finish verification, send a short message to Message yourself now/i);
-    assert.ok(!backgroundCalls.some((call) => call.args[0] === "logs"));
+    assert.ok(!prompts.asked.some((message) => message.includes("Run the automatic self-chat verification now?")));
   });
 
   it("falls back to a full machine restart when the gateway-only WhatsApp restart does not bring the bridge back", async () => {
