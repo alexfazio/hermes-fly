@@ -1341,7 +1341,7 @@ describe("FlyDeployWizard.postDeployActions", () => {
     assert.deepEqual(opened, ["https://discord.com/oauth2/authorize?client_id=123456789012345678&scope=bot%20applications.commands"]);
   });
 
-  it("preserves raw WhatsApp QR terminal redraws, verifies the WhatsApp bridge after restart, verifies a real self-chat test, and avoids local-machine guidance afterward", async () => {
+  it("preserves raw WhatsApp QR terminal redraws, explains the pair-vs-verify phases, verifies a real self-chat test, and avoids local-machine guidance afterward", async () => {
     const prompts = makePromptPort(["y", ""], { interactive: true });
     const io = makeIO();
     const streamingCalls: Array<{ command: string; args: string[] }> = [];
@@ -1430,10 +1430,13 @@ describe("FlyDeployWizard.postDeployActions", () => {
     assert.match(io.outText, /Scan the QR code with WhatsApp on your phone/);
     assert.match(io.outText, /▄▄▄▄ QR FRAME 1 ▄▄▄▄\r▄▄▄▄ QR FRAME 2 ▄▄▄▄\r/);
     assert.doesNotMatch(io.outText, /▄▄▄▄ QR FRAME 1 ▄▄▄▄\n▄▄▄▄ QR FRAME 2 ▄▄▄▄\n/);
-    assert.match(io.outText, /Restarting the Hermes gateway so WhatsApp comes online/);
-    assert.match(io.outText, /Detecting the paired WhatsApp account and adopting it for self-chat/i);
-    assert.match(io.outText, /send a short message to Message yourself now/i);
-    assert.match(io.outText, /Self-chat test confirmed/i);
+    assert.match(io.outText, /WhatsApp pairing credentials were saved on the deployed agent/i);
+    assert.match(io.outText, /may still briefly show 'Logging in\.\.\.' or 'Syncing messages\.\.\.'/i);
+    assert.match(io.outText, /Applying the paired WhatsApp session to the deployed Hermes app/i);
+    assert.match(io.outText, /Configuring the paired WhatsApp account for Hermes self-chat/i);
+    assert.ok(prompts.asked.some((message) => message.includes("Run the automatic self-chat verification now?")));
+    assert.match(io.outText, /To finish verification, send a short message to Message yourself now/i);
+    assert.match(io.outText, /Hermes self-chat verification passed/i);
     assert.match(io.outText, /Message yourself/);
     assert.doesNotMatch(io.outText, /Update allowed users\?/);
     assert.doesNotMatch(io.outText, /Your phone number \(e\.g\./i);
@@ -1444,8 +1447,89 @@ describe("FlyDeployWizard.postDeployActions", () => {
     assert.ok(!prompts.asked.some((message) => message.includes("WhatsApp pairing code")));
   });
 
+  it("lets the user skip the automatic self-chat verification after pairing", async () => {
+    const prompts = makePromptPort(["y", "n"], { interactive: true });
+    const io = makeIO();
+    const backgroundCalls: Array<{ command: string; args: string[] }> = [];
+    let supervisorStartedAt = 100;
+    const runner: ForegroundProcessRunner = {
+      run: async (command, args) => {
+        backgroundCalls.push({ command, args });
+        if (args[0] === "ssh" && args[1] === "console" && /gateway-supervisor\.pid/.test(args.join(" ")) && /kill -USR1/.test(args.join(" "))) {
+          supervisorStartedAt += 1;
+          return { exitCode: 0, stdout: "", stderr: "" };
+        }
+        if (args[0] === "ssh" && args[1] === "console" && /gateway-supervisor\.pid/.test(args.join(" "))) {
+          return { exitCode: 0, stdout: `available\n${supervisorStartedAt}\n`, stderr: "" };
+        }
+        if (args[0] === "ssh" && args[1] === "console" && !/127\.0\.0\.1:3000\/health/.test(args.join(" ")) && !/bridge\.log/.test(args.join(" ")) && !/tail -n 80/.test(args.join(" "))) {
+          return {
+            exitCode: 0,
+            stdout: "empty_session\n",
+            stderr: "",
+          };
+        }
+        if (args[0] === "machine" && args[1] === "list") {
+          return {
+            exitCode: 0,
+            stdout: JSON.stringify([{ id: "machine123", state: "started", region: "fra" }]),
+            stderr: "",
+          };
+        }
+        if (args[0] === "ssh" && args[1] === "console" && /127\.0\.0\.1:3000\/health/.test(args.join(" "))) {
+          return {
+            exitCode: 0,
+            stdout: "{\"status\":\"connected\",\"selfJid\":\"447871172820@s.whatsapp.net\",\"selfNumber\":\"447871172820\",\"selfLid\":\"242137421639836@lid\"}\n",
+            stderr: "",
+          };
+        }
+        if (args[0] === "ssh" && args[1] === "console" && /PairingStore/.test(args.join(" "))) {
+          return {
+            exitCode: 0,
+            stdout: "{\"447871172820@s.whatsapp.net\":true,\"447871172820\":true,\"242137421639836@lid\":true}\n",
+            stderr: "",
+          };
+        }
+        if (args[0] === "logs") {
+          return {
+            exitCode: 0,
+            stdout: "unexpected log polling\n",
+            stderr: "",
+          };
+        }
+        return { exitCode: 0, stdout: "", stderr: "" };
+      },
+      runStreaming: async (_command, _args, options) => {
+        options?.onStdoutChunk?.("⚕ WhatsApp Setup\n");
+        options?.onStdoutChunk?.("📱 Scan this QR code with WhatsApp on your phone:\n");
+        options?.onStdoutChunk?.("Waiting for scan...\n");
+        options?.onStdoutChunk?.("✅ Pairing complete. Credentials saved.\n");
+        options?.onStdoutChunk?.("✓ WhatsApp paired successfully!\n");
+        return { exitCode: 0 };
+      },
+      runForeground: async () => ({ exitCode: 0 }),
+    };
+    const wizard = new FlyDeployWizard({}, { prompts, process: runner, sleep: async () => {} });
+
+    const result = await wizard.finalizeMessagingSetup({
+      ...DEFAULT_CONFIG,
+      appName: "test-app",
+      whatsappEnabled: true,
+      whatsappMode: "self-chat",
+      whatsappCompleteAccessDuringSetup: true,
+    }, io.stdout, io.stderr);
+
+    assert.deepEqual(result, { whatsappSessionConfirmed: true });
+    assert.ok(prompts.asked.some((message) => message.includes("Run the automatic self-chat verification now?")));
+    assert.match(io.outText, /Self-chat verification skipped/i);
+    assert.match(io.outText, /did not wait for a live Message yourself test/i);
+    assert.match(io.outText, /You can test later by opening Message yourself/i);
+    assert.doesNotMatch(io.outText, /To finish verification, send a short message to Message yourself now/i);
+    assert.ok(!backgroundCalls.some((call) => call.args[0] === "logs"));
+  });
+
   it("falls back to a full machine restart when the gateway-only WhatsApp restart does not bring the bridge back", async () => {
-    const prompts = makePromptPort(["y"], { interactive: true });
+    const prompts = makePromptPort(["y", ""], { interactive: true });
     const io = makeIO();
     const backgroundCalls: Array<{ command: string; args: string[] }> = [];
     let supervisorStartedAt = 100;
@@ -1537,7 +1621,7 @@ describe("FlyDeployWizard.postDeployActions", () => {
   });
 
   it("fails before opening the remote wizard when stale WhatsApp session data already exists", async () => {
-    const prompts = makePromptPort(["y"], { interactive: true });
+    const prompts = makePromptPort(["y", ""], { interactive: true });
     const io = makeIO();
     let streamed = false;
     const backgroundCalls: Array<{ command: string; args: string[] }> = [];
@@ -1575,7 +1659,7 @@ describe("FlyDeployWizard.postDeployActions", () => {
   });
 
   it("warns clearly when WhatsApp pairing succeeds but no Fly machine ID can be resolved for the restart", async () => {
-    const prompts = makePromptPort(["y"], { interactive: true });
+    const prompts = makePromptPort(["y", ""], { interactive: true });
     const io = makeIO();
     const backgroundCalls: Array<{ command: string; args: string[] }> = [];
     const runner: ForegroundProcessRunner = {
@@ -1618,7 +1702,7 @@ describe("FlyDeployWizard.postDeployActions", () => {
   });
 
   it("warns clearly when WhatsApp pairing succeeds but the WhatsApp bridge never reconnects after restart", async () => {
-    const prompts = makePromptPort(["y"], { interactive: true });
+    const prompts = makePromptPort(["y", ""], { interactive: true });
     const io = makeIO();
     const backgroundCalls: Array<{ command: string; args: string[] }> = [];
     const runner: ForegroundProcessRunner = {
@@ -1896,7 +1980,7 @@ describe("FlyDeployWizard.postDeployActions", () => {
   });
 
   it("adopts the paired WhatsApp number as the self-chat identity after QR pairing", async () => {
-    const prompts = makePromptPort(["y"], { interactive: true });
+    const prompts = makePromptPort(["y", ""], { interactive: true });
     const io = makeIO();
     const backgroundCalls: Array<{ command: string; args: string[] }> = [];
     let supervisorStartedAt = 100;
@@ -1987,13 +2071,13 @@ describe("FlyDeployWizard.postDeployActions", () => {
     assert.ok(persistedStateCall, "expected a remote self-chat identity persistence command");
     assert.match(persistedStateCall?.args.join(" ") ?? "", /WHATSAPP_HOME_CHANNEL/);
     assert.match(persistedStateCall?.args.join(" ") ?? "", /WHATSAPP_HOME_CONTACT/);
-    assert.match(io.outText, /Detecting the paired WhatsApp account and adopting it for self-chat/i);
-    assert.match(io.outText, /Send a short message to Message yourself now/i);
+    assert.match(io.outText, /Configuring the paired WhatsApp account for Hermes self-chat/i);
+    assert.match(io.outText, /To finish verification, send a short message to Message yourself now/i);
     assert.doesNotMatch(io.errText, /you configured WhatsApp self-chat/i);
   });
 
   it("treats post-prompt bridge edit echoes as successful self-chat replies even when app logs only show startup noise", async () => {
-    const prompts = makePromptPort(["y"], { interactive: true });
+    const prompts = makePromptPort(["y", ""], { interactive: true });
     const io = makeIO();
     const backgroundCalls: Array<{ command: string; args: string[] }> = [];
     let supervisorStartedAt = 100;
@@ -2089,7 +2173,7 @@ describe("FlyDeployWizard.postDeployActions", () => {
     }, io.stdout, io.stderr);
 
     assert.deepEqual(result, { whatsappSessionConfirmed: true });
-    assert.match(io.outText, /Self-chat test confirmed/i);
+    assert.match(io.outText, /Hermes self-chat verification passed/i);
     assert.equal(io.errText, "");
   });
 
@@ -2111,7 +2195,7 @@ describe("FlyDeployWizard.postDeployActions", () => {
         "utf8"
       );
 
-      const prompts = makePromptPort(["y"], { interactive: true });
+      const prompts = makePromptPort(["y", ""], { interactive: true });
       const io = makeIO();
       const backgroundCalls: Array<{ command: string; args: string[] }> = [];
       let oldMachineState = "started";
@@ -2209,7 +2293,7 @@ describe("FlyDeployWizard.postDeployActions", () => {
   });
 
   it("waits for the paired WhatsApp number to appear after restart before watching automatically for the self-chat test", async () => {
-    const prompts = makePromptPort(["y"], { interactive: true });
+    const prompts = makePromptPort(["y", ""], { interactive: true });
     const io = makeIO();
     let healthReads = 0;
     const runner: ForegroundProcessRunner = {
@@ -2275,13 +2359,13 @@ describe("FlyDeployWizard.postDeployActions", () => {
     assert.deepEqual(result, { whatsappSessionConfirmed: true });
     assert.equal(healthReads, 3);
     assert.doesNotMatch(io.errText, /could not determine the phone number of the paired WhatsApp account/i);
-    assert.match(io.outText, /Send a short message to Message yourself now/i);
-    assert.match(io.outText, /Watching the deployed logs for your WhatsApp self-chat test automatically/i);
+    assert.match(io.outText, /To finish verification, send a short message to Message yourself now/i);
+    assert.match(io.outText, /watching the deployed logs for that message automatically/i);
     assert.ok(!prompts.asked.some((message) => message.includes("Press Enter after sending your self-chat test message")));
   });
 
   it("falls back to the bridge connection log when /health omits the paired WhatsApp number after restart", async () => {
-    const prompts = makePromptPort(["y"], { interactive: true });
+    const prompts = makePromptPort(["y", ""], { interactive: true });
     const io = makeIO();
     const runner: ForegroundProcessRunner = {
       run: async (_command, args) => {
@@ -2344,12 +2428,12 @@ describe("FlyDeployWizard.postDeployActions", () => {
 
     assert.deepEqual(result, { whatsappSessionConfirmed: true });
     assert.doesNotMatch(io.errText, /never reported the paired WhatsApp phone number/i);
-    assert.match(io.outText, /Send a short message to Message yourself now/i);
+    assert.match(io.outText, /To finish verification, send a short message to Message yourself now/i);
     assert.ok(!prompts.asked.some((message) => message.includes("Press Enter after sending your self-chat test message")));
   });
 
   it("auto-approves the paired WhatsApp self-chat identities before prompting for the self-chat test", async () => {
-    const prompts = makePromptPort(["y"], { interactive: true });
+    const prompts = makePromptPort(["y", ""], { interactive: true });
     const io = makeIO();
     const backgroundCalls: Array<{ command: string; args: string[] }> = [];
     let supervisorStartedAt = 100;
@@ -2586,7 +2670,7 @@ describe("FlyDeployWizard.postDeployActions", () => {
         "utf8"
       );
 
-      const prompts = makePromptPort(["y"], { interactive: true });
+      const prompts = makePromptPort(["y", ""], { interactive: true });
       const io = makeIO();
       const backgroundCalls: Array<{ command: string; args: string[] }> = [];
       const streamingCalls: Array<{ command: string; args: string[] }> = [];

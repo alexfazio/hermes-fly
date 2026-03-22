@@ -46,6 +46,7 @@ import {
 import { MessagingPolicy, type MessagingPolicyMode } from "../../../messaging/domain/messaging-policy.js";
 import { DeployFailurePolicy } from "../../domain/deploy-failure.js";
 import { VmSizingPolicy, type VmSizingAdvisory, type VmSizingReason } from "../../domain/vm-sizing-policy.js";
+import { WhatsAppPostPairingPolicy } from "../../domain/whatsapp-post-pairing-policy.js";
 import {
   TELEGRAM_BOTFATHER_DELETEBOT_URL,
   TELEGRAM_BOTFATHER_NEWBOT_URL,
@@ -1000,7 +1001,9 @@ export class FlyDeployWizard implements DeployWizardPort {
           return {};
         }
 
-        stdout.write("\nRestarting the Hermes gateway so WhatsApp comes online...\n");
+        stdout.write("\nWhatsApp pairing credentials were saved on the deployed agent.\n");
+        stdout.write("WhatsApp may still briefly show 'Logging in...' or 'Syncing messages...' while the linked device finishes connecting.\n");
+        stdout.write("Applying the paired WhatsApp session to the deployed Hermes app...\n");
         const bridgeReady = await this.restartWhatsAppAndWaitForBridge(config.appName, {
           requireSelfNumber: config.whatsappMode === "self-chat",
         });
@@ -1011,7 +1014,7 @@ export class FlyDeployWizard implements DeployWizardPort {
         }
 
         if (config.whatsappMode === "self-chat") {
-          stdout.write("Detecting the paired WhatsApp account and adopting it for self-chat...\n");
+          stdout.write("Configuring the paired WhatsApp account for Hermes self-chat...\n");
           const adoptedIdentity = await this.adoptWhatsAppSelfChatIdentity(config, bridgeReady.health, stdout);
           if (!adoptedIdentity.ok) {
             stderr.write(`[warn] WhatsApp paired, but ${adoptedIdentity.error ?? "hermes-fly could not adopt the paired WhatsApp account for self-chat"}\n`);
@@ -1030,18 +1033,29 @@ export class FlyDeployWizard implements DeployWizardPort {
             stderr.write(`Tip: run 'hermes-fly logs -a ${config.appName}' and then approve the WhatsApp pairing code manually if Hermes still asks for one.\n`);
             return {};
           }
-          stdout.write("Send a short message to Message yourself now so hermes-fly can verify the deployed agent sees it.\n");
-          stdout.write("Watching the deployed logs for your WhatsApp self-chat test automatically...\n");
-          const selfChatTest = await this.verifyWhatsAppSelfChatTest(config.appName);
-          if (!selfChatTest.ok) {
-            stderr.write(`[warn] WhatsApp paired, but ${selfChatTest.error ?? "the self-chat test did not complete cleanly"}\n`);
-            stderr.write(`Tip: run 'hermes-fly logs -a ${config.appName}' and 'hermes-fly doctor -a ${config.appName}' for more detail.\n`);
-            return {};
+          if (WhatsAppPostPairingPolicy.shouldOfferSelfChatVerification(config.whatsappMode)) {
+            const shouldVerifySelfChat = await this.confirmYesNo(
+              "Run the automatic self-chat verification now? hermes-fly will wait here until Hermes sees one Message yourself message. [Y/n]: ",
+              true
+            );
+            if (shouldVerifySelfChat) {
+              stdout.write("To finish verification, send a short message to Message yourself now.\n");
+              stdout.write("hermes-fly is watching the deployed logs for that message automatically.\n");
+              const selfChatTest = await this.verifyWhatsAppSelfChatTest(config.appName);
+              if (!selfChatTest.ok) {
+                stderr.write(`[warn] WhatsApp paired, but ${selfChatTest.error ?? "the self-chat test did not complete cleanly"}\n`);
+                stderr.write(`Tip: run 'hermes-fly logs -a ${config.appName}' and 'hermes-fly doctor -a ${config.appName}' for more detail.\n`);
+                return {};
+              }
+              stdout.write("Hermes self-chat verification passed. Hermes received the message and started responding.\n");
+            } else {
+              stdout.write("Self-chat verification skipped. WhatsApp is paired and Hermes is configured, but hermes-fly did not wait for a live Message yourself test.\n");
+              stdout.write("You can test later by opening Message yourself and sending Hermes a short message.\n");
+            }
           }
-          stdout.write("Self-chat test confirmed. Hermes received the message and started responding.\n");
         }
 
-        stdout.write("WhatsApp setup completed on the deployed agent.\n");
+        stdout.write("WhatsApp pairing completed on the deployed agent.\n");
         if (config.whatsappMode === "self-chat") {
           stdout.write("Next step: open WhatsApp, go to Message yourself, and keep chatting.\n");
         } else {
@@ -4338,7 +4352,7 @@ export class FlyDeployWizard implements DeployWizardPort {
 
       const endMarker = this.findWhatsAppQrPassthroughEnd(chunk);
       if (endMarker) {
-        const rawPrefix = chunk.slice(0, endMarker.index + endMarker.marker.length);
+        const rawPrefix = chunk.slice(0, endMarker.index);
         if (rawPrefix.length > 0) {
           sink.write(rawPrefix);
         }
@@ -4527,6 +4541,14 @@ export class FlyDeployWizard implements DeployWizardPort {
 
     if (/^Next steps:$/i.test(trimmed) || /^Next steps:/i.test(trimmed)) {
       state.suppressNextSteps = true;
+      return null;
+    }
+
+    if (
+      trimmed === "✅ Pairing complete. Credentials saved."
+      || trimmed === "✓ WhatsApp paired successfully!"
+      || trimmed.startsWith("WhatsApp paired successfully!")
+    ) {
       return null;
     }
 
@@ -4917,7 +4939,7 @@ export class FlyDeployWizard implements DeployWizardPort {
       let lastHealth: WhatsAppBridgeHealth | undefined;
       const requireSelfNumber = options?.requireSelfNumber === true;
 
-      for (let attempt = 0; attempt < 20; attempt += 1) {
+      for (let attempt = 0; attempt < WhatsAppPostPairingPolicy.bridgeReconnectAttemptLimit; attempt += 1) {
         const result = await this.readWhatsAppBridgeHealth(appName);
         lastHealth = result.health;
         if (
@@ -4948,8 +4970,13 @@ export class FlyDeployWizard implements DeployWizardPort {
         }
 
         lastOutput = (result.error || result.raw || "").trim();
-        if (attempt < 39) {
-          await this.sleep(1_500);
+        if (
+          WhatsAppPostPairingPolicy.shouldPauseAfterAttempt(
+            attempt,
+            WhatsAppPostPairingPolicy.bridgeReconnectAttemptLimit
+          )
+        ) {
+          await this.sleep(WhatsAppPostPairingPolicy.pollDelayMs);
         }
       }
 
@@ -5237,7 +5264,7 @@ export class FlyDeployWizard implements DeployWizardPort {
       let observedAppActivity = "";
       let observedBridgeActivity = "";
 
-      for (let attempt = 0; attempt < 40; attempt += 1) {
+      for (let attempt = 0; attempt < WhatsAppPostPairingPolicy.selfChatVerificationAttemptLimit; attempt += 1) {
         const logs = await this.readRecentAppLogs(appName, machineId);
         const newAppActivity = this.extractNewLogActivity(latestAppLogs, logs);
         latestAppLogs = logs;
@@ -5283,8 +5310,13 @@ export class FlyDeployWizard implements DeployWizardPort {
             return { ok: true };
           }
         }
-        if (attempt < 19) {
-          await this.sleep(1_500);
+        if (
+          WhatsAppPostPairingPolicy.shouldPauseAfterAttempt(
+            attempt,
+            WhatsAppPostPairingPolicy.selfChatVerificationAttemptLimit
+          )
+        ) {
+          await this.sleep(WhatsAppPostPairingPolicy.pollDelayMs);
         }
       }
 
