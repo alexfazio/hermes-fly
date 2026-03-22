@@ -34,6 +34,7 @@ describe("TemplateWriter", () => {
       const entrypoint = await readFile(join(buildDir, "entrypoint.sh"), "utf8");
       const supervisor = await readFile(join(buildDir, "gateway-supervisor.sh"), "utf8");
       const sitecustomize = await readFile(join(buildDir, "sitecustomize.py"), "utf8");
+      const patchGateway = await readFile(join(buildDir, "patch-hermes-gateway.py"), "utf8");
       const patchBridge = await readFile(join(buildDir, "patch-whatsapp-bridge.py"), "utf8");
 
       assert.match(dockerfile, /^FROM python:3\.11-slim/m);
@@ -56,7 +57,9 @@ describe("TemplateWriter", () => {
       assert.match(dockerfile, /io\.hermes\.deploy\.channel="stable"/);
       assert.match(dockerfile, /io\.hermes\.compatibility_policy="1\.0\.0"/);
       assert.match(dockerfile, /COPY gateway-supervisor\.sh \/gateway-supervisor\.sh/);
+      assert.match(dockerfile, /COPY patch-hermes-gateway\.py \/tmp\/hermes-fly-patch-hermes-gateway\.py/);
       assert.match(dockerfile, /COPY patch-whatsapp-bridge\.py \/tmp\/hermes-fly-patch-whatsapp-bridge\.py/);
+      assert.match(dockerfile, /hermes-fly-patch-hermes-gateway\.py \/opt\/hermes\/hermes-agent/);
       assert.match(dockerfile, /hermes-fly-patch-whatsapp-bridge\.py \/opt\/hermes\/hermes-agent\/scripts\/whatsapp-bridge\/bridge\.js/);
 
       assert.match(flyToml, /^app = "test-app"$/m);
@@ -104,6 +107,10 @@ describe("TemplateWriter", () => {
       assert.match(sitecustomize, /thinking/);
       assert.match(sitecustomize, /disabled/);
       assert.match(sitecustomize, /run_agent/);
+
+      assert.match(patchGateway, /metadata=None/);
+      assert.match(patchGateway, /await self\.send_typing\(chat_id, metadata=metadata\)/);
+      assert.match(patchGateway, /signal send_typing signature/);
 
       assert.match(patchBridge, /messages\.upsert\.skipped/);
       assert.match(patchBridge, /messages\.upsert\.accepted/);

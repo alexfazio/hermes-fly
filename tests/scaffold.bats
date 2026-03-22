@@ -39,9 +39,19 @@ teardown() {
 @test "templates/Dockerfile.template runs the Hermes WhatsApp bridge patch script" {
   run cat "${PROJECT_ROOT}/templates/Dockerfile.template"
   assert_success
+  assert_output --partial "COPY patch-hermes-gateway.py /tmp/hermes-fly-patch-hermes-gateway.py"
+  assert_output --partial "hermes-fly-patch-hermes-gateway.py /opt/hermes/hermes-agent"
   assert_output --partial "COPY patch-whatsapp-bridge.py /tmp/hermes-fly-patch-whatsapp-bridge.py"
   assert_output --partial "scripts/whatsapp-bridge/bridge.js"
   assert_output --partial "hermes-fly-patch-whatsapp-bridge.py"
+}
+
+@test "templates/patch-hermes-gateway.py patches typing metadata compatibility" {
+  run cat "${PROJECT_ROOT}/templates/patch-hermes-gateway.py"
+  assert_success
+  assert_output --partial "metadata=None"
+  assert_output --partial "await self.send_typing(chat_id, metadata=metadata)"
+  assert_output --partial "signal send_typing signature"
 }
 
 @test "templates/patch-whatsapp-bridge.py contains self-chat diagnostics markers" {

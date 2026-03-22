@@ -21,6 +21,7 @@ export class TemplateWriter {
     const entrypointTemplate = join(templateDir, "entrypoint.sh");
     const supervisorTemplate = join(templateDir, "gateway-supervisor.sh");
     const sitecustomizeTemplate = join(templateDir, "sitecustomize.py");
+    const patchGatewayTemplate = join(templateDir, "patch-hermes-gateway.py");
     const patchBridgeTemplate = join(templateDir, "patch-whatsapp-bridge.py");
     const compatPolicy = await this.readCompatibilityPolicyVersion();
     const vmMemory = this.resolveVmMemory(config.vmSize);
@@ -44,6 +45,7 @@ export class TemplateWriter {
     await copyFile(entrypointTemplate, join(buildDir, "entrypoint.sh"));
     await copyFile(supervisorTemplate, join(buildDir, "gateway-supervisor.sh"));
     await copyFile(sitecustomizeTemplate, join(buildDir, "sitecustomize.py"));
+    await copyFile(patchGatewayTemplate, join(buildDir, "patch-hermes-gateway.py"));
     await copyFile(patchBridgeTemplate, join(buildDir, "patch-whatsapp-bridge.py"));
   }
 
