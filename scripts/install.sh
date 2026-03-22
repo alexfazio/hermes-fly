@@ -13,7 +13,7 @@ INSTALL_MARKER_FILENAME=".hermes-fly-install-managed"
 LEGACY_INSTALL_HOME="/usr/local/lib/hermes-fly"
 LEGACY_BIN_DIR="/usr/local/bin"
 # Standalone install.sh must bootstrap the checked installer revision, not a mutable branch tip.
-DEFAULT_BOOTSTRAP_INSTALLER_REF="v0.1.106"
+DEFAULT_BOOTSTRAP_INSTALLER_REF="v0.1.107"
 INSTALLER_ANSI_RESET=$'\033[0m'
 INSTALLER_ANSI_BOLD=$'\033[1m'
 INSTALLER_ANSI_ACCENT=$'\033[38;2;255;77;77m'
