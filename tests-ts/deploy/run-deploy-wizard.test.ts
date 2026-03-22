@@ -220,6 +220,12 @@ function makePromptPort(
   const writes: string[] = [];
   const selections: Array<{ initialIndex: number; optionCount: number }> = [];
   const multiSelections: Array<{ initialIndex: number; optionCount: number; initialSelectedIndices: number[] }> = [];
+  const nextAnswer = (kind: string, prompt: string): string => {
+    if (answers.length === 0) {
+      throw new Error(`No scripted answer left for ${kind}: ${prompt}`);
+    }
+    return answers.shift() ?? "";
+  };
   return {
     asked,
     secretAsked,
@@ -232,11 +238,11 @@ function makePromptPort(
     write: (message: string) => { writes.push(message); },
     ask: async (message: string) => {
       asked.push(message);
-      return answers.shift() ?? "";
+      return nextAnswer("ask", message);
     },
     askSecret: async (message: string) => {
       secretAsked.push(message);
-      return answers.shift() ?? "";
+      return nextAnswer("askSecret", message);
     },
     selectChoice: async <T>(params: {
       options: Array<{ value: T }>;
@@ -244,7 +250,7 @@ function makePromptPort(
       render: (activeIndex: number) => string;
     }) => {
       selections.push({ initialIndex: params.initialIndex, optionCount: params.options.length });
-      const answer = (answers.shift() ?? "").trim();
+      const answer = nextAnswer("selectChoice", params.render(params.initialIndex)).trim();
       let selectedIndex = params.initialIndex;
       if (answer.length === 0) {
         writes.push(params.render(selectedIndex));
@@ -276,7 +282,7 @@ function makePromptPort(
         initialSelectedIndices: [...(params.initialSelectedIndices ?? [])],
       });
       while (true) {
-        const answer = (answers.shift() ?? "").trim();
+        const answer = nextAnswer("selectManyChoices", params.render(params.initialIndex, params.initialSelectedIndices ?? [])).trim();
         let selectedIndices = [...(params.initialSelectedIndices ?? [])];
         if (answer.length > 0) {
           const parts = answer.split(",").map((value) => value.trim()).filter(Boolean);
@@ -2796,7 +2802,8 @@ describe("FlyDeployWizard.collectConfig", () => {
       "sk-live",
       "",
       "",
-      ""
+      "",
+      "y"
     ], { interactive: true });
     const runner = makeProcessRunner(async () => ({ exitCode: 1 }));
     const wizard = new FlyDeployWizard({
@@ -2821,7 +2828,8 @@ describe("FlyDeployWizard.collectConfig", () => {
       "sk-live",
       "",
       "",
-      ""
+      "",
+      "y"
     ], { interactive: true });
     const runner = makeProcessRunner(async (command, args) => {
       if (isFlyCommand(command) && args[0] === "apps" && args[1] === "list" && args[2] === "--json") {
@@ -2856,7 +2864,8 @@ describe("FlyDeployWizard.collectConfig", () => {
       "sk-live",
       "",
       "",
-      ""
+      "",
+      "y"
     ], { interactive: true });
     const runner = makeProcessRunner(async (command, args) => {
       if (isFlyCommand(command) && args[0] === "apps" && args[1] === "list" && args[2] === "--json") {
@@ -3025,7 +3034,9 @@ describe("FlyDeployWizard.collectConfig", () => {
         "2",
         "1",
         "1",
+        "1",
         "123:abc",
+        "y",
         "1",
         "",
         "y",
@@ -3118,7 +3129,9 @@ describe("FlyDeployWizard.collectConfig", () => {
         "2",
         "1",
         "1",
+        "1",
         "123:abc",
+        "y",
         "1",
         "",
         "y",
@@ -3301,6 +3314,7 @@ describe("FlyDeployWizard.collectConfig", () => {
       "",
       "1",
       "2",
+      "y",
       "y"
     ], { interactive: true });
     const runner = makeProcessRunner(async (command, args) => {
@@ -3350,6 +3364,8 @@ describe("FlyDeployWizard.collectConfig", () => {
       "2",
       "2",
       "2",
+      "2",
+      "y",
       "y"
     ], { interactive: true });
     const runner = makeProcessRunner(async (command, args) => {
@@ -3423,6 +3439,7 @@ describe("FlyDeployWizard.collectConfig", () => {
       "1",
       "1",
       "2",
+      "y",
       "y"
     ], { interactive: true });
     let userCodeAttempts = 0;
@@ -3881,6 +3898,7 @@ describe("FlyDeployWizard.collectConfig", () => {
       "1",
       "1",
       "2",
+      "y",
       "y"
     ], { interactive: true });
     const runner = makeProcessRunner(async (command, args) => {
@@ -4008,6 +4026,7 @@ describe("FlyDeployWizard.collectConfig", () => {
       "1",
       "1",
       "2",
+      "y",
       "y"
     ], { interactive: true });
     const runner = makeProcessRunner(async (command, args) => {
@@ -4121,6 +4140,7 @@ describe("FlyDeployWizard.collectConfig", () => {
       "y",
       "1",
       "",
+      "y",
       "y"
     ], { interactive: true });
     const runner = makeProcessRunner(async (command, args) => {
