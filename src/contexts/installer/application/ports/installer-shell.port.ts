@@ -6,6 +6,18 @@ export interface PreparedInstallSource {
   cleanup: () => void;
 }
 
+export interface ExistingInstallLocation {
+  installHome: string;
+  binDir: string;
+}
+
+export interface ResolveExistingInstallOptions {
+  platform?: string;
+  homeDir?: string;
+  xdgDataHome?: string;
+  preferSystemInstall?: boolean;
+}
+
 export interface InstallerShellPort {
   readCommandVersion(command: "node" | "npm"): Promise<string>;
   readCommandPath(command: string): Promise<string>;
@@ -16,6 +28,7 @@ export interface InstallerShellPort {
 }
 
 export interface InstallerBootstrapPort extends InstallerShellPort {
+  resolveExistingInstall(options?: ResolveExistingInstallOptions): Promise<ExistingInstallLocation | null>;
   resolveInstallRef(channel: InstallChannel, requestedVersion?: string): Promise<string>;
   prepareInstallSource(installRef: string): Promise<PreparedInstallSource>;
   ensureRuntimeArtifacts(sourceDir: string): Promise<void>;

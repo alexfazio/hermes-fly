@@ -1,14 +1,33 @@
-import { accessSync, constants, cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { basename, dirname, join } from "node:path";
+import { accessSync, constants, cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readlinkSync, readdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
+import { basename, dirname, join, resolve } from "node:path";
 import { NodeProcessRunner } from "../../../../adapters/process.js";
 import type { ForegroundProcessRunner, ProcessRunner } from "../../../../adapters/process.js";
 import type { InstallChannel, InstallerPlan } from "../../domain/install-plan.js";
-import type { InstallerBootstrapPort, PreparedInstallSource } from "../../application/ports/installer-shell.port.js";
+import {
+  INSTALL_MARKER_FILENAME,
+  isReusableManagedInstallLayout,
+  isUserLocalManagedInstallLayout,
+  resolveKnownManagedInstallLayouts,
+  type ManagedInstallLayoutOptions,
+} from "../../domain/managed-install-layout.js";
+import { resolveInstallerPaths } from "../../domain/installer-path-policy.js";
+import type {
+  ExistingInstallLocation,
+  InstallerBootstrapPort,
+  PreparedInstallSource,
+  ResolveExistingInstallOptions,
+} from "../../application/ports/installer-shell.port.js";
 
 const REPO = "alexfazio/hermes-fly";
 const SAFE_PROCESS_LOCALE = "C";
 const RELEASE_TAG = /^v(\d+)\.(\d+)\.(\d+)$/;
+
+interface ExistingInstallResolutionContext {
+  homeDir: string;
+  preferSystemInstall: boolean;
+  managedInstallLayoutOptions: ManagedInstallLayoutOptions;
+}
 
 function normalizeInstallRef(ref: string): string {
   const trimmed = ref.trim();
@@ -82,6 +101,7 @@ export class NodeInstallerPlatform implements InstallerBootstrapPort {
   constructor(
     private readonly runner: ProcessRunner = new NodeProcessRunner(),
     private readonly env: NodeJS.ProcessEnv = process.env,
+    private readonly managedInstallLayoutOptions: ManagedInstallLayoutOptions = {},
   ) {}
 
   async readCommandVersion(command: "node" | "npm"): Promise<string> {
@@ -108,6 +128,33 @@ export class NodeInstallerPlatform implements InstallerBootstrapPort {
     return result.stdout.trim().split(/\r?\n/, 1)[0] ?? "";
   }
 
+  async resolveExistingInstall(options: ResolveExistingInstallOptions = {}): Promise<ExistingInstallLocation | null> {
+    const resolutionContext = this.resolveExistingInstallResolutionContext(options);
+
+    for (const pathLauncher of this.readPathInstallLaunchers()) {
+      const existingInstall = this.resolveExistingInstallFromLauncher(pathLauncher, resolutionContext);
+      if (existingInstall && this.shouldReuseExistingInstall(existingInstall, resolutionContext)) {
+        return existingInstall;
+      }
+    }
+
+    for (const layout of resolveKnownManagedInstallLayouts(resolutionContext.homeDir, resolutionContext.managedInstallLayoutOptions)) {
+      const existingInstall = this.resolveExistingInstallFromLauncher(join(layout.binDir, "hermes-fly"), resolutionContext);
+      if (existingInstall && this.shouldReuseExistingInstall(existingInstall, resolutionContext)) {
+        return existingInstall;
+      }
+    }
+
+    for (const layout of resolveKnownManagedInstallLayouts(resolutionContext.homeDir, resolutionContext.managedInstallLayoutOptions)) {
+      const existingInstall = this.resolveExistingInstallLayout(layout.installHome, layout.binDir, resolutionContext);
+      if (existingInstall && this.shouldReuseExistingInstall(existingInstall, resolutionContext)) {
+        return existingInstall;
+      }
+    }
+
+    return null;
+  }
+
   async requiresSudo(installHome: string, binDir: string): Promise<boolean> {
     return this.needsSudo(installHome) || this.needsSudo(binDir);
   }
@@ -115,8 +162,13 @@ export class NodeInstallerPlatform implements InstallerBootstrapPort {
   async installFiles(plan: InstallerPlan): Promise<void> {
     const useSudo = await this.requiresSudo(plan.installHome, plan.binDir);
     if (useSudo && !(await this.commandExists("sudo"))) {
+      const suggestion = resolveInstallerPaths({
+        platform: plan.platform,
+        homeDir: this.resolveHomeDir(),
+        xdgDataHome: this.env.XDG_DATA_HOME,
+      });
       throw new Error(
-        `Cannot write to ${plan.installHome} and sudo is not available\nTry: HERMES_FLY_INSTALL_DIR=~/.local/bin HERMES_FLY_HOME=~/.local/lib/hermes-fly bash install.sh`,
+        `Cannot write to ${plan.installHome} and sudo is not available\nTry: HERMES_FLY_INSTALL_DIR="${suggestion.binDir}" HERMES_FLY_HOME="${suggestion.installHome}" bash install.sh`,
       );
     }
 
@@ -132,6 +184,7 @@ export class NodeInstallerPlatform implements InstallerBootstrapPort {
     await this.copyFileIfPresent(useSudo, join(plan.sourceDir, "package.json"), plan.installHome);
     await this.copyFileIfPresent(useSudo, join(plan.sourceDir, "package-lock.json"), plan.installHome);
     await this.copyDirIfPresent(useSudo, join(plan.sourceDir, "node_modules"), plan.installHome);
+    await this.writeInstallMarker(useSudo, plan.installHome, plan.installRef);
 
     await this.runMaybeSudo(useSudo, "mkdir", ["-p", plan.binDir], true);
     await this.runMaybeSudo(useSudo, "ln", ["-sf", join(plan.installHome, "hermes-fly"), join(plan.binDir, "hermes-fly")], true);
@@ -370,13 +423,25 @@ export class NodeInstallerPlatform implements InstallerBootstrapPort {
   }
 
   private needsSudo(targetPath: string): boolean {
-    const pathToCheck = existsSync(targetPath) ? targetPath : dirname(targetPath);
+    const pathToCheck = this.resolveWritableProbePath(targetPath);
     try {
       accessSync(pathToCheck, constants.W_OK);
       return false;
     } catch {
       return true;
     }
+  }
+
+  private resolveWritableProbePath(targetPath: string): string {
+    let pathToCheck = targetPath;
+    while (!existsSync(pathToCheck)) {
+      const parentPath = dirname(pathToCheck);
+      if (parentPath === pathToCheck) {
+        break;
+      }
+      pathToCheck = parentPath;
+    }
+    return pathToCheck;
   }
 
   private async copyDirIfPresent(useSudo: boolean, sourceDir: string, targetRoot: string): Promise<void> {
@@ -391,6 +456,190 @@ export class NodeInstallerPlatform implements InstallerBootstrapPort {
       return;
     }
     await this.runMaybeSudo(useSudo, "cp", [sourceFile, targetRoot], true);
+  }
+
+  private async writeInstallMarker(useSudo: boolean, installHome: string, installRef: string): Promise<void> {
+    const tempRoot = mkdtempSync(join(tmpdir(), "hermes-fly-install-marker-"));
+    const markerPath = join(tempRoot, INSTALL_MARKER_FILENAME);
+    try {
+      writeFileSync(markerPath, JSON.stringify({ installRef }) + "\n");
+      await this.runMaybeSudo(useSudo, "cp", [markerPath, join(installHome, INSTALL_MARKER_FILENAME)], true);
+    } finally {
+      rmSync(tempRoot, { recursive: true, force: true });
+    }
+  }
+
+  private resolveHomeDir(explicitHomeDir?: string): string {
+    const contextHome = explicitHomeDir?.trim();
+    if (contextHome) {
+      return contextHome;
+    }
+
+    const envHome = this.env.HOME?.trim();
+    return envHome && envHome.length > 0 ? envHome : homedir();
+  }
+
+  private readPathInstallLaunchers(): string[] {
+    const pathValue = this.env.PATH ?? process.env.PATH ?? "";
+    const pathEntries = pathValue.length > 0 ? pathValue.split(":") : ["."];
+    const launchers: string[] = [];
+
+    for (const entry of pathEntries) {
+      const searchDir = entry.length > 0 ? entry : ".";
+      const launcherPath = join(this.resolveSearchDir(searchDir), "hermes-fly");
+      if (existsSync(launcherPath)) {
+        launchers.push(launcherPath);
+      }
+    }
+
+    return launchers;
+  }
+
+  private resolveSearchDir(pathEntry: string): string {
+    return resolve(pathEntry);
+  }
+
+  private resolveExistingInstallFromLauncher(
+    commandPath: string,
+    resolutionContext: ExistingInstallResolutionContext,
+  ): ExistingInstallLocation | null {
+    if (!commandPath.startsWith("/") || !existsSync(commandPath)) {
+      return null;
+    }
+
+    try {
+      let symlinkHops = 0;
+      const maxSymlinkHops = 40;
+      const visitedPaths = new Set<string>();
+      let launcherPath = commandPath;
+      let resolvedPath = commandPath;
+      while (lstatSync(resolvedPath).isSymbolicLink()) {
+        if (visitedPaths.has(resolvedPath) || symlinkHops >= maxSymlinkHops) {
+          return null;
+        }
+        visitedPaths.add(resolvedPath);
+        symlinkHops += 1;
+        launcherPath = resolvedPath;
+        const symlinkTarget = readlinkSync(resolvedPath);
+        resolvedPath = symlinkTarget.startsWith("/") ? symlinkTarget : join(dirname(resolvedPath), symlinkTarget);
+      }
+
+      const resolvedBinaryPath = realpathSync(resolvedPath);
+      if (launcherPath === resolvedBinaryPath) {
+        return null;
+      }
+      const installHome = dirname(resolvedBinaryPath);
+      const binDir = dirname(launcherPath);
+      if (resolvedBinaryPath !== join(installHome, "hermes-fly")) {
+        return null;
+      }
+      return this.resolveExistingInstallLayout(installHome, binDir, resolutionContext);
+    } catch {
+      return null;
+    }
+  }
+
+  private resolveExistingInstallLayout(
+    installHome: string,
+    binDir: string,
+    resolutionContext: ExistingInstallResolutionContext,
+  ): ExistingInstallLocation | null {
+    const normalizedInstallHome = this.normalizeInstallHome(installHome);
+
+    const isManagedInstall = isReusableManagedInstallLayout(
+      {
+        layout: { installHome: normalizedInstallHome, binDir },
+        hasInstallerMarker: existsSync(join(normalizedInstallHome, INSTALL_MARKER_FILENAME)),
+        hasCliEntrypoint: existsSync(join(normalizedInstallHome, "dist", "cli.js")),
+        hasLegacyLibDirectory: existsSync(join(normalizedInstallHome, "lib", "ui.sh")),
+        hasPackageManifest: existsSync(join(normalizedInstallHome, "package.json")),
+        hasPackageLock: existsSync(join(normalizedInstallHome, "package-lock.json")),
+        hasCommanderDependency: existsSync(join(normalizedInstallHome, "node_modules", "commander", "package.json")),
+        isRepoCheckout: this.isRepoCheckoutInstall(normalizedInstallHome),
+      },
+      resolutionContext.homeDir,
+      resolutionContext.managedInstallLayoutOptions,
+    );
+
+    if (!isManagedInstall) {
+      return null;
+    }
+
+    return {
+      installHome: normalizedInstallHome,
+      binDir,
+    };
+  }
+
+  private shouldReuseExistingInstall(
+    layout: ExistingInstallLocation,
+    resolutionContext: ExistingInstallResolutionContext,
+  ): boolean {
+    if (!resolutionContext.preferSystemInstall) {
+      return true;
+    }
+
+    return !isUserLocalManagedInstallLayout(layout, {
+      homeDir: resolutionContext.homeDir,
+      userInstallHome: resolutionContext.managedInstallLayoutOptions.userInstallHome,
+      userBinDir: resolutionContext.managedInstallLayoutOptions.userBinDir,
+    });
+  }
+
+  private normalizeInstallHome(installHome: string): string {
+    try {
+      return realpathSync(installHome);
+    } catch {
+      return installHome;
+    }
+  }
+
+  private resolveExistingInstallResolutionContext(options: ResolveExistingInstallOptions): ExistingInstallResolutionContext {
+    return {
+      homeDir: this.resolveHomeDir(options.homeDir),
+      preferSystemInstall: options.preferSystemInstall === true,
+      managedInstallLayoutOptions: this.resolveManagedInstallLayoutOptions(options),
+    };
+  }
+
+  private resolveManagedInstallLayoutOptions(options: ResolveExistingInstallOptions = {}): ManagedInstallLayoutOptions {
+    const platform = this.resolveManagedInstallPlatform(options.platform);
+    const homeDir = this.resolveHomeDir(options.homeDir);
+    const userPaths = resolveInstallerPaths({
+      platform,
+      homeDir,
+      xdgDataHome: options.xdgDataHome?.trim() || this.env.XDG_DATA_HOME,
+    });
+
+    return {
+      userInstallHome: userPaths.installHome,
+      userBinDir: userPaths.binDir,
+      ...this.managedInstallLayoutOptions,
+    };
+  }
+
+  private resolveManagedInstallPlatform(platform?: string): "darwin" | "linux" {
+    const explicitPlatform = platform?.trim();
+    if (explicitPlatform === "darwin" || explicitPlatform === "linux") {
+      return explicitPlatform;
+    }
+    return process.platform === "darwin" ? "darwin" : "linux";
+  }
+
+  private isRepoCheckoutInstall(installHome: string): boolean {
+    return (
+      (
+        existsSync(join(installHome, "package.json"))
+        && existsSync(join(installHome, "package-lock.json"))
+        && existsSync(join(installHome, "tsconfig.json"))
+        && existsSync(join(installHome, "src"))
+      )
+      || (
+        existsSync(join(installHome, "README.md"))
+        && existsSync(join(installHome, "scripts", "install.sh"))
+        && existsSync(join(installHome, "tests"))
+      )
+    );
   }
 
   private async commandExists(command: string): Promise<boolean> {

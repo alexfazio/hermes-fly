@@ -35,8 +35,16 @@ cat ~/.hermes-fly/config.yaml
 Delete the `hermes-fly` script from wherever it was installed:
 
 ```bash
-# If installed to /usr/local/bin (default)
+# Fresh user-local installs (default)
+rm ~/.local/bin/hermes-fly
+rm -rf ~/.local/share/hermes-fly
+
+# macOS fresh installs store support files in Application Support
+rm -rf ~/Library/Application\ Support/hermes-fly
+
+# Older system-wide installs may still live here
 rm /usr/local/bin/hermes-fly
+rm -rf /usr/local/lib/hermes-fly
 
 # If installed elsewhere, find it first
 which hermes-fly

@@ -1,8 +1,10 @@
 import { Command } from "commander";
 import { realpathSync } from "node:fs";
+import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { NodeInstallerPlatform } from "./contexts/installer/infrastructure/adapters/node-installer-platform.js";
 import { InstallerPlan, type InstallChannel, type InstallMethod } from "./contexts/installer/domain/install-plan.js";
+import { resolveInstallerPaths } from "./contexts/installer/domain/installer-path-policy.js";
 import { runInstallSession } from "./contexts/installer/application/use-cases/run-install-session.js";
 import type { InstallerBootstrapPort } from "./contexts/installer/application/ports/installer-shell.port.js";
 
@@ -42,8 +44,8 @@ function detectArch(): string {
   }
 }
 
-function resolveInstallChannel(channel?: string): InstallChannel {
-  const resolved = channel?.trim() || process.env.HERMES_FLY_CHANNEL?.trim() || "latest";
+function resolveInstallChannel(channel?: string, env: NodeJS.ProcessEnv = process.env): InstallChannel {
+  const resolved = channel?.trim() || env.HERMES_FLY_CHANNEL?.trim() || "latest";
   switch (resolved) {
     case "latest":
     case "stable":
@@ -55,33 +57,69 @@ function resolveInstallChannel(channel?: string): InstallChannel {
   }
 }
 
-function resolveInstallHome(explicit?: string): string {
-  return explicit?.trim() || process.env.HERMES_FLY_HOME?.trim() || "/usr/local/lib/hermes-fly";
+function resolveCommandHomeDir(contextHomeDir: string | undefined, env: NodeJS.ProcessEnv = process.env): string {
+  const explicitHomeDir = contextHomeDir?.trim();
+  if (explicitHomeDir) {
+    return explicitHomeDir;
+  }
+
+  const envHomeDir = env.HOME?.trim();
+  if (envHomeDir) {
+    return envHomeDir;
+  }
+
+  return homedir();
 }
 
-function resolveBinDir(explicit?: string): string {
-  return explicit?.trim() || process.env.HERMES_FLY_INSTALL_DIR?.trim() || "/usr/local/bin";
+export interface InstallCommandContext {
+  env?: NodeJS.ProcessEnv;
+  homeDir?: string;
+  userId?: number;
 }
 
 export async function runInstallCommand(
   input: InstallCommandInput,
   shell: InstallerBootstrapPort = new NodeInstallerPlatform(),
   sessionRunner: typeof runInstallSession = runInstallSession,
+  context: InstallCommandContext = {},
 ): Promise<number> {
-  const installChannel = input.installChannel ?? resolveInstallChannel();
-  const installRef = input.installRef ?? (await shell.resolveInstallRef(installChannel, input.version ?? process.env.HERMES_FLY_VERSION));
+  const env = context.env ?? process.env;
+  const homeDir = resolveCommandHomeDir(context.homeDir, env);
+  const userId = context.userId ?? (typeof process.getuid === "function" ? process.getuid() : undefined);
+  const platform = input.platform ?? detectPlatform();
+  const arch = input.arch ?? detectArch();
+  const installChannel = resolveInstallChannel(input.installChannel, env);
+  const installRef = input.installRef ?? (await shell.resolveInstallRef(installChannel, input.version ?? env.HERMES_FLY_VERSION));
   const preparedSource = await shell.prepareInstallSource(installRef);
 
   try {
     await shell.ensureRuntimeArtifacts(preparedSource.sourceDir);
+    const existingInstall = await shell.resolveExistingInstall({
+      platform,
+      homeDir,
+      xdgDataHome: env.XDG_DATA_HOME,
+      preferSystemInstall: userId === 0,
+    });
+    const installPaths = resolveInstallerPaths({
+      platform,
+      homeDir,
+      xdgDataHome: env.XDG_DATA_HOME,
+      preferSystemInstall: userId === 0,
+      explicitInstallHome: input.installHome,
+      explicitBinDir: input.binDir,
+      envInstallHome: env.HERMES_FLY_HOME,
+      envBinDir: env.HERMES_FLY_INSTALL_DIR,
+      existingInstallHome: existingInstall?.installHome,
+      existingBinDir: existingInstall?.binDir,
+    });
     const plan = InstallerPlan.create({
-      platform: input.platform ?? detectPlatform(),
-      arch: input.arch ?? detectArch(),
+      platform,
+      arch,
       installChannel,
       installMethod: input.installMethod ?? preparedSource.installMethod,
       installRef,
-      installHome: resolveInstallHome(input.installHome),
-      binDir: resolveBinDir(input.binDir),
+      installHome: installPaths.installHome,
+      binDir: installPaths.binDir,
       sourceDir: input.sourceDir ?? preparedSource.sourceDir,
     });
 

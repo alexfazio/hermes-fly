@@ -27,8 +27,11 @@ curl -fsSL "https://raw.githubusercontent.com/alexfazio/hermes-fly/main/scripts/
 
 This installs the latest published `hermes-fly` release by default. The
 installer prefers packaged release assets and falls back to a source build only
-when an older tag does not provide one. To pin a
-specific release:
+when an older tag does not provide one. Fresh installs default to a user-local
+launcher in `~/.local/bin` plus an OS-specific install home (`~/.local/share`
+on Linux via XDG defaults, `~/Library/Application Support` on macOS). Existing
+installs are upgraded in place so current `/usr/local` users do not get moved
+silently. To pin a specific release:
 
 ```bash
 HERMES_FLY_VERSION=vX.Y.Z curl -fsSL "https://raw.githubusercontent.com/alexfazio/hermes-fly/main/scripts/install.sh" | bash
@@ -97,6 +100,9 @@ and [Fly.io Calculator](https://fly.io/calculator) for current rates.
 - **macOS or Linux** -- Windows is not supported.
 - **A Fly.io account** -- sign up free at [fly.io](https://fly.io).
 - **curl** and **git** -- standard on most systems.
+
+If `hermes-fly` is not already on your `PATH`, the installer prints the exact
+`export PATH=...` command to add the launcher directory for your shell.
 
 ## Security
 

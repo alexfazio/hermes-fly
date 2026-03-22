@@ -5,12 +5,15 @@ set -euo pipefail
 # Usage: curl -fsSL https://get.hermes-fly.dev/install.sh | bash
 
 REPO="alexfazio/hermes-fly"
-INSTALL_DIR="${HERMES_FLY_INSTALL_DIR:-/usr/local/bin}"
-export HERMES_HOME="${HERMES_FLY_HOME:-/usr/local/lib/hermes-fly}"
+INSTALL_DIR="${HERMES_FLY_INSTALL_DIR:-}"
+HERMES_HOME="${HERMES_FLY_HOME:-}"
 RELEASE_API_URL="${HERMES_FLY_RELEASE_API_URL:-https://api.github.com/repos/${REPO}/releases/latest}"
 SAFE_PROCESS_LOCALE="C"
+INSTALL_MARKER_FILENAME=".hermes-fly-install-managed"
+LEGACY_INSTALL_HOME="/usr/local/lib/hermes-fly"
+LEGACY_BIN_DIR="/usr/local/bin"
 # Standalone install.sh must bootstrap the checked installer revision, not a mutable branch tip.
-DEFAULT_BOOTSTRAP_INSTALLER_REF="v0.1.99"
+DEFAULT_BOOTSTRAP_INSTALLER_REF="v0.1.100"
 INSTALLER_ANSI_RESET=$'\033[0m'
 INSTALLER_ANSI_BOLD=$'\033[1m'
 INSTALLER_ANSI_ACCENT=$'\033[38;2;255;77;77m'
@@ -70,7 +73,516 @@ detect_arch() {
       echo "Error: Unsupported architecture: $arch" >&2
       return 1
       ;;
+	esac
+}
+
+resolve_home_dir_hint() {
+  local home_dir="${HOME:-}" derived_home
+  if [[ -n "$home_dir" ]]; then
+    printf '%s\n' "$home_dir"
+    return 0
+  fi
+
+  derived_home="$(CDPATH= cd -- ~ 2>/dev/null && pwd -P)" || return 1
+  printf '%s\n' "$derived_home"
+}
+
+resolve_home_dir_path() {
+  local home_dir
+  home_dir="$(resolve_home_dir_hint 2>/dev/null || true)"
+  if [[ -z "$home_dir" ]]; then
+    return 1
+  fi
+  if [[ "$home_dir" == /* ]]; then
+    printf '%s\n' "$home_dir"
+    return 0
+  fi
+  if [[ -d "$home_dir" ]]; then
+    (CDPATH= cd -- "$home_dir" && pwd -P)
+    return 0
+  fi
+  printf '%s\n' "$home_dir"
+}
+
+is_effective_root_user() {
+  local uid_value="${EUID:-}"
+  if [[ -n "$uid_value" ]]; then
+    [[ "$uid_value" -eq 0 ]]
+    return
+  fi
+
+  [[ "$(id -u)" -eq 0 ]]
+}
+
+canonicalize_existing_dir_path() {
+  local dir_path="$1"
+  if [[ -d "$dir_path" ]]; then
+    (CDPATH= cd -- "$dir_path" && pwd -P)
+    return 0
+  fi
+  printf '%s\n' "$dir_path"
+}
+
+canonicalize_existing_path() {
+  local target_path="$1" parent_dir
+  if [[ -e "$target_path" || -L "$target_path" ]]; then
+    parent_dir="$(canonicalize_existing_dir_path "$(dirname -- "$target_path")")" || return 1
+    printf '%s/%s\n' "$parent_dir" "$(basename -- "$target_path")"
+    return 0
+  fi
+  printf '%s\n' "$target_path"
+}
+
+resolve_search_dir_path() {
+  local dir_path="$1"
+  if [[ "$dir_path" == /* ]]; then
+    printf '%s\n' "$dir_path"
+    return 0
+  fi
+  if [[ -d "$dir_path" ]]; then
+    (CDPATH= cd -- "$dir_path" && pwd)
+    return 0
+  fi
+  if [[ "$PWD" == "/" ]]; then
+    printf '/%s\n' "$dir_path"
+  else
+    printf '%s/%s\n' "$PWD" "$dir_path"
+  fi
+}
+
+resolve_default_install_home() {
+  local platform="$1" home_dir data_home
+  if is_effective_root_user; then
+    canonicalize_existing_path "$LEGACY_INSTALL_HOME"
+    return 0
+  fi
+  home_dir="$(resolve_home_dir_path 2>/dev/null || true)"
+  case "$platform" in
+    darwin)
+      if [[ -n "$home_dir" ]]; then
+        printf '%s/Library/Application Support/hermes-fly\n' "$home_dir"
+      else
+        canonicalize_existing_path "$LEGACY_INSTALL_HOME"
+      fi
+      ;;
+    linux)
+      data_home="${XDG_DATA_HOME:-}"
+      if [[ -n "$data_home" && "$data_home" == /* ]]; then
+        printf '%s/hermes-fly\n' "$data_home"
+      elif [[ -n "$home_dir" ]]; then
+        printf '%s/.local/share/hermes-fly\n' "$home_dir"
+      else
+        canonicalize_existing_path "$LEGACY_INSTALL_HOME"
+      fi
+      ;;
+    *)
+      echo "Error: Unsupported installer platform for path resolution: $platform" >&2
+      return 1
+      ;;
   esac
+}
+
+resolve_default_bin_dir() {
+  local home_dir
+  if is_effective_root_user; then
+    canonicalize_existing_dir_path "$LEGACY_BIN_DIR"
+    return 0
+  fi
+  home_dir="$(resolve_home_dir_path 2>/dev/null || true)"
+  if [[ -n "$home_dir" ]]; then
+    printf '%s/.local/bin\n' "$home_dir"
+  else
+    canonicalize_existing_dir_path "$LEGACY_BIN_DIR"
+  fi
+}
+
+resolve_path_fix_hint() {
+  local shell_path="${1:-}"
+  case "$shell_path" in
+    *zsh) printf 'zsh: ~/.zshrc, bash: ~/.bashrc\n' ;;
+    *bash) printf 'bash: ~/.bashrc, zsh: ~/.zshrc\n' ;;
+    *) printf 'shell profile: ~/.profile\n' ;;
+  esac
+}
+
+path_contains_dir() {
+  local path_value="${1:-}" bin_dir="$2" path_entry
+  [[ -n "$path_value" ]] || return 1
+
+  while true; do
+    case "$path_value" in
+      *:*)
+        path_entry="${path_value%%:*}"
+        path_value="${path_value#*:}"
+        ;;
+      *)
+        path_entry="$path_value"
+        path_value=""
+        ;;
+    esac
+
+    if [[ "$path_entry" == "$bin_dir" ]]; then
+      return 0
+    fi
+
+    [[ -n "$path_value" ]] || break
+  done
+
+  return 1
+}
+
+print_path_guidance_if_needed() {
+  local bin_dir="$1"
+  if path_contains_dir "${PATH:-}" "$bin_dir"; then
+    return 0
+  fi
+
+  echo "PATH missing hermes-fly bin dir: $bin_dir"
+  echo '  This can make hermes-fly show as "command not found" in new terminals.'
+  echo "  Fix ($(resolve_path_fix_hint "${SHELL:-}")):"
+  echo "    export PATH=\"$bin_dir:\$PATH\""
+  echo ""
+}
+
+is_known_managed_install_layout() {
+  local install_home="$1" bin_dir="$2" candidate_home candidate_bin normalized_install_home normalized_bin_dir normalized_candidate_home normalized_candidate_bin
+  normalized_install_home="$(canonicalize_existing_path "$install_home")" || return 1
+  normalized_bin_dir="$(canonicalize_existing_dir_path "$bin_dir")" || return 1
+  while IFS='|' read -r candidate_home candidate_bin; do
+    normalized_candidate_home="$(canonicalize_existing_path "$candidate_home")" || return 1
+    normalized_candidate_bin="$(canonicalize_existing_dir_path "$candidate_bin")" || return 1
+    if [[ "$normalized_install_home" == "$normalized_candidate_home" && "$normalized_bin_dir" == "$normalized_candidate_bin" ]]; then
+      return 0
+    fi
+  done < <(resolve_known_managed_install_layouts 2>/dev/null || true)
+
+  return 1
+}
+
+is_system_managed_install_layout() {
+  local install_home="$1" bin_dir="$2" normalized_install_home normalized_bin_dir normalized_system_home normalized_system_bin
+  normalized_install_home="$(canonicalize_existing_path "$install_home")" || return 1
+  normalized_bin_dir="$(canonicalize_existing_dir_path "$bin_dir")" || return 1
+  normalized_system_home="$(canonicalize_existing_path "$LEGACY_INSTALL_HOME")" || return 1
+  normalized_system_bin="$(canonicalize_existing_dir_path "$LEGACY_BIN_DIR")" || return 1
+
+  [[ "$normalized_install_home" == "$normalized_system_home" && "$normalized_bin_dir" == "$normalized_system_bin" ]]
+}
+
+resolve_current_user_local_install_homes() {
+  local home_dir data_home
+  home_dir="$(resolve_home_dir_path 2>/dev/null || true)"
+  if [[ -n "$home_dir" ]]; then
+    printf '%s\n' "$home_dir/Library/Application Support/hermes-fly"
+    printf '%s\n' "$home_dir/.local/lib/hermes-fly"
+  fi
+
+  data_home="${XDG_DATA_HOME:-}"
+  if [[ -n "$data_home" && "$data_home" == /* ]]; then
+    printf '%s\n' "$data_home/hermes-fly"
+  elif [[ -n "$home_dir" ]]; then
+    printf '%s\n' "$home_dir/.local/share/hermes-fly"
+  fi
+}
+
+is_user_local_managed_install_layout() {
+  local install_home="$1" bin_dir="$2" normalized_install_home normalized_bin_dir candidate_home normalized_candidate_home
+  normalized_install_home="$(canonicalize_existing_path "$install_home")" || return 1
+  normalized_bin_dir="$(canonicalize_existing_dir_path "$bin_dir")" || return 1
+
+  [[ "$normalized_bin_dir" == */.local/bin ]] || return 1
+
+  while IFS= read -r candidate_home; do
+    [[ -n "$candidate_home" ]] || continue
+    normalized_candidate_home="$(canonicalize_existing_path "$candidate_home" 2>/dev/null || true)"
+    [[ -n "$normalized_candidate_home" ]] || continue
+    if [[ "$normalized_install_home" == "$normalized_candidate_home" ]]; then
+      return 0
+    fi
+  done < <(resolve_current_user_local_install_homes 2>/dev/null || true)
+
+  return 1
+}
+
+existing_install_layout_reusable_for_current_mode() {
+  local install_home="$1" bin_dir="$2"
+  if is_effective_root_user && is_user_local_managed_install_layout "$install_home" "$bin_dir"; then
+    return 1
+  fi
+  return 0
+}
+
+resolve_known_managed_install_layouts() {
+  local home_dir legacy_install_home legacy_bin_dir user_bin_dir user_install_home data_home
+  home_dir="$(resolve_home_dir_path 2>/dev/null || true)"
+  legacy_install_home="$(canonicalize_existing_path "$LEGACY_INSTALL_HOME")" || return 1
+  legacy_bin_dir="$(canonicalize_existing_dir_path "$LEGACY_BIN_DIR")" || return 1
+  if [[ -n "$home_dir" ]]; then
+    user_bin_dir="$home_dir/.local/bin"
+    user_install_home="$home_dir/Library/Application Support/hermes-fly"
+    printf '%s|%s\n' "$user_install_home" "$user_bin_dir"
+
+    data_home="${XDG_DATA_HOME:-}"
+    if [[ -n "$data_home" && "$data_home" == /* ]]; then
+      user_install_home="$data_home/hermes-fly"
+    else
+      user_install_home="$home_dir/.local/share/hermes-fly"
+    fi
+    printf '%s|%s\n' "$user_install_home" "$user_bin_dir"
+    printf '%s|%s\n' "$home_dir/.local/lib/hermes-fly" "$user_bin_dir"
+  fi
+  printf '%s|%s\n' "$legacy_install_home" "$legacy_bin_dir"
+}
+
+is_repo_checkout_install_layout() {
+  local install_home="$1"
+  if [[ -f "$install_home/package.json" && -f "$install_home/package-lock.json" && -f "$install_home/tsconfig.json" && -d "$install_home/src" ]]; then
+    return 0
+  fi
+  [[ -f "$install_home/README.md" ]] || return 1
+  [[ -f "$install_home/scripts/install.sh" ]] || return 1
+  [[ -d "$install_home/tests" ]] || return 1
+  return 0
+}
+
+is_legacy_lib_install_layout() {
+  local install_home="$1"
+  [[ -f "$install_home/lib/ui.sh" ]]
+}
+
+is_pre_marker_runtime_install_layout() {
+  local install_home="$1"
+  [[ -f "$install_home/package.json" ]] || return 1
+  [[ -f "$install_home/package-lock.json" ]] || return 1
+  [[ -f "$install_home/node_modules/commander/package.json" ]] || return 1
+  return 0
+}
+
+resolve_existing_install_layout_from_candidate() {
+  local install_home="$1" bin_dir="$2"
+
+  [[ -n "$install_home" && -n "$bin_dir" ]] || return 1
+
+  is_repo_checkout_install_layout "$install_home" && return 1
+
+  if [[ -f "$install_home/dist/cli.js" ]]; then
+    if [[ -f "$install_home/$INSTALL_MARKER_FILENAME" ]] || is_known_managed_install_layout "$install_home" "$bin_dir"; then
+      printf '%s|%s\n' "$install_home" "$bin_dir"
+      return 0
+    fi
+    is_pre_marker_runtime_install_layout "$install_home" || return 1
+    printf '%s|%s\n' "$install_home" "$bin_dir"
+    return 0
+  fi
+
+  is_legacy_lib_install_layout "$install_home" || return 1
+  is_known_managed_install_layout "$install_home" "$bin_dir" || return 1
+  printf '%s|%s\n' "$install_home" "$bin_dir"
+}
+
+resolve_existing_install_layout_from_launcher() {
+  local bin_path="$1" resolved dir resolved_dir install_home bin_dir launcher_path symlink_hops=0 max_symlink_hops=40
+
+  if [[ -z "$bin_path" ]]; then
+    return 1
+  fi
+  case "$bin_path" in
+    /*) ;;
+    *) return 1 ;;
+  esac
+  if [[ ! -e "$bin_path" && ! -L "$bin_path" ]]; then
+    return 1
+  fi
+
+  resolved="$bin_path"
+  launcher_path="$bin_path"
+  while [[ -L "$resolved" ]]; do
+    symlink_hops=$((symlink_hops + 1))
+    if [[ "$symlink_hops" -gt "$max_symlink_hops" ]]; then
+      return 1
+    fi
+    launcher_path="$resolved"
+    dir="$(CDPATH= cd -- "$(dirname -- "$resolved")" && pwd -P)" || return 1
+    resolved="$(readlink "$resolved")" || return 1
+    case "$resolved" in
+      /*) ;;
+      *) resolved="${dir}/${resolved}" ;;
+    esac
+  done
+  resolved_dir="$(CDPATH= cd -- "$(dirname -- "$resolved")" && pwd -P)" || return 1
+  resolved="${resolved_dir}/$(basename -- "$resolved")"
+  [[ -f "$resolved" ]] || return 1
+  [[ "$launcher_path" != "$resolved" ]] || return 1
+
+  install_home="$(CDPATH= cd -- "$(dirname -- "$resolved")" && pwd -P)" || return 1
+  bin_dir="$(resolve_search_dir_path "$(dirname -- "$launcher_path")")" || return 1
+  [[ "$resolved" == "$install_home/hermes-fly" ]] || return 1
+  resolve_existing_install_layout_from_candidate "$install_home" "$bin_dir"
+}
+
+list_path_install_launchers() {
+  local remaining_path="${PATH:-}" path_entry path_dir launcher_path
+  if [[ -z "$remaining_path" ]]; then
+    remaining_path="."
+  fi
+
+  while true; do
+    case "$remaining_path" in
+      *:*)
+        path_entry="${remaining_path%%:*}"
+        remaining_path="${remaining_path#*:}"
+        ;;
+      *)
+        path_entry="$remaining_path"
+        remaining_path=""
+        ;;
+    esac
+
+    if [[ -z "$path_entry" ]]; then
+      path_entry="."
+    fi
+
+    path_dir="$(resolve_search_dir_path "$path_entry" 2>/dev/null || printf '%s\n' "$path_entry")"
+    launcher_path="${path_dir}/hermes-fly"
+    if [[ -e "$launcher_path" || -L "$launcher_path" ]]; then
+      printf '%s\n' "$launcher_path"
+    fi
+
+    if [[ -z "$remaining_path" ]]; then
+      break
+    fi
+  done
+}
+
+resolve_existing_install_layout() {
+  local bin_path resolved_layout install_home bin_dir
+  while IFS= read -r bin_path; do
+    [[ -n "$bin_path" ]] || continue
+    resolved_layout="$(resolve_existing_install_layout_from_launcher "$bin_path" 2>/dev/null || true)"
+    if [[ -n "$resolved_layout" ]]; then
+      install_home="${resolved_layout%%|*}"
+      bin_dir="${resolved_layout#*|}"
+      if existing_install_layout_reusable_for_current_mode "$install_home" "$bin_dir"; then
+        printf '%s\n' "$resolved_layout"
+        return 0
+      fi
+    fi
+  done < <(list_path_install_launchers 2>/dev/null || true)
+
+  while IFS='|' read -r install_home bin_dir; do
+    [[ -n "$install_home" && -n "$bin_dir" ]] || continue
+    resolved_layout="$(resolve_existing_install_layout_from_launcher "$bin_dir/hermes-fly" 2>/dev/null || true)"
+    if [[ -n "$resolved_layout" ]]; then
+      install_home="${resolved_layout%%|*}"
+      bin_dir="${resolved_layout#*|}"
+      if existing_install_layout_reusable_for_current_mode "$install_home" "$bin_dir"; then
+        printf '%s\n' "$resolved_layout"
+        return 0
+      fi
+    fi
+    resolved_layout="$(resolve_existing_install_layout_from_candidate "$install_home" "$bin_dir" 2>/dev/null || true)"
+    if [[ -n "$resolved_layout" ]]; then
+      install_home="${resolved_layout%%|*}"
+      bin_dir="${resolved_layout#*|}"
+      if existing_install_layout_reusable_for_current_mode "$install_home" "$bin_dir"; then
+        printf '%s\n' "$resolved_layout"
+        return 0
+      fi
+    fi
+  done < <(resolve_known_managed_install_layouts 2>/dev/null || true)
+
+  return 1
+}
+
+resolve_install_layout() {
+  local platform="$1" existing_layout="" existing_home="" existing_bin="" has_install_override=0
+  if [[ -n "${HERMES_HOME:-}" || -n "${INSTALL_DIR:-}" || -n "${HERMES_FLY_HOME:-}" || -n "${HERMES_FLY_INSTALL_DIR:-}" ]]; then
+    has_install_override=1
+  fi
+  if [[ "$has_install_override" -eq 0 && ( -z "${HERMES_HOME:-}" || -z "${INSTALL_DIR:-}" ) ]]; then
+    existing_layout="$(resolve_existing_install_layout 2>/dev/null || true)"
+    if [[ -n "$existing_layout" ]]; then
+      existing_home="${existing_layout%%|*}"
+      existing_bin="${existing_layout#*|}"
+    fi
+  fi
+
+  if [[ -z "${HERMES_HOME:-}" ]]; then
+    if [[ -n "$existing_home" ]]; then
+      HERMES_HOME="$existing_home"
+    else
+      HERMES_HOME="$(resolve_default_install_home "$platform")" || return 1
+    fi
+  fi
+  if [[ -z "${INSTALL_DIR:-}" ]]; then
+    if [[ -n "$existing_bin" ]]; then
+      INSTALL_DIR="$existing_bin"
+    else
+      INSTALL_DIR="$(resolve_default_bin_dir)" || return 1
+    fi
+  fi
+
+  export HERMES_HOME
+  export HERMES_FLY_HOME="${HERMES_FLY_HOME:-$HERMES_HOME}"
+  export HERMES_FLY_INSTALL_DIR="${HERMES_FLY_INSTALL_DIR:-$INSTALL_DIR}"
+}
+
+resolve_bootstrap_install_layout() {
+  local platform="${HERMES_FLY_PLATFORM_OVERRIDE:-}"
+  local install_home="${HERMES_HOME:-}"
+  local bin_dir="${INSTALL_DIR:-}"
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --platform)
+        if [[ $# -lt 2 ]]; then
+          break
+        fi
+        platform="$2"
+        shift 2
+        ;;
+      --platform=*)
+        platform="${1#*=}"
+        shift
+        ;;
+      --install-home)
+        if [[ $# -lt 2 ]]; then
+          break
+        fi
+        install_home="$2"
+        shift 2
+        ;;
+      --install-home=*)
+        install_home="${1#*=}"
+        shift
+        ;;
+      --bin-dir)
+        if [[ $# -lt 2 ]]; then
+          break
+        fi
+        bin_dir="$2"
+        shift 2
+        ;;
+      --bin-dir=*)
+        bin_dir="${1#*=}"
+        shift
+        ;;
+      --)
+        break
+        ;;
+      *)
+        shift
+        ;;
+    esac
+  done
+
+  if [[ -z "$platform" ]]; then
+    platform="$(detect_platform)" || return 1
+  fi
+
+  HERMES_HOME="$install_home"
+  INSTALL_DIR="$bin_dir"
+  resolve_install_layout "$platform"
 }
 
 normalize_install_ref() {
@@ -392,10 +904,17 @@ verify_installed_version() {
 }
 
 _needs_sudo() {
-  local dir="$1"
-  if [[ -d "$dir" && ! -w "$dir" ]]; then
-    return 0
-  elif [[ ! -d "$dir" && ! -w "$(dirname "$dir")" ]]; then
+  local dir="$1" probe_dir parent_dir
+  probe_dir="$dir"
+  while [[ ! -e "$probe_dir" ]]; do
+    parent_dir="$(dirname "$probe_dir")"
+    if [[ "$parent_dir" == "$probe_dir" ]]; then
+      break
+    fi
+    probe_dir="$parent_dir"
+  done
+
+  if [[ ! -w "$probe_dir" ]]; then
     return 0
   fi
   return 1
@@ -411,6 +930,7 @@ _run() {
 
 install_files() {
   local src_dir="$1" dest_dir="$2" bin_dir="$3"
+  local marker_dir marker_path
 
   # Detect if sudo is needed for either directory
   _USE_SUDO=0
@@ -419,8 +939,15 @@ install_files() {
     if command -v sudo >/dev/null 2>&1; then
       _USE_SUDO=1
     else
+      local suggestion_platform suggestion_home suggestion_bin
+      suggestion_platform="${HERMES_FLY_PLATFORM_OVERRIDE:-}"
+      if [[ -z "$suggestion_platform" ]]; then
+        suggestion_platform="$(detect_platform)" || return 1
+      fi
+      suggestion_home="$(resolve_default_install_home "$suggestion_platform")" || return 1
+      suggestion_bin="$(resolve_default_bin_dir)" || return 1
       echo "Error: Cannot write to $dest_dir and sudo is not available" >&2
-      echo "Try: HERMES_FLY_INSTALL_DIR=~/.local/bin HERMES_FLY_HOME=~/.local/lib/hermes-fly bash install.sh" >&2
+      printf 'Try: HERMES_FLY_INSTALL_DIR="%s" HERMES_FLY_HOME="%s" bash install.sh\n' "$suggestion_bin" "$suggestion_home" >&2
       return 1
     fi
   fi
@@ -450,6 +977,11 @@ install_files() {
   if [[ -d "$src_dir/node_modules" ]]; then
     _run cp -r "$src_dir/node_modules" "$dest_dir/"
   fi
+  marker_dir="$(mktemp -d)"
+  marker_path="${marker_dir}/${INSTALL_MARKER_FILENAME}"
+  printf '{"install_ref":"%s"}\n' "${HERMES_FLY_VERSION:-unknown}" > "$marker_path"
+  _run cp "$marker_path" "$dest_dir/$INSTALL_MARKER_FILENAME"
+  rm -rf "$marker_dir"
 
   # Symlink into PATH
   _run mkdir -p "$bin_dir"
@@ -532,6 +1064,7 @@ bootstrap_installer_cli() {
 
   local tmp_dir bootstrap_dir local_repo_root installer_ref
   local use_shell_banner=0
+  local installer_args=()
   tmp_dir="$(mktemp -d)"
   trap 'rm -rf "${tmp_dir:-}"' RETURN
   bootstrap_dir="$tmp_dir/bootstrap"
@@ -549,11 +1082,13 @@ bootstrap_installer_cli() {
   fi
 
   HERMES_FLY_INSTALLER_QUIET=1 prepare_runtime_artifacts "$bootstrap_dir" || return 1
+  resolve_bootstrap_install_layout "$@" || return 1
+  installer_args=(install --install-home "$HERMES_HOME" --bin-dir "$INSTALL_DIR")
 
   if [[ "$use_shell_banner" -eq 1 ]]; then
-    HERMES_FLY_INSTALLER_SKIP_BANNER=1 node "$bootstrap_dir/dist/install-cli.js" install "$@"
+    HERMES_FLY_INSTALLER_SKIP_BANNER=1 node "$bootstrap_dir/dist/install-cli.js" "${installer_args[@]}" "$@"
   else
-    node "$bootstrap_dir/dist/install-cli.js" install "$@"
+    node "$bootstrap_dir/dist/install-cli.js" "${installer_args[@]}" "$@"
   fi
 }
 
@@ -579,6 +1114,7 @@ legacy_main() {
   fi
 
   require_command node "to run hermes-fly" || exit 1
+  resolve_install_layout "$platform" || exit 1
 
   echo "Platform: $platform/$arch"
   echo "Channel: $install_channel"
@@ -613,6 +1149,8 @@ legacy_main() {
   local version
   verify_installed_version "$INSTALL_DIR/hermes-fly" "$install_ref" || exit 1
   version="$("$INSTALL_DIR/hermes-fly" --version 2>/dev/null || echo "hermes-fly (unknown version)")"
+
+  print_path_guidance_if_needed "$INSTALL_DIR"
 
   echo ""
   echo "hermes-fly installed successfully!"
