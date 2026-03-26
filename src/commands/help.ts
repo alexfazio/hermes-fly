@@ -5,6 +5,7 @@ Usage:
 
 Commands:
   deploy              Interactive deployment wizard
+  update [-a APP]     Update existing deployment to latest version
   resume [-a APP]     Resume checks after interrupted deploy
   list                List all deployed agents
   status [-a APP]     Check deployment health
@@ -26,6 +27,8 @@ Options:
 
 Examples:
   hermes-fly deploy                  # Start deployment wizard
+  hermes-fly update                  # Update current app to latest
+  hermes-fly update -a my-hermes     # Update specific app
   hermes-fly resume                  # Resume checks for current app
   hermes-fly status                  # Check current app status
   hermes-fly status -a my-hermes     # Check specific app

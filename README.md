@@ -11,6 +11,7 @@ and manages a Hermes instance on Fly.io.
 ## Features
 
 - **Deploy wizard** -- guided setup that provisions your app, volume, VM, and secrets
+- **Update** -- update existing deployments to latest Hermes version without data loss
 - **Status** -- check app health, machine state, region, and URL at a glance
 - **Logs** -- stream or tail live application logs
 - **Doctor** -- run diagnostic checks to verify connectivity, auth, and app health
@@ -72,13 +73,14 @@ The wizard walks you through:
 
 ## Commands
 
-| Command              | Description                              |
-| -------------------- | ---------------------------------------- |
-| `hermes-fly deploy`  | Launch the interactive deploy wizard     |
-| `hermes-fly status`  | Show app status, machine state, and URL  |
-| `hermes-fly logs`    | Stream live application logs             |
-| `hermes-fly doctor`  | Run diagnostic checks on deployment      |
-| `hermes-fly destroy` | Tear down app, volumes, and local config |
+| Command              | Description                                       |
+| -------------------- | ------------------------------------------------- |
+| `hermes-fly deploy`  | Launch the interactive deploy wizard              |
+| `hermes-fly update`  | Update existing deployment to latest version      |
+| `hermes-fly status`  | Show app status, machine state, and URL           |
+| `hermes-fly logs`    | Stream live application logs                      |
+| `hermes-fly doctor`  | Run diagnostic checks on deployment               |
+| `hermes-fly destroy` | Tear down app, volumes, and local config          |
 
 ## Cost Estimates
 

@@ -542,7 +542,6 @@ export class FlyDeployWizard implements DeployWizardPort {
     const env = this.env;
     if (this.prompts.isInteractive()) {
       this.writeHero();
-      this.writeHostingPlatformSection();
     }
 
     const orgSlug = await this.collectOrgSlug(env.HERMES_FLY_ORG ?? env.DEPLOY_ORG ?? env.FLY_ORG);
@@ -645,32 +644,9 @@ export class FlyDeployWizard implements DeployWizardPort {
     return config;
   }
 
-  private writeHostingPlatformSection(): void {
-    const platforms = listHostingPlatforms();
-    const defaultPlatform = resolveDefaultHostingPlatform();
-    const defaultIndex = Math.max(1, platforms.findIndex((platform) => platform.key === defaultPlatform.key) + 1);
-
-    this.writeChoiceSection(
-      "Hosting Platform",
-      "",
-      renderDeployChoiceOptions(
-        platforms.map((platform) => ({
-          label: platform.displayLabel,
-          disabled: platform.disabled,
-        })),
-        defaultIndex,
-        {
-          numbered: false,
-          colorizeDisabled: true,
-          disabledStyleStream: this.prompts.outputStream?.(),
-        }
-      )
-    );
-  }
-
-  async createBuildContext(config: DeployConfig): Promise<{ buildDir: string }> {
+  async createBuildContext(config: DeployConfig, opts?: { update?: boolean }): Promise<{ buildDir: string }> {
     const buildDir = join(tmpdir(), `hermes-deploy-${config.appName}-${Date.now()}`);
-    await this.templateWriter.createBuildContext(config, buildDir);
+    await this.templateWriter.createBuildContext(config, buildDir, opts);
     return { buildDir };
   }
 
@@ -6201,6 +6177,174 @@ export class FlyDeployWizard implements DeployWizardPort {
       ...(env ?? {}),
       LANG: SAFE_PROCESS_LOCALE,
       LC_ALL: SAFE_PROCESS_LOCALE,
+    };
+  }
+
+  async fetchExistingConfig(appName: string): Promise<import("../../application/ports/deploy-wizard.port.js").ExistingAppConfig | null> {
+    const runner = new NodeProcessRunner();
+    const { mkdtemp, readFile, rm } = await import("node:fs/promises");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    
+    // Use fly config save to get the actual deployed config
+    const tempDir = await mkdtemp(join(tmpdir(), "hermes-fly-config-"));
+    try {
+      const result = await runner.run(
+        "fly",
+        ["config", "save", "-a", appName, "-c", join(tempDir, "fly.toml")],
+        { env: this.env }
+      );
+      
+      if (result.exitCode !== 0) {
+        return null;
+      }
+      
+      // Parse the saved fly.toml
+      const tomlContent = await readFile(join(tempDir, "fly.toml"), "utf8");
+      
+      // Extract primary_region
+      const regionMatch = tomlContent.match(/^primary_region\s*=\s*"([^"]+)"/m);
+      const region = regionMatch?.[1] ?? DEFAULT_REGION;
+      
+      // Extract vm size from [[vm]] section
+      const vmSizeMatch = tomlContent.match(/^\[\[vm\]\][\s\S]*?^\s*size\s*=\s*"([^"]+)"/m);
+      const vmSize = vmSizeMatch?.[1] ?? DEFAULT_VM_SIZE;
+      
+      // Get volume size from fly volumes list
+      const volResult = await runner.run("fly", ["volumes", "list", "-a", appName, "--json"], { env: this.env });
+      let volumeSize = DEFAULT_VOLUME_SIZE;
+      if (volResult.exitCode === 0 && volResult.stdout) {
+        try {
+          const volumes = JSON.parse(volResult.stdout) as Array<{ size_gb?: number; SizeGb?: number }>;
+          const vol = volumes[0];
+          if (vol) {
+            volumeSize = vol.size_gb ?? vol.SizeGb ?? DEFAULT_VOLUME_SIZE;
+          }
+        } catch {
+          // use default
+        }
+      }
+      
+      return { region, vmSize, volumeSize };
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  }
+
+  async promptUpdateConfigChoice(
+    existing: import("../../application/ports/deploy-wizard.port.js").ExistingAppConfig
+  ): Promise<{ keep: boolean; config?: import("../../application/ports/deploy-wizard.port.js").DeployConfig }> {
+    if (!this.prompts.isInteractive()) {
+      return { keep: true };
+    }
+
+    this.prompts.write("\nExisting deployment configuration found:\n");
+    this.prompts.write(`  Region:      ${existing.region}\n`);
+    this.prompts.write(`  VM Size:     ${existing.vmSize}\n`);
+    this.prompts.write(`  Volume Size: ${existing.volumeSize} GB\n\n`);
+
+    const choice = await this.chooseNumber(
+      "Choose an option:\n  1. Keep existing configuration\n  2. Quick preset (recommended setups)\n  3. Custom configuration (full wizard)\n\nOption [1]: ",
+      3,
+      1
+    );
+
+    if (choice === 1) {
+      return { keep: true };
+    }
+
+    if (choice === 2) {
+      // Quick preset selection
+      return this.selectVmPreset(existing);
+    }
+
+    // User wants custom config - run full wizard
+    this.prompts.write("\n--- Update Configuration ---\n");
+    const region = await this.collectRegion(this.env.HERMES_FLY_REGION);
+    const vmSize = await this.collectVmSize(this.env.HERMES_FLY_VM_SIZE);
+    const volumeSize = await this.collectVolumeSize(this.env.HERMES_FLY_VOLUME_SIZE);
+
+    return {
+      keep: false,
+      config: {
+        ...existing,
+        region,
+        vmSize,
+        volumeSize,
+      } as import("../../application/ports/deploy-wizard.port.js").DeployConfig,
+    };
+  }
+
+  private async selectVmPreset(
+    existing: import("../../application/ports/deploy-wizard.port.js").ExistingAppConfig
+  ): Promise<{ keep: boolean; config?: import("../../application/ports/deploy-wizard.port.js").DeployConfig }> {
+    const PRESETS = [
+      { 
+        name: "Starter / Low-traffic", 
+        vmSize: "shared-cpu-1x", 
+        memory: "512 MB",
+        bestFor: "Cheap, auto-scales to zero, perfect for 90% of apps" 
+      },
+      { 
+        name: "Production Web/API", 
+        vmSize: "shared-cpu-2x", 
+        memory: "1 GB",
+        bestFor: "Best price/performance balance" 
+      },
+      { 
+        name: "High-traffic / Latency-sensitive", 
+        vmSize: "performance-2x", 
+        memory: "8 GB",
+        bestFor: "Guaranteed CPU, no throttling" 
+      },
+      { 
+        name: "Memory-heavy (caching, ML)", 
+        vmSize: "performance-4x", 
+        memory: "16-32 GB",
+        bestFor: "High RAM limits" 
+      },
+      { 
+        name: "Background Workers / Cron", 
+        vmSize: "shared-cpu-4x", 
+        memory: "2 GB",
+        bestFor: "Cheap burst CPU for batch jobs" 
+      },
+    ];
+
+    this.prompts.write("\n--- Quick Presets (2026 Recommendations) ---\n\n");
+    PRESETS.forEach((preset, index) => {
+      const marker = existing.vmSize === preset.vmSize ? " (current)" : "";
+      this.prompts.write(`  ${index + 1}. ${preset.name}${marker}\n`);
+      this.prompts.write(`     VM: ${preset.vmSize} (${preset.memory})\n`);
+      this.prompts.write(`     ${preset.bestFor}\n\n`);
+    });
+    this.prompts.write(`  ${PRESETS.length + 1}. Back to previous menu\n\n`);
+
+    const selected = await this.chooseNumber(`Choose a preset [1]: `, PRESETS.length + 1, 1);
+    
+    if (selected === PRESETS.length + 1) {
+      // Go back
+      return this.promptUpdateConfigChoice(existing);
+    }
+
+    const preset = PRESETS[selected - 1];
+    
+    // Ask about region (keep or change)
+    this.prompts.write(`\nUsing preset: ${preset.name} (${preset.vmSize})\n`);
+    const regionChoice = await this.chooseNumber(
+      `Region: Keep '${existing.region}' [1] or Change [2]: `,
+      2,
+      1
+    );
+    const region = regionChoice === 1 ? existing.region : await this.collectRegion(this.env.HERMES_FLY_REGION);
+
+    return {
+      keep: false,
+      config: {
+        ...existing,
+        region,
+        vmSize: preset.vmSize,
+      } as import("../../application/ports/deploy-wizard.port.js").DeployConfig,
     };
   }
 }
